@@ -1,0 +1,11 @@
+{
+  "name": "rock-paper-wizards",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A top-down wizard duel where every spell has a weight",
+  "scripts": {
+    "serve": "python3 -m http.server 8080",
+    "test": "node tools/determinism.js",
+    "sim": "node tools/sim-harness.js"
+  }
+}

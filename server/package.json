@@ -1,0 +1,13 @@
+{
+  "name": "rock-paper-wizards-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Matchmaking and input relay for Rock, Paper, Wizards",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test-relay.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" }
+}

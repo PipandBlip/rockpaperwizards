@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rock, Paper, Wizards</title>
+  <meta name="description" content="A top-down wizard duel where every spell has a weight.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+
+  
+  
+
+<div class="shell">
+  <header class="crest">
+    <h1>Rock, Paper, Wizards</h1>
+    <button class="sound" id="bgmBtn" aria-pressed="true">&#9834; Music on</button>
+  </header>
+  <audio id="bgm" loop preload="auto" src="assets/audio/arcane-clash.mp3"></audio>
+  <audio id="sfxBeamA" loop preload="auto" src="assets/audio/beam-loop.mp3"></audio>
+  <audio id="sfxBeamB" loop preload="auto" src="assets/audio/beam-loop.mp3"></audio>
+  <audio id="sfxChargeA" preload="auto" src="assets/audio/beam-charge.mp3"></audio>
+  <audio id="sfxChargeB" preload="auto" src="assets/audio/beam-charge.mp3"></audio>
+  <audio id="sfxClash" loop preload="auto" src="assets/audio/beam-clash.mp3"></audio>
+  <audio id="sfxRive1" preload="auto" src="assets/audio/rive-1.mp3"></audio>
+  <audio id="sfxRive2" preload="auto" src="assets/audio/rive-2.mp3"></audio>
+  <audio id="sfxRive3" preload="auto" src="assets/audio/rive-3.mp3"></audio>
+  <audio id="sfxSpark1" preload="auto" src="assets/audio/spark-1.mp3"></audio>
+  <audio id="sfxSpark2" preload="auto" src="assets/audio/spark-2.mp3"></audio>
+  <audio id="sfxSpark3" preload="auto" src="assets/audio/spark-3.mp3"></audio>
+  <audio id="sfxHex1" preload="auto" src="assets/audio/hexstone-1.mp3"></audio>
+  <audio id="sfxHex2" preload="auto" src="assets/audio/hexstone-2.mp3"></audio>
+  <audio id="sfxHitS1" preload="auto" src="assets/audio/hit-small-1.mp3"></audio>
+  <audio id="sfxHitS2" preload="auto" src="assets/audio/hit-small-2.mp3"></audio>
+  <audio id="sfxHitB1" preload="auto" src="assets/audio/hit-big-1.mp3"></audio>
+  <audio id="sfxHitB2" preload="auto" src="assets/audio/hit-big-2.mp3"></audio>
+  <audio id="sfxWard1" preload="auto" src="assets/audio/ward-1.mp3"></audio>
+  <audio id="sfxWard2" preload="auto" src="assets/audio/ward-2.mp3"></audio>
+  <audio id="sfxWard3" preload="auto" src="assets/audio/ward-3.mp3"></audio>
+  <audio id="sfxDash" preload="auto" src="assets/audio/dash.mp3"></audio>
+
+  <div class="rails" id="rails"></div>
+  <div class="roundlabel" id="roundLabel">Round 1</div>
+
+  <div class="stage">
+    <canvas id="game" width="960" height="620" aria-label="Wizard duel arena"></canvas>
+    <div class="curtain" id="curtain">
+      <h2 id="curtainTitle">Choose your rival</h2>
+      <p id="curtainText">Your wand tracks the enemy on its own. Your job is timing: read what is coming, and answer it with something heavy enough to stop it.</p>
+
+      <label class="namefield"><span>Name</span><input id="nameInput" maxlength="14" placeholder="Wizard" autocomplete="off" spellcheck="false"></label>
+
+      <fieldset class="levels" id="diffRow">
+        <legend>Levels</legend>
+        <button data-diff="0" class="lv0">Apprentice<em>Easy</em></button>
+        <button data-diff="1" class="lv1 sel">Adept<em>Medium</em></button>
+        <button data-diff="2" class="lv2">Archmage<em>Hard</em></button>
+        <button data-diff="3" class="lv3">Escalation<em>Endless</em></button>
+      </fieldset>
+
+      <div class="choices">
+        <button class="go" id="goBtn">Begin the duel</button>
+        <button id="roomBtn">Match room</button>
+      </div>
+
+      <div class="room" id="roomPanel" hidden>
+        <h4>Match room</h4>
+        <div class="rrow"><span>Wizards in the arena</span><div class="seg" id="segTotal"></div></div>
+        <div class="rrow"><span>Seats at this keyboard</span><div class="seg" id="segHumans"></div></div>
+        <div class="rrow"><span>Filling the rest</span><b id="botLine">3 bots</b></div>
+        <p class="note" id="roomNote">Free-for-all: last wizard standing takes the round. Empty seats are filled with bots at the level chosen above.</p>
+        <button class="go" id="startRoom">Start match</button>
+      </div>
+
+      <div class="board" id="board" hidden></div>
+    </div>
+    <div class="pausebox" id="pausePanel" hidden>
+      <h3>Paused</h3>
+      <div class="choices">
+        <button id="resumeBtn">Resume</button>
+        <button id="menuBtn">To main menu</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="book" id="book"></div>
+
+  <details class="manual" open>
+    <summary>How to play</summary>
+    <div class="manual-body">
+      <div>
+        <h3>Controls</h3>
+        <ul>
+          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move — your wand aims itself</li>
+          <li><kbd>Tab</kbd> switch target · <kbd>Shift</kbd> dash, every 3 seconds</li>
+          <li><kbd>Y</kbd> Spark · <kbd>U</kbd> Rive · <kbd>I</kbd> Hexstone</li>
+          <li><kbd>H</kbd> Ward · <kbd>J</kbd> Beam · <kbd>K</kbd> Grasp</li>
+          <li>Hold a spell key to charge, release to cast — Rive throws one missile at a tap and five at full charge</li>
+          <li><kbd>P</kbd> pause · <kbd>R</kbd> restart · <kbd>M</kbd> mute</li>
+        </ul>
+      </div>
+      <div>
+        <h3>The one rule</h3>
+        <p>Every spell carries a <em>weight</em>. When two spells collide the heavier one wins and flies on, lighter by whatever it just ate. Holding a key adds weight.</p>
+        <p>That is the whole game: read what is coming, and answer it with something heavy enough.</p>
+        <p>A counter that actually stops something pays you back: mana on the spot, then three seconds of gold corona and doubled regeneration. Get out-weighed and you get nothing at all.</p>
+      </div>
+      <div>
+        <h3>Three exceptions</h3>
+        <ul>
+          <li><em>Beam</em> — an ultimate. 18 mana to ignite, a second to gather, 31 a second to hold, and a scorched wand for a moment after you let go. It eats everything it touches — but a Ward turned to face it will hold it off the robe until the wall gives out.</li>
+          <li><em>The orb</em> — when two beams meet, the sphere between them slides toward whoever has less mana. Let it reach you and it hurts far worse than the beam. Stop resisting and it rides the winner's beam onward and detonates on whatever it hits.</li>
+          <li><em>Ward</em> — a bank of damage held in front of you, and how long you charge it decides how deep the bank goes (20 up to 60). Anything at all draws on it — a shot, a hurled crate, a beam grinding away — and it soaks as much of each blow as it still holds. The blow that empties it shatters the wall, and only what was left over reaches you. It guards the arc you are facing, and nothing behind you.</li>
+          <li><em>Grasp</em> — hold to lift furniture as a shield, release to throw it.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Modes</h3>
+        <p>Three tiers of rival — Apprentice is easy, Adept medium, Archmage hard — then <em>Escalation</em>: Apprentice, Adept, Archmage one at a time, then pairs working up the tiers, then threes. A wave only arrives once you have cleared the last one.</p>
+        <p><em>Match room</em> puts up to six wizards in a free-for-all. Take one seat or two — the second player moves on the arrows, casts on <kbd>1</kbd>–<kbd>6</kbd>, dashes on right <kbd>Shift</kbd> — and bots fill whatever is left.</p>
+      </div>
+      <div>
+        <h3>The room</h3>
+        <p>Stone and pillars never break. Everything wooden does — and a beam vaporises furniture in well under a second. Lattice screens stop bodies and beams but spells fly straight through the gaps, so they are a firing position, not a hiding place. Chairs and stools are not cover at all, they are ammunition.</p>
+        <p>First to two rounds takes the duel.</p>
+      </div>
+    </div>
+  </details>
+</div>
+
+  <script src="src/game.js"></script>
+  <script src="src/net.js"></script>
+</body>
+</html>
