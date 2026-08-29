@@ -32,13 +32,13 @@ html = html.replace(
   "<style>\n" + read("src/style.css") + "\n</style>"
 );
 
-// scripts
+// scripts (match the src with an optional ?v= cache-bust query)
 html = html.replace(
-  '<script src="src/game.js"></script>',
+  /<script src="src\/game\.js(\?[^"]*)?"[^>]*><\/script>/,
   "<script>\n" + read("src/game.js") + "\n</script>"
 );
 html = html.replace(
-  '<script src="src/net.js"></script>',
+  /<script src="src\/net\.js(\?[^"]*)?"[^>]*><\/script>/,
   "<script>\n" + read("src/net.js") + "\n</script>"
 );
 

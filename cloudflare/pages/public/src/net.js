@@ -24,6 +24,7 @@
   if (!RPW) return; // game.js did not load; nothing to wire up
 
   const DELAY = 3; // frames of input delay (~50ms at 60Hz)
+  const STALL_FRAMES = 120; // ~2s of no input from a seat before we hand it to a bot
 
   const net = {
     url: null,
@@ -32,10 +33,12 @@
     seat: -1,
     room: null,
     players: [],
+    total: 0,       // seat count for the current match (fixed at start)
     state: "offline", // offline | lobby | running
     seed: 0,
     inputs: new Map(), // frame -> Int32Array(seat) of masks, -1 when unknown
     dropped: new Set(),
+    stallAt: null,     // first frame we started waiting on a stalled seat
     onchange: null,
     lastSent: -1
   };
@@ -116,9 +119,13 @@
 
       case "left":
         net.players = msg.players || net.players;
-        // whoever is gone stops being waited on; their wizard carries on as a bot
+        // whoever is gone stops being waited on; their wizard carries on as a bot.
+        // Iterate the FIXED match total (net.total), not the current player count —
+        // after a leave the roster is smaller, so looping over players.length would
+        // never mark the vacated seat as dropped and the game would stall forever
+        // waiting on a mask that is never coming.
         net.dropped = new Set();
-        for (let s = 0; s < seatCount(); s++) {
+        for (let s = 0; s < net.total; s++) {
           if (!net.players.some(p => p.seat === s)) net.dropped.add(s);
         }
         emit();
@@ -132,7 +139,10 @@
   }
 
   function seatCount() {
-    return net.players.length;
+    // During a running match the seat count is fixed at net.total (set at
+    // start), even after players leave — the vacated seats still exist and
+    // are handed to bots. In the lobby it's just the current roster size.
+    return net.state === "running" && net.total > 0 ? net.total : net.players.length;
   }
 
   function frameRow(f) {
@@ -150,8 +160,10 @@
     if (typeof msg.you === "number") net.seat = msg.you;
     net.seed = msg.seed >>> 0;
     net.state = "running";
+    net.total = msg.total || net.players.length; // fixed seat count for the match
     net.inputs.clear();
     net.dropped.clear();
+    net.stallAt = null;
     net.lastSent = -1;
 
     // The first onStep runs at simFrame 1 and sends for 1 + DELAY, so frames 0
@@ -195,8 +207,17 @@
     for (let s = 0; s < row.length; s++) {
       if (s === net.seat) continue;
       if (net.dropped.has(s)) continue;
-      if (row[s] < 0) return false; // still waiting on that seat
+      if (row[s] < 0) {
+        // A seat we are still waiting on. If it has been stalled for a while
+        // (a peer dropped without a clean "left", or a network blip), hand it
+        // to a bot rather than freezing the whole match forever. The bot is
+        // part of the deterministic sim, so no extra sync is needed.
+        if (net.stallAt == null) net.stallAt = frame;
+        if (frame - net.stallAt > STALL_FRAMES) net.dropped.add(s);
+        return false;
+      }
     }
+    net.stallAt = null;
     return true;
   };
 
