@@ -136,6 +136,37 @@
   .seg button{padding:5px 10px;font-size:11px;letter-spacing:.04em}
   .seg button.sel{border-color:var(--spark);color:var(--spark);background:rgba(63,231,255,.12)}
   .room .note{font-family:var(--prose);font-size:12.5px;line-height:1.5;color:var(--muted);margin:0;text-transform:none;letter-spacing:0}
+  /* the curtain is a stack of panels; exactly one is ever unhidden */
+  .panel{display:flex;flex-direction:column;align-items:center;gap:11px;width:100%}
+  .panel[hidden]{display:none}
+  button.back{border-color:var(--edge);color:var(--muted);padding:9px 16px}
+  button.back:hover{border-color:#5a4f7a;color:var(--chalk)}
+  /* the invite code — the one thing on the host screen you have to be able to read across a room */
+  .invite{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    border:1px solid color-mix(in srgb, var(--spark) 40%, var(--edge));border-radius:3px;
+    background:rgba(63,231,255,.06);padding:9px 12px}
+  .invite>span{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+  .invite b{font-family:var(--mono);font-size:27px;letter-spacing:.34em;font-weight:700;color:var(--spark);
+    text-shadow:0 0 22px color-mix(in srgb, var(--spark) 55%, transparent);line-height:1;padding-left:.34em}
+  .invite b.waiting{color:var(--muted);text-shadow:none;letter-spacing:.2em;font-size:20px}
+  .invite button{padding:6px 12px;font-size:10px;letter-spacing:.14em}
+  .invite button.done{border-color:var(--ward);color:var(--ward)}
+  .codefield{display:flex;align-items:center;gap:10px;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
+  .codefield input{font-family:var(--mono);font-size:24px;letter-spacing:.3em;text-transform:uppercase;
+    color:var(--spark);background:rgba(63,231,255,.05);border:1px solid var(--edge);border-radius:3px;
+    padding:7px 10px;width:150px;text-align:center;padding-left:calc(10px + .3em)}
+  .codefield input:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
+  /* who has actually turned up */
+  .roster{display:flex;flex-direction:column;gap:3px;width:100%}
+  .roster:empty{display:none}
+  .roster div{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;
+    color:#a99fc4;padding:4px 2px;border-bottom:1px solid rgba(42,35,64,.5)}
+  .roster div:last-child{border-bottom:0}
+  .roster div.me{color:#fff}
+  .roster div.empty{color:var(--muted);font-style:italic}
+  .roster i{font-style:normal;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .roster i.on{color:var(--ward)}
+  .note.bad{color:var(--blood)}
   .pausebox{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
     background:rgba(6,4,12,.82);backdrop-filter:blur(2px);z-index:3}
   .pausebox[hidden]{display:none}
@@ -238,26 +269,64 @@
 
       <label class="namefield"><span>Name</span><input id="nameInput" maxlength="14" placeholder="Wizard" autocomplete="off" spellcheck="false"></label>
 
-      <fieldset class="levels" id="diffRow">
-        <legend>Levels</legend>
-        <button data-diff="0" class="lv0">Apprentice<em>Easy</em></button>
-        <button data-diff="1" class="lv1 sel">Adept<em>Medium</em></button>
-        <button data-diff="2" class="lv2">Archmage<em>Hard</em></button>
-        <button data-diff="3" class="lv3">Escalation<em>Endless</em></button>
-      </fieldset>
-
-      <div class="choices">
-        <button class="go" id="goBtn">Begin the duel</button>
-        <button id="roomBtn">Match room</button>
+      <!-- landing: two doors, nothing else -->
+      <div class="panel" id="homePanel">
+        <div class="choices">
+          <button class="go" id="soloBtn">Solo Duel</button>
+          <button id="mpBtn">Multiplayer</button>
+        </div>
       </div>
 
-      <div class="room" id="roomPanel" hidden>
-        <h4>Match room</h4>
+      <!-- solo: pick who you are up against -->
+      <div class="panel" id="soloPanel" hidden>
+        <fieldset class="levels" id="diffRow">
+          <legend>Levels</legend>
+          <button data-diff="0" class="lv0">Apprentice<em>Easy</em></button>
+          <button data-diff="1" class="lv1 sel">Adept<em>Medium</em></button>
+          <button data-diff="2" class="lv2">Archmage<em>Hard</em></button>
+          <button data-diff="3" class="lv3">Escalation<em>Endless</em></button>
+        </fieldset>
+        <div class="choices">
+          <button class="go" id="goBtn">Begin the duel</button>
+          <button class="back" id="soloBack">Back</button>
+        </div>
+      </div>
+
+      <!-- multiplayer: host or join -->
+      <div class="panel" id="mpPanel" hidden>
+        <div class="choices">
+          <button class="go" id="hostBtn">Host a Duel</button>
+          <button id="joinBtn">Join a Duel</button>
+          <button class="back" id="mpBack">Back</button>
+        </div>
+        <p class="note" id="mpNote">Host a duel to get an invite code, or paste a friend&rsquo;s code to join theirs.</p>
+      </div>
+
+      <!-- hosting: the code, the size, who has turned up -->
+      <div class="panel room" id="hostPanel" hidden>
+        <h4>Hosting a duel</h4>
+        <div class="invite">
+          <span>Invite code</span>
+          <b id="inviteCode">&middot;&middot;&middot;&middot;</b>
+          <button id="copyCode" type="button">Copy</button>
+        </div>
         <div class="rrow"><span>Wizards in the arena</span><div class="seg" id="segTotal"></div></div>
-        <div class="rrow"><span>Seats at this keyboard</span><div class="seg" id="segHumans"></div></div>
-        <div class="rrow"><span>Filling the rest</span><b id="botLine">3 bots</b></div>
-        <p class="note" id="roomNote">Free-for-all: last wizard standing takes the round. Empty seats are filled with bots at the level chosen above.</p>
+        <div class="rrow"><span>Bots fill the rest</span><div class="seg" id="segBotLvl"></div></div>
+        <div class="roster" id="hostRoster"></div>
+        <p class="note" id="hostNote">Send the code to your friends. Any seat still empty when you start becomes a bot.</p>
         <button class="go" id="startRoom">Start match</button>
+        <button class="back" id="hostBack">Leave</button>
+      </div>
+
+      <!-- joining: paste and go -->
+      <div class="panel room" id="joinPanel" hidden>
+        <h4>Join a duel</h4>
+        <label class="codefield"><span>Invite code</span>
+          <input id="codeInput" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" autocapitalize="characters"></label>
+        <button class="go" id="joinGo">Join</button>
+        <div class="roster" id="joinRoster"></div>
+        <p class="note" id="joinNote">Paste the code the host sent you.</p>
+        <button class="back" id="joinBack">Back</button>
       </div>
 
       <div class="board" id="board" hidden></div>
@@ -296,16 +365,16 @@
       <div>
         <h3>Three exceptions</h3>
         <ul>
-          <li><em>Beam</em> — an ultimate. 18 mana to ignite, a second to gather, 31 a second to hold, and a scorched wand for a moment after you let go. It eats everything it touches — but a Ward turned to face it will hold it off the robe until the wall gives out.</li>
+          <li><em>Beam</em> — an ultimate. 18 mana to ignite, a second to gather, 31 a second to hold, and a scorched wand for a moment after you let go. It eats everything it touches, Wards included — a wall in its path shatters and buys the wizard behind it nothing.</li>
           <li><em>The orb</em> — when two beams meet, the sphere between them slides toward whoever has less mana. Let it reach you and it hurts far worse than the beam. Stop resisting and it rides the winner's beam onward and detonates on whatever it hits.</li>
-          <li><em>Ward</em> — a bank of damage held in front of you, and how long you charge it decides how deep the bank goes (20 up to 60). Anything at all draws on it — a shot, a hurled crate, a beam grinding away — and it soaks as much of each blow as it still holds. The blow that empties it shatters the wall, and only what was left over reaches you. It guards the arc you are facing, and nothing behind you.</li>
+          <li><em>Ward</em> — light cover with a health bar, not a shield. Charging it decides how much it can take (20 up to 60), and it thins the whole time it stands, so a wall raised early is half gone by the time the shot arrives. It is rated for <em>Spark</em> and <em>Rive</em> only: it eats as much of one as it still holds, and the shot that empties it shatters it and spills the rest onto you. A Hexstone, a beam or a hurled crate is more than it was built for — those go straight through and take the wall with them. It guards the arc you are facing, and nothing behind you.</li>
           <li><em>Grasp</em> — hold to lift furniture as a shield, release to throw it.</li>
         </ul>
       </div>
       <div>
         <h3>Modes</h3>
         <p>Three tiers of rival — Apprentice is easy, Adept medium, Archmage hard — then <em>Escalation</em>: Apprentice, Adept, Archmage one at a time, then pairs working up the tiers, then threes. A wave only arrives once you have cleared the last one.</p>
-        <p><em>Match room</em> puts up to six wizards in a free-for-all. Take one seat or two — the second player moves on the arrows, casts on <kbd>1</kbd>–<kbd>6</kbd>, dashes on right <kbd>Shift</kbd> — and bots fill whatever is left.</p>
+        <p><em>Multiplayer</em> puts up to six wizards in a free-for-all. Host a duel and you get a four-letter invite code; anyone who pastes it takes a seat. Whatever is still empty when you start is filled with bots at the level you picked.</p>
       </div>
       <div>
         <h3>The room</h3>
@@ -316,6 +385,7 @@
   </details>
 </div>
 
+  <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
   <script>
 (() => {
 "use strict";
@@ -344,6 +414,11 @@ const byId = {}; SPELLS.forEach(s => byId[s.id] = s);
 // half the world, standing off the robe by WARD_R. Both numbers are read by the
 // simulation and by the drawing code, so the wall you see is the wall that eats.
 const WARD_COS = 0.2, WARD_R = 40;
+// A ward is light cover, not a shield. It is rated for the two small spells and
+// nothing else: a hexstone, a beam or a hurled crate goes through it and takes
+// the wall with it. WARD_FADE is how long a full wall takes to bleed out on its
+// own with nothing hitting it.
+const WARD_BLOCKS = { spark:1, rive:1 };
 const KEYMAP = {"y":0,"u":1,"i":2,"h":3,"j":4,"k":5};
 const KEYMAP2 = {"1":0,"2":1,"3":2,"4":3,"5":4,"6":5};   // player two, top row or numpad
 // Input is sampled once per simulation step into a bit mask. Local play reads the
@@ -356,7 +431,7 @@ function localMask(w){
   if (keys[C.down]) m |= BIT.down;
   if (keys[C.left]) m |= BIT.left;
   if (keys[C.right]) m |= BIT.right;
-  const km = w.seat === 0 ? KEYMAP : KEYMAP2;
+  const km = w.seat === localSeat ? KEYMAP : KEYMAP2;
   for (const k in km) if (keys[k]) m |= BIT.spell << km[k];
   if (keys[C.dash]) m |= BIT.dash;
   if (C.tab && keys.tab) m |= BIT.tab;
@@ -385,9 +460,19 @@ function pumpInput(){
 }
 
 /* ---------------------------------------------------------- helpers */
-// One seeded stream for the whole simulation. Netplay needs two machines to
-// produce identical frames from identical inputs, so nothing may call
-// rand() inside the sim - everything goes through rand().
+// Two streams, and the wall between them is what makes netplay possible.
+//
+// rand() is the simulation's, seeded per round. Two machines fed the same seed
+// and the same inputs must walk it in lockstep, so every draw from it has to
+// happen in the simulation and nowhere else.
+//
+// vrand() is the view's, unseeded, for anything only the eye or the ear meets:
+// particles, screen shake, wand flourishes, which sample of a sound to play.
+// These MUST NOT come from rand(). draw() runs a variable number of times per
+// simulation step depending on the machine, and reduced-motion is a per-user
+// setting, so a cosmetic draw from the seeded stream pulls the two clients out
+// of alignment and the worlds silently diverge. That bug shipped once and cost
+// an afternoon; the split is the fix.
 let rngState = 0x9e3779b9;
 function seedRng(seed){ rngState = (seed >>> 0) || 1; }
 function rand(){
@@ -397,8 +482,10 @@ function rand(){
   return ((t ^ t >>> 14) >>> 0) / 4294967296;
 }
 seedRng((Date.now() ^ 0x5f3759df) >>> 0);
+function vrand(){ return Math.random(); }
 const STEP = 1/60;                       // the simulation only ever advances in these
-const rnd = (a,b) => a + rand()*(b-a);
+const rnd  = (a,b) => a + rand()*(b-a);    // simulation
+const vrnd = (a,b) => a + vrand()*(b-a);   // view only — never inside the sim
 const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
 const dist2 = (a,b) => (a.x-b.x)**2 + (a.y-b.y)**2;
 const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
@@ -457,7 +544,7 @@ function makeWizard(x,y,friendly){
     prevMask: 0, moveX: 0, moveY: 0,
     hp:100, hpMax:100, mana:100, facing:0,
     charge:null, chargeT:0, castLock:0, fizzle:0,
-    ward:0, wardMax:0, wardT:0, wardTick:0,
+    ward:0, wardMax:0, wardFade:0, wardTick:0,
     beamOn:false, beamWind:0, beamT:0,
     held:null, holdT:0,
     hurt:0, dead:false,
@@ -672,7 +759,9 @@ function cast(w, idx, lvl){
     w.wardMax = s.absorb + s.chargeA * lvl;
     w.ward = w.wardMax;
     w.wardTick = 0;
-    w.wardT = 2.4 + lvl*1.4;
+    // it does not stand for a while and then vanish — it thins the whole time,
+    // so a wall you raised early is already half gone when the shot arrives
+    w.wardFade = w.wardMax / (2.4 + lvl*1.4);
     swish(w, s.color, "cast");
     castSound(w, "ward");
     puff(w.x,w.y,s.color,10);
@@ -841,13 +930,6 @@ function beamReach(w, other){
     const t = rayCircle(w.x + dx*20, w.y + dy*20, dx, dy, d.x, d.y, d.r);
     if (t > 0 && t + 20 < best) best = t + 20;
   }
-  // a ward turned to face the beam stops it dead at the wall, until the wall goes
-  for (const o of wizards){
-    if (o === w || o.dead || o.team === w.team) continue;
-    if (!wardFacing(o, w.x, w.y)) continue;
-    const t = rayCircle(w.x + dx*20, w.y + dy*20, dx, dy, o.x, o.y, WARD_R);
-    if (t > 0 && t + 20 < best) best = t + 20;
-  }
   return best;
 }
 // Closing the channel costs you too: a moment unable to cast and a scorched wand.
@@ -897,7 +979,9 @@ const DIFF = [
 ];
 
 function incomingThreat(w, foeW){
-  let weight = 0, soonest = 9;
+  // `light` is the part of the incoming weight a ward could actually hold —
+  // the bots need it to tell a rive fan (raise a wall) from a hexstone (move)
+  let weight = 0, light = 0, soonest = 9;
   for (const s of shots){
     if (s.owner !== foeW) continue;
     const toX = w.x - s.x, toY = w.y - s.y;
@@ -908,6 +992,7 @@ function incomingThreat(w, foeW){
     const t = d/sp;
     if (t > 1.6) continue;
     weight += s.weight;
+    if (WARD_BLOCKS[s.kind]) light += s.weight;
     soonest = Math.min(soonest, t);
   }
   for (const d of debris){
@@ -917,7 +1002,7 @@ function incomingThreat(w, foeW){
     const sp = Math.hypot(d.vx,d.vy)||1;
     if ((d.vx*toX + d.vy*toY)/(sp*dd) > .85 && dd/sp < 1.3){ weight += 3; soonest = Math.min(soonest, dd/sp); }
   }
-  return { weight, soonest };
+  return { weight, light, soonest };
 }
 function lineClear(a, b, forShots){
   for (const d of debris){
@@ -979,11 +1064,6 @@ function aiTick(w, opp, dt){
     if (w.charge !== null){ w.charge = null; w.chargeT = 0; }   // whatever was charging matters less
     if ((D.power|0) >= 2 && w.mana > 26 && rand() < .5 + D.cover*.45){
       w.beamOn = true; w.beamWind = 0;
-    } else if ((D.power|0) >= 1 && w.mana >= 34 && w.ward <= 0 && rand() < .35 + D.cover*.4){
-      // a charged wall buys a couple of seconds under the beam — long enough to walk out of it
-      cast(w, 3, rnd(.7, 1));
-      const spot = nearestCover(w, opp);
-      if (spot){ w.goal = spot; w.panic = 1.1; }
     } else {
       const spot = nearestCover(w, opp);
       if (spot){ w.goal = spot; w.panic = 1.4; }
@@ -1005,8 +1085,12 @@ function aiTick(w, opp, dt){
     if (net >= 3 && w.mana >= 38 && !urgent && (D.power|0) >= 2 && rand() < D.cover){
       w.charge = 2; w.chargeT = 0;
       w.aiChargeTo = clamp((net-3)/3, 0, 1) * byId.hex.maxChg;
-    } else if (net >= 3 && w.mana >= 24){
+    } else if (net >= 3 && threat.light >= 3 && w.mana >= 24){
+      // a wall is rated for spark and rive only — raising one into a hexstone
+      // is just dying with the wand up
       cast(w, 3, clamp((net-2)/3, 0, 1));
+    } else if (net >= 3 && threat.light < 3){
+      w.dodge = .7; w.strafe = rand() < .5 ? 1 : -1; evade();
     } else if (net === 2 && w.mana >= 20){
       cast(w, 1, .55);
     } else if (net >= 1 && w.mana >= 12){
@@ -1101,9 +1185,16 @@ function wardFacing(w, sx, sy){
 }
 // `soak` marks damage arriving in sixty small pieces a second, so the wall
 // sparks on a steady budget instead of once a frame.
-function strike(w, amount, sx, sy, soak){
+function strike(w, amount, sx, sy, kind, soak){
   if (!w || w.dead || amount <= 0) return 0;
   if (!wardFacing(w, sx, sy)){ hurt(w, amount); return 0; }
+  if (!WARD_BLOCKS[kind]){
+    // heavier than the wall was ever rated for: straight through, and the wall
+    // goes with it
+    breakWard(w);
+    hurt(w, amount);
+    return 0;
+  }
   const eaten = Math.min(w.ward, amount);
   w.ward -= eaten;
   if (soak){
@@ -1120,7 +1211,7 @@ function strike(w, amount, sx, sy, soak){
 }
 function breakWard(w){
   if (w.wardMax <= 0) return;
-  w.ward = 0; w.wardT = 0; w.wardMax = 0; w.wardTick = 0;
+  w.ward = 0; w.wardMax = 0; w.wardFade = 0; w.wardTick = 0;
   puff(w.x, w.y, byId.ward.color, 18);
   impact(w.x, w.y, 3.2, byId.ward.color);
 }
@@ -1131,7 +1222,7 @@ function swish(w, color, kind){
   w.swishKind = kind || "deflect";
   w.swishT0 = w.swishKind === "cast" ? FLICK_T : SWISH_T;
   w.swish = w.swishT0;
-  w.swishDir = rand() < .5 ? -1 : 1;
+  w.swishDir = vrand() < .5 ? -1 : 1;
   w.swishColor = color || "#fff";
 }
 // one call for "something landed": shake, a shockwave ring, and for the heavy
@@ -1156,15 +1247,15 @@ function surge(w, weight){
   w.surge = SURGE_T;                       // a clean counter is worth three full seconds
   rings.push({ x:w.x, y:w.y, r:12, max:40, t:0, life:.34, color:SURGE_COLOR, width:2 });
   for (let i = 0; i < 10; i++){
-    const a = rnd(0,TAU), sp = rnd(50,150);
-    bits.push({ x:w.x, y:w.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:rnd(.3,.6), t:0, color:SURGE_COLOR, r:rnd(1,2.4) });
+    const a = vrnd(0,TAU), sp = vrnd(50,150);
+    bits.push({ x:w.x, y:w.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:vrnd(.3,.6), t:0, color:SURGE_COLOR, r:vrnd(1,2.4) });
   }
 }
 function puff(x,y,color,n){
   if (REDUCED) n = Math.min(n, 4);
   for (let i = 0; i < n; i++){
-    const a = rand()*TAU, s = rnd(30,220);
-    bits.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: rnd(.2,.6), t:0, color, r: rnd(1,3) });
+    const a = vrand()*TAU, s = vrnd(30,220);
+    bits.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: vrnd(.2,.6), t:0, color, r: vrnd(1,3) });
   }
 }
 
@@ -1200,11 +1291,11 @@ function update(dt){
     const beamActive = w.beamOn && w.beamWind >= byId.beam.cast;
     w.surge = Math.max(0, w.surge - dt);
     w.beamBurn = Math.max(0, w.beamBurn - dt);
-    if (w.surge > 0 && !REDUCED && rand() < dt*26){
-      const a = rnd(0, TAU), rr = rnd(16, 26);
+    if (w.surge > 0 && !REDUCED && vrand() < dt*26){
+      const a = vrnd(0, TAU), rr = vrnd(16, 26);
       bits.push({ x: w.x + Math.cos(a)*rr, y: w.y + Math.sin(a)*rr,
-                  vx: Math.cos(a)*rnd(4,18), vy: Math.sin(a)*rnd(4,18) - 22,
-                  life: rnd(.35,.7), t:0, color: SURGE_COLOR, r: rnd(.9,2.1) });
+                  vx: Math.cos(a)*vrnd(4,18), vy: Math.sin(a)*vrnd(4,18) - 22,
+                  life: vrnd(.35,.7), t:0, color: SURGE_COLOR, r: vrnd(.9,2.1) });
     }
     const regen = ((w.charge !== null || beamActive) ? 6 : 17)
                 * (w.D ? w.D.regen : 1)
@@ -1215,7 +1306,10 @@ function update(dt){
       const s = SPELLS[w.charge];
       w.chargeT = Math.min(w.chargeT + dt, s.maxChg);
     }
-    if (w.wardT > 0){ w.wardT -= dt; if (w.wardT <= 0) w.ward = 0; }
+    if (w.ward > 0){
+      w.ward -= w.wardFade * dt;
+      if (w.ward <= 0){ w.ward = 0; w.wardMax = 0; w.wardFade = 0; }
+    }
     if (w.beamOn){
       w.beamWind = Math.min(w.beamWind + dt, byId.beam.cast);
       if (w.beamWind >= byId.beam.cast){
@@ -1241,15 +1335,15 @@ function update(dt){
       // red motes drawn in out of the dark towards the wand
       const k = w.beamWind / byId.beam.cast;
       const tx = w.x + Math.cos(w.facing)*24, ty = w.y + Math.sin(w.facing)*24;
-      const n = 1 + (rand()*3|0);
+      const n = 1 + (vrand()*3|0);
       for (let i = 0; i < n; i++){
-        const ang = rnd(0, TAU), rad = rnd(18, 54) * (1.15 - k*0.55);
+        const ang = vrnd(0, TAU), rad = vrnd(18, 54) * (1.15 - k*0.55);
         const px = tx + Math.cos(ang)*rad, py = ty + Math.sin(ang)*rad;
         const pull = 70 + k*210;
         bits.push({ x:px, y:py, vx:(tx-px)/rad*pull, vy:(ty-py)/rad*pull,
-                    life: rad/pull * rnd(.75,1.05), t:0,
-                    color: rand() < .22 ? "#ffd6df" : "#ff2b5c",
-                    r: rnd(.8, 2.2 + k) });
+                    life: rad/pull * vrnd(.75,1.05), t:0,
+                    color: vrand() < .22 ? "#ffd6df" : "#ff2b5c",
+                    r: vrnd(.8, 2.2 + k) });
       }
     }
     // held debris orbit
@@ -1297,10 +1391,13 @@ function update(dt){
 
       a.beamLen = sep*t; b.beamLen = sep*(1-t);
       a.clash = b.clash = true;
-      const jit = even && !REDUCED ? 4.5 : 0;
-      const cx = a.x + (b.x - a.x)*t + (jit ? rnd(-jit, jit) : 0);
-      const cy = a.y + (b.y - a.y)*t + (jit ? rnd(-jit, jit) : 0);
-      const orb = { x: cx, y: cy, even, lead: target > .5 ? a : b, press: Math.abs(target - .5)*2 };
+      // An evenly-matched orb shivers, but that is a look, not a fact: jittering
+      // its real position here would put it somewhere different on a machine with
+      // reduced motion turned on. The shiver is applied when it is drawn.
+      const cx = a.x + (b.x - a.x)*t;
+      const cy = a.y + (b.y - a.y)*t;
+      const orb = { x: cx, y: cy, even, jit: even ? 4.5 : 0,
+                    lead: target > .5 ? a : b, press: Math.abs(target - .5)*2 };
       a.clashOrb = b.clashOrb = orb;
       a.clashPt = b.clashPt = orb;
       clashes.push({ a, b, t, x: cx, y: cy });
@@ -1325,12 +1422,12 @@ function update(dt){
       }
       shake = Math.min(shake + (REDUCED ? 0 : (even ? 34 : 24)*dt), 7);
       if (!REDUCED){
-        const n = 2 + (rand()*3|0);
+        const n = 2 + (vrand()*3|0);
         for (let k = 0; k < n; k++){
-          const ang = Math.atan2(b.y-a.y, b.x-a.x) + Math.PI/2 * (rand()<.5?1:-1) + rnd(-.8,.8);
-          const sp = rnd(120,340);
-          bits.push({ x:cx, y:cy, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, life:rnd(.15,.45), t:0,
-                      color: rand()<.4 ? "#ffffff" : byId.beam.color, r:rnd(1,3) });
+          const ang = Math.atan2(b.y-a.y, b.x-a.x) + Math.PI/2 * (vrand()<.5?1:-1) + vrnd(-.8,.8);
+          const sp = vrnd(120,340);
+          bits.push({ x:cx, y:cy, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, life:vrnd(.15,.45), t:0,
+                      color: vrand()<.4 ? "#ffffff" : byId.beam.color, r:vrnd(1,3) });
         }
       }
       break;
@@ -1359,11 +1456,9 @@ function update(dt){
     const ex = w.x + Math.cos(w.facing)*w.beamLen, ey = w.y + Math.sin(w.facing)*w.beamLen;
     for (const o of wizards){
       if (o.dead || o.team === w.team) continue;
-      // a raised ward is what the beam meets first, and it is wider than the robe
-      const guarded = wardFacing(o, w.x, w.y);
-      const reach = guarded ? WARD_R : o.r + 4;
-      if (segCircle(w.x, w.y, ex, ey, o.x, o.y, reach))
-        strike(o, byId.beam.dmg*dt*dmgMul(w), w.x, w.y, true);
+      // a ward is no answer to a beam: the beam burns straight through it
+      if (segCircle(w.x, w.y, ex, ey, o.x, o.y, o.r + 4))
+        strike(o, byId.beam.dmg*dt*dmgMul(w), w.x, w.y, "beam", true);
     }
   }
   // beams vaporize shots & chew crates
@@ -1403,8 +1498,8 @@ function update(dt){
       const na = cur + step;
       s.vx = Math.cos(na)*want; s.vy = Math.sin(na)*want;
       s.spin += dt*(2.5 + prox*9);
-      if (!REDUCED && rand() < prox*0.5*(0.3 + (s.lvl||0)*0.9))
-        bits.push({ x:s.x, y:s.y, vx:rnd(-30,30), vy:rnd(-30,30), life:rnd(.2,.45), t:0, color:byId.hex.color, r:rnd(1,2.4) });
+      if (!REDUCED && vrand() < prox*0.5*(0.3 + (s.lvl||0)*0.9))
+        bits.push({ x:s.x, y:s.y, vx:vrnd(-30,30), vy:vrnd(-30,30), life:vrnd(.2,.45), t:0, color:byId.hex.color, r:vrnd(1,2.4) });
       }
     }
     s.trail.push({x:s.x, y:s.y});
@@ -1479,9 +1574,9 @@ function update(dt){
       if (dist2(s,q) < (q.r + s.r)**2){ tgt = q; break; }
     }
     if (tgt){
-      const guarded = wardFacing(tgt, s.x, s.y);
-      strike(tgt, s.dmg, s.x, s.y, false);
-      if (guarded && tgt.ward > 0) surge(tgt, s.weight);   // the wall held
+      const held = wardFacing(tgt, s.x, s.y) && WARD_BLOCKS[s.kind];
+      strike(tgt, s.dmg, s.x, s.y, s.kind, false);
+      if (held && tgt.ward > 0) surge(tgt, s.weight);   // the wall held
       if (s.orb) explodeOrb(s);
       shots.splice(i,1);
     }
@@ -1507,10 +1602,8 @@ function update(dt){
         if (dist2(d,q) < (d.r + q.r)**2){ tgt = q; break; }
       }
       if (tgt && Math.hypot(d.vx,d.vy) > 80){
-        const guarded = wardFacing(tgt, d.x, d.y);
-        strike(tgt, byId.grasp.dmg * dmgMul(d.thrower), d.x, d.y, false);
-        if (guarded){ if (tgt.ward > 0) surge(tgt, byId.grasp.weight); }
-        else impact(d.x, d.y, 3.4, byId.grasp.color);
+        strike(tgt, byId.grasp.dmg * dmgMul(d.thrower), d.x, d.y, "prop", false);
+        impact(d.x, d.y, 3.4, byId.grasp.color);
         d.vx = d.vy = 0; d.thrown = 0; d.hp -= 2;
         if (d.hp <= 0) { breakProp(d); continue; }
       }
@@ -1590,10 +1683,10 @@ function draw(){
   // --- solid layer
   ctx.save();
   if (shake > .2){
-    ctx.translate(rnd(-shake,shake), rnd(-shake,shake));
+    ctx.translate(vrnd(-shake,shake), vrnd(-shake,shake));
     if (shake > 4){
       ctx.translate(W/2, H/2);
-      ctx.rotate(rnd(-shake,shake) * 0.0014);
+      ctx.rotate(vrnd(-shake,shake) * 0.0014);
       ctx.translate(-W/2, -H/2);
     }
   }
@@ -1908,7 +2001,7 @@ function jag(x1,y1,x2,y2,segs,amp){
   for (let i = 0; i <= segs; i++){
     const t = i/segs;
     const taper = Math.sin(t*Math.PI);
-    const off = (rand()*2-1) * amp * taper;
+    const off = (vrand()*2-1) * amp * taper;
     pts.push(x1 + dx*t + nx*off, y1 + dy*t + ny*off);
   }
   return pts;
@@ -1960,7 +2053,7 @@ function drawBeam(w){
       }
       ctx.globalAlpha = 1;
       if (k > .25) for (let i = 0; i < 2; i++){
-        const ang = rnd(0, TAU), L2 = rnd(6, 10 + k*22);
+        const ang = vrnd(0, TAU), L2 = vrnd(6, 10 + k*22);
         strokeJag(jag(tx, ty, tx + Math.cos(ang)*L2, ty + Math.sin(ang)*L2, 3, 5), "#fff", 1, .55*k);
       }
     }
@@ -1986,12 +2079,12 @@ function drawBeam(w){
       strokeJag(jag(sx, sy, ex, ey, segs, 11), "#ffd8e6", 1.6, .85);
       strokeJag(jag(sx, sy, ex, ey, segs, 19), byId.beam.color, 1.2, .55);
       // forks that leap off the shaft
-      const forks = 1 + (rand()*3|0);
+      const forks = 1 + (vrand()*3|0);
       for (let f = 0; f < forks; f++){
-        const t = rand();
+        const t = vrand();
         const bx = sx + (ex-sx)*t, by = sy + (ey-sy)*t;
-        const ang = a + Math.PI/2*(rand()<.5?1:-1) + rnd(-.6,.6);
-        const L2 = rnd(14,46);
+        const ang = a + Math.PI/2*(vrand()<.5?1:-1) + vrnd(-.6,.6);
+        const L2 = vrnd(14,46);
         strokeJag(jag(bx, by, bx + Math.cos(ang)*L2, by + Math.sin(ang)*L2, 4, 7), "#fff", 1.1, .5);
       }
       ctx.shadowBlur = 0;
@@ -2002,7 +2095,9 @@ function drawBeam(w){
 
     if (w.clash && w.clashOrb){
       const orb = w.clashOrb;
-      const ox = orb.x, oy = orb.y;
+      // the shiver lives here, in the drawing, so the simulated orb stays put
+      const j = (orb.jit && !REDUCED) ? orb.jit : 0;
+      const ox = orb.x + (j ? vrnd(-j, j) : 0), oy = orb.y + (j ? vrnd(-j, j) : 0);
       const pulse = Math.sin(now/55);
       const r = 15 + pulse*4 + orb.press*7;
       const lead = orb.lead ? orb.lead.tint : "#fff";
@@ -2018,10 +2113,10 @@ function drawBeam(w){
       const ex = ox, ey = oy;
       if (!REDUCED){
         // lightning thrown off the point of contention
-        const spokes = 5 + (rand()*4|0);
+        const spokes = 5 + (vrand()*4|0);
         for (let i = 0; i < spokes; i++){
-          const ang = rnd(0, TAU);
-          const L2 = rnd(18, 62);
+          const ang = vrnd(0, TAU);
+          const L2 = vrnd(18, 62);
           strokeJag(jag(ex, ey, ex + Math.cos(ang)*L2, ey + Math.sin(ang)*L2, 5, 9),
                     i % 2 ? "#fff" : byId.beam.color, 1.5, .75);
         }
@@ -2186,7 +2281,7 @@ SPELLS.forEach((s, i) => {
     `<div style="display:flex;align-items:center;gap:6px"><span class="k">${s.key}</span><span class="n">${s.name}</span></div>
      <div class="wt">${dots}</div>
      <div class="m"><span>${s.id === "beam" ? "31/s" : s.cost}</span><span>${
-        s.id==="ward" ? "soak " + s.absorb + "\u2013" + (s.absorb + s.chargeA) : s.id==="beam" ? "beam" : s.id==="grasp" ? "throw" : s.id==="rive" ? "1\u20135 shots" : "wt " + s.weight}</span></div>`;
+        s.id==="ward" ? "spark\u00b7rive" : s.id==="beam" ? "beam" : s.id==="grasp" ? "throw" : s.id==="rive" ? "1\u20135 shots" : "wt " + s.weight}</span></div>`;
   book.appendChild(c);
 });
 const cards = [...book.children];
@@ -2301,11 +2396,11 @@ const lastClip = {};
 // jitter keeps repeats from sounding like a stuck record
 function fromPool(pool, key, vol, jitter){
   if (!pool || !pool.length) return;
-  let i = (rand()*pool.length)|0;
+  let i = (vrand()*pool.length)|0;
   if (pool.length > 1 && i === lastClip[key]) i = (i + 1) % pool.length;
   lastClip[key] = i;
   const a = pool[i];
-  if (jitter) { try { a.playbackRate = 1 + rnd(-0.08, 0.08); } catch (e) {} }
+  if (jitter) { try { a.playbackRate = 1 + vrnd(-0.08, 0.08); } catch (e) {} }
   playSfx(a, vol);
 }
 function castSound(w, id){
@@ -2319,7 +2414,7 @@ function hitSound(w, amount){
            (big ? 0.7 : 0.5) * (w.friendly ? 1 : 0.85), true);
 }
 function dashSound(w){
-  if (dashS) { try { dashS.playbackRate = 1 + rnd(-.06,.06); } catch (e) {} }
+  if (dashS) { try { dashS.playbackRate = 1 + vrnd(-.06,.06); } catch (e) {} }
   playSfx(dashS, w.friendly ? 0.5 : 0.34);
 }
 let muted = false;
@@ -2362,6 +2457,10 @@ if (bgmBtn) bgmBtn.addEventListener("click", toggleMusic);
 /* ---------------------------------------------------------- flow */
 let seats = [];
 let roomTotal = 4, roomHumans = 1;
+// In a networked match the local player is whatever seat the server dealt, not
+// necessarily seat 0 — the host's seat. Everything that means "this keyboard"
+// keys off localSeat, and seatNames carries the roster the server sent.
+let localSeat = 0, seatNames = null;
 
 function spawnRing(n){
   const pts = [];
@@ -2379,8 +2478,9 @@ function makeSeats(){
       const human = i < roomHumans;
       seats.push({
         human,
-        name: human ? (roomHumans > 1 ? (i === 0 ? playerName : "Player two") : playerName)
-                    : DIFF[difficulty].name + " " + (i - roomHumans + 1),
+        name: human
+          ? ((seatNames && seatNames[i]) || (i === localSeat ? playerName : "Player " + (i + 1)))
+          : DIFF[difficulty].name + " " + (i - roomHumans + 1),
         tint: TINTS[i % TINTS.length],
         D: human ? null : DIFF[difficulty],
         wins: 0
@@ -2412,11 +2512,11 @@ function buildRoster(){
     if (w.D && w.D.hp){ w.hpMax = w.D.hp; w.hp = w.D.hp; }
     // duel and escalation are player-versus-everyone; a match room is a free-for-all
     w.team = mode === "match" ? i : (seat.human ? 0 : 1);
-    if (seat.human) w.pad = (i === 0) ? PAD1 : PAD2;
+    if (seat.human) w.pad = (i === localSeat) ? PAD1 : PAD2;
     wizards.push(w);
     if (seat.human && i === 1) p2 = w;
   });
-  you = wizards[0];
+  you = wizards[localSeat] || wizards[0];
   you.human = true;
   if (mode === "escalation"){ waveNo = 0; waveLive = false; waveGap = 1.1; }
   for (const w of wizards) w.target = nearestEnemy(w);
@@ -2532,6 +2632,7 @@ function escGameOver(){
   saveScore(entry);
   msg = { text: "Fallen", sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
   setTimeout(() => {
+    show("solo");   // first, because it rewrites the copy — then say what happened
     el("curtainTitle").textContent = playerName + " held out to wave " + Math.max(1, waveNo);
     el("curtainText").textContent = final.toLocaleString() + " points · " + kills +
       (kills === 1 ? " wizard" : " wizards") + " put down · " + Math.round(survT) + " seconds standing.";
@@ -2587,11 +2688,15 @@ function endRound(win){
     phase = "over"; phaseT = 1.2;
     msg = { text: mine ? "Victory" : win.name + " wins", sub: null, t: 1.2, color: win.tint };
     setTimeout(() => {
+      // a networked match drops you back at the multiplayer door, not the bot list
+      const networked = NET.active;
+      leaveRoom();
+      show(networked ? "mp" : "solo");
       el("curtainTitle").textContent = mine ? "You take the match" : win.name + " takes the match";
       el("curtainText").textContent = mine
         ? "Two rounds to your name. Pick a harder rival, or fill the room with more of them."
         : "Read the incoming weight before you answer it — and remember a good counter pays you back in mana.";
-      el("goBtn").textContent = "Play again";
+      if (!networked) el("goBtn").textContent = "Play again";
       el("curtain").hidden = false;
     }, 1400);
   } else {
@@ -2605,12 +2710,39 @@ function togglePause(){
 function toMenu(){
   phase = "menu"; msg = null;
   hushBeams();
+  leaveRoom();
   el("pausePanel").hidden = true;
   el("curtain").hidden = false;
   selectMode(mode === "escalation" ? 3 : difficulty);
+  show("home");
 }
 
 /* --------------------------------------------------- menu wiring */
+// The curtain is a stack of panels and exactly one is ever visible. Every
+// button routes through show(); nothing else touches a panel's hidden flag.
+const PANEL = {
+  home: el("homePanel"), solo: el("soloPanel"), mp: el("mpPanel"),
+  host: el("hostPanel"), join: el("joinPanel")
+};
+const COPY = {
+  home: ["Pick your fight",
+         "Every spell carries a weight — when two collide the heavier one wins and flies on, lighter by whatever it just ate. Take a bot apart on your own, or send someone a code and settle it properly."],
+  mp:   ["Multiplayer",
+         "Host a duel and you get a four-letter code to hand out. Join one and you paste the code you were given. Bots fill any seat nobody takes."],
+  host: ["Hosting",
+         "The arena is open. Anyone holding the code below can walk into it."],
+  join: ["Join a duel",
+         "Four letters, from whoever is hosting."]
+};
+let panel = "home";
+function show(which){
+  panel = which;
+  for (const k in PANEL) PANEL[k].hidden = (k !== which);
+  if (which === "solo"){ modeCopy(); return; }
+  el("board").hidden = true;
+  el("curtainTitle").textContent = COPY[which][0];
+  el("curtainText").textContent = COPY[which][1];
+}
 function modeCopy(){
   if (mode === "escalation"){
     el("goBtn").textContent = "Begin the run";
@@ -2618,7 +2750,7 @@ function modeCopy(){
     el("curtainText").textContent = "One Apprentice, then an Adept, then an Archmage — then pairs, then threes, each set harder than the last. Clear the set before the next arrives. You do not get a second round.";
     renderBoard(null);
   } else {
-    el("goBtn").textContent = mode === "match" ? "Begin the duel" : "Begin the duel";
+    el("goBtn").textContent = "Begin the duel";
     el("curtainTitle").textContent = "Choose your rival";
     el("curtainText").textContent = "Your wand tracks its target on its own — Tab switches targets. Read what is coming and answer it with something heavy enough to stop it.";
     el("board").hidden = true;
@@ -2630,55 +2762,201 @@ function selectMode(v){
   [...el("diffRow").children].forEach(c => {
     if (c.dataset && c.dataset.diff !== undefined) c.classList.toggle("sel", +c.dataset.diff === v);
   });
-  modeCopy();
-  if (mode !== "escalation" && !el("roomPanel").hidden) roomLine();
+  if (panel === "solo") modeCopy();
   syncHUD();
 }
-function segRow(box, values, get, set){
+function segRow(box, values, get, set, label){
   box.innerHTML = "";
   const btns = values.map(v => {
     const b = mk("button", null, box);
-    b.textContent = v;
-    b.addEventListener("click", () => { set(v); paint(); roomLine(); });
+    b.textContent = label ? label(v) : v;
+    b.addEventListener("click", () => { set(v); paint(); afterSeg(); });
     return b;
   });
   function paint(){ btns.forEach((b, i) => b.classList.toggle("sel", values[i] === get())); }
   paint();
   return paint;
 }
-function roomLine(){
-  const bots = Math.max(0, roomTotal - roomHumans);
-  el("botLine").textContent = bots === 0 ? "nobody" : bots + (bots === 1 ? " bot" : " bots") + " · " + DIFF[difficulty].name;
+let botLevel = 1;                       // who fills the empty seats in a hosted room
+const paintTotal = segRow(el("segTotal"), [2,3,4,5,6], () => roomTotal, v => { roomTotal = v; });
+const paintBotLvl = segRow(el("segBotLvl"), [0,1,2], () => botLevel, v => { botLevel = v; },
+                           v => DIFF[v].name);
+function afterSeg(){
+  hostNote();
+  // the lobby only obeys the host, and only before the match starts
+  if (panel === "host" && inRoom()) window.RPWNet.config({ total: roomTotal, difficulty: botLevel });
 }
-const paintTotal = segRow(el("segTotal"), [2,3,4,5,6], () => roomTotal, v => {
-  roomTotal = v;
-  if (roomHumans > roomTotal - 1) { roomHumans = Math.max(1, roomTotal - 1); paintHumans(); }
-});
-const paintHumans = segRow(el("segHumans"), [1,2], () => roomHumans, v => {
-  roomHumans = Math.min(v, Math.max(1, roomTotal - 1));
-});
-roomLine();
+function hostNote(){
+  const taken = inRoom() ? window.RPWNet.net.players.length : 1;
+  const bots = Math.max(0, roomTotal - taken);
+  const note = el("hostNote");
+  note.classList.remove("bad");
+  note.textContent = "Send the code to your friends. " +
+    (bots === 0 ? "Every seat is taken — start when you are ready."
+                : bots + (bots === 1 ? " seat is" : " seats are") + " still empty; starting now fills " +
+                  (bots === 1 ? "it" : "them") + " with " + DIFF[botLevel].name + " bots.");
+}
 
+/* ------------------------------------------------------ the relay */
+// The game is static files; the relay that carries invite codes and input is a
+// separate service. Point this at it. Setting window.RPW_RELAY before src/net.js
+// loads overrides it, which is how local development talks to ws://localhost:8787.
+const RELAY = (typeof window !== "undefined" && window.RPW_RELAY) || "";
+function hasNet(){ return !!(window.RPWNet && RELAY); }
+function inRoom(){ return !!(window.RPWNet && window.RPWNet.net.room); }
+function ensureConnected(){
+  if (!hasNet()) return Promise.reject(new Error("no relay configured"));
+  bindNet();
+  const n = window.RPWNet.net;
+  if (n.state !== "offline") return Promise.resolve(n);
+  return window.RPWNet.connect(RELAY);
+}
+// src/net.js loads after this file — it needs window.RPW to exist first — so
+// window.RPWNet is still undefined while this runs. Bind on first use instead,
+// by which time the script has definitely loaded.
+let netBound = false;
+function bindNet(){
+  if (netBound || !window.RPWNet) return;
+  netBound = true;
+  window.RPWNet.onChange(onNetChange);
+}
+function netFail(which, why){
+  const note = el(which === "host" ? "hostNote" : "joinNote");
+  note.classList.add("bad");
+  note.textContent = why ? why
+    : RELAY ? "Could not reach the match server. It may be asleep or down — solo play is unaffected."
+            : "No match server is configured yet, so there is nobody to invite. Point RPW_RELAY at the relay’s wss:// address and this screen comes alive.";
+}
+function setInvite(code){
+  const b = el("inviteCode");
+  b.classList.toggle("waiting", !code);
+  b.textContent = code || "····";
+  el("copyCode").disabled = !code;
+  el("copyCode").classList.remove("done");
+  el("copyCode").textContent = "Copy";
+}
+function renderRoster(box){
+  box.innerHTML = "";
+  if (!inRoom()) return;
+  const n = window.RPWNet.net;
+  for (let i = 0; i < roomTotal; i++){
+    const p = (n.players || []).find(x => x.seat === i);
+    const row = mk("div", p ? (i === n.seat ? "me" : null) : "empty", box);
+    mk("span", null, row).textContent =
+      p ? (p.name + (p.host ? " (host)" : "")) : "empty — a bot takes this seat";
+    const tag = mk("i", p && p.ready ? "on" : null, row);
+    tag.textContent = p ? (p.ready ? "ready" : "waiting") : "";
+  }
+}
+let iAmReady = false;
+function paintJoin(){
+  const btn = el("joinGo");
+  if (inRoom()){
+    el("codeInput").disabled = true;
+    btn.textContent = iAmReady ? "Ready ✓" : "Ready";
+    btn.classList.toggle("done", iAmReady);
+  } else {
+    el("codeInput").disabled = false;
+    btn.textContent = "Join";
+    btn.classList.remove("done");
+  }
+  renderRoster(el("joinRoster"));
+}
+function onNetChange(n){
+  if (n.error){
+    netFail(panel === "host" ? "host" : "join", n.error);
+    n.error = null;
+    return;
+  }
+  if (panel === "host"){ setInvite(n.room); renderRoster(el("hostRoster")); hostNote(); }
+  else if (panel === "join"){
+    paintJoin();
+    if (inRoom()){
+      const note = el("joinNote");
+      note.classList.remove("bad");
+      note.textContent = "You are in room " + n.room + ". The match begins when everyone is ready, or when the host starts it.";
+    }
+  }
+}
+
+/* ---------------------------------------------------- the buttons */
+el("soloBtn").addEventListener("click", () => { leaveRoom(); show("solo"); });
+el("mpBtn").addEventListener("click", () => {
+  show("mp");
+  const note = el("mpNote");
+  note.classList.toggle("bad", !hasNet());
+  if (!hasNet()) note.textContent = "No match server is configured yet, so hosting and joining will not connect. Solo play works as normal.";
+});
 el("diffRow").addEventListener("click", e => {
   const b = e.target.closest ? e.target.closest("button[data-diff]") : null;
   if (b) selectMode(+b.dataset.diff);
 });
 el("goBtn").addEventListener("click", () => {
+  leaveRoom();
   if (mode === "match") mode = "duel";
   newMatch();
   cvs.focus();
 });
-el("roomBtn").addEventListener("click", () => {
-  const panel = el("roomPanel");
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden){ el("board").hidden = true; roomLine(); }
+el("hostBtn").addEventListener("click", () => {
+  show("host");
+  setInvite(null);
+  renderRoster(el("hostRoster"));
+  hostNote();
+  ensureConnected()
+    .then(() => window.RPWNet.create({ total: roomTotal, difficulty: botLevel, private: true }))
+    .catch(() => netFail("host"));
+});
+el("joinBtn").addEventListener("click", () => {
+  show("join");
+  iAmReady = false;
+  paintJoin();
+  const note = el("joinNote");
+  note.classList.remove("bad");
+  note.textContent = "Paste the code the host sent you.";
+});
+el("copyCode").addEventListener("click", () => {
+  const code = el("inviteCode").textContent.trim();
+  if (!code || code.startsWith("·")) return;
+  const done = () => { el("copyCode").textContent = "Copied"; el("copyCode").classList.add("done"); };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).then(done, () => {});
+  }
+});
+el("codeInput").addEventListener("input", e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+});
+el("joinGo").addEventListener("click", () => {
+  if (inRoom()){ iAmReady = !iAmReady; window.RPWNet.ready(iAmReady); paintJoin(); return; }
+  const code = (el("codeInput").value || "").trim().toUpperCase();
+  if (code.length < 4){ netFail("join", "An invite code is four characters."); return; }
+  ensureConnected()
+    .then(() => {
+      window.RPWNet.join(code);
+      const note = el("joinNote");
+      note.classList.remove("bad");
+      note.textContent = "Knocking…";
+    })
+    .catch(() => netFail("join"));
 });
 el("startRoom").addEventListener("click", () => {
   if (mode === "escalation") selectMode(difficulty);
+  difficulty = botLevel;
+  if (inRoom()){ window.RPWNet.start(); return; }   // the server hands everyone the same seed
   mode = "match";
+  roomHumans = 1;
   newMatch();
   cvs.focus();
 });
+function leaveRoom(){
+  if (window.RPWNet && window.RPWNet.net.room) window.RPWNet.leave();
+  iAmReady = false;
+}
+// bound by id rather than delegated off document, so the headless rigs — whose
+// document stub is getElementById and nothing else — can drive the menu too
+el("soloBack").addEventListener("click", () => show("home"));
+el("mpBack").addEventListener("click", () => show("home"));
+el("hostBack").addEventListener("click", () => { leaveRoom(); show("mp"); });
+el("joinBack").addEventListener("click", () => { leaveRoom(); show("mp"); });
 el("resumeBtn").addEventListener("click", () => { if (phase === "paused") togglePause(); });
 el("menuBtn").addEventListener("click", toMenu);
 try {
@@ -2686,12 +2964,16 @@ try {
   if (savedName) el("nameInput").value = savedName;
 } catch (e) {}
 el("nameInput").addEventListener("keydown", e => {
-  if (e.key === "Enter"){
-    e.preventDefault();
-    e.target.blur();
-    (el("roomPanel").hidden ? el("goBtn") : el("startRoom")).click();
-  }
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  e.target.blur();
+  const primary = { solo:"goBtn", host:"startRoom", join:"joinGo", mp:"hostBtn", home:"soloBtn" }[panel];
+  if (primary) el(primary).click();
 });
+el("codeInput").addEventListener("keydown", e => {
+  if (e.key === "Enter"){ e.preventDefault(); el("joinGo").click(); }
+});
+show("home");
 
 /* ---------------------------------------------------------- loop */
 // The simulation only ever advances in fixed STEP slices. Two machines fed the
@@ -2755,6 +3037,8 @@ window.RPW = {
     difficulty = opts.difficulty != null ? opts.difficulty : difficulty;
     roomTotal = opts.total || roomTotal;
     roomHumans = opts.humans || 1;
+    localSeat = opts.seat != null ? opts.seat : 0;
+    seatNames = opts.names || null;
     if (opts.name) { const inp = el("nameInput"); if (inp) inp.value = opts.name; }
     newMatch(opts.seed);
   },
@@ -2931,8 +3215,15 @@ window.RPW = {
     net.dropped.clear();
     net.lastSent = -1;
 
-    // the first DELAY frames are idle for everyone, so nobody stalls at the start
-    for (let f = 0; f < DELAY; f++) frameRow(f).fill(0);
+    // The first onStep runs at simFrame 1 and sends for 1 + DELAY, so frames 0
+    // through DELAY inclusive never get a mask from anybody. Prefill them idle
+    // or every client stalls forever on frame DELAY waiting for a mask that is
+    // never coming — which is exactly what happened the first time this was
+    // driven by two real browsers.
+    for (let f = 0; f <= DELAY; f++) frameRow(f).fill(0);
+
+    const names = [];
+    for (const p of net.players) if (p.seat >= 0) names[p.seat] = p.name;
 
     RPW.NET.active = true;
     RPW.startMatch({
@@ -2940,6 +3231,8 @@ window.RPW = {
       seed: net.seed,
       total: msg.total || net.players.length,
       humans: net.players.length,
+      seat: net.seat < 0 ? 0 : net.seat,
+      names,
       difficulty: msg.difficulty,
       name: currentName()
     });
@@ -2999,8 +3292,10 @@ window.RPW = {
     start: () => send({ t: "start" }),
     leave: () => {
       send({ t: "bye" });
-      net.state = "lobby";
+      net.state = net.ws && net.ws.readyState === 1 ? "lobby" : "offline";
       net.room = null;
+      net.players = [];
+      net.seat = -1;
       RPW.NET.active = false;
       emit();
     },

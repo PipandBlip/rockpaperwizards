@@ -3,10 +3,11 @@
  *
  *   node tools/ward-test.js
  *
- * The ward is a bank of damage: it eats as much of any blow as it is still
- * holding, passes only the remainder through, and shatters on the blow that
- * empties it. These cases pin that down for each thing that can hit you —
- * a shot, a hurled prop, a beam — and for the frontal arc it only covers.
+ * The ward is light cover with a health bar. It is rated for spark and rive
+ * only: it eats as much of one as it is still holding and shatters on the shot
+ * that empties it. Anything heavier — a hexstone, a beam, a hurled crate — goes
+ * straight through and takes the wall with it. It also thins on its own the
+ * whole time it is up. These cases pin all of that down.
  *
  * game.js is a closed IIFE, so the rig appends one line to a copy of the
  * source that hands its internals out through globalThis. Nothing on disk
@@ -20,7 +21,7 @@ let code = fs.readFileSync(path.join(__dirname, "..", "src", "game.js"), "utf8")
 const tail = "\n})();";
 if (!code.trimEnd().endsWith("})();")) throw new Error("game.js no longer ends in an IIFE — update this rig");
 code = code.trimEnd().slice(0, -"})();".length) +
-  "globalThis.__RPW = { SPELLS, byId, cast, strike, wardFacing, hurt, breakWard," +
+  "globalThis.__RPW = { SPELLS, byId, cast, strike, wardFacing, hurt, breakWard, WARD_BLOCKS," +
   " WARD_COS, WARD_R, get wizards(){ return wizards; }, get shots(){ return shots; }," +
   " get you(){ return you; }, get foe(){ return foe; } };\n})();";
 
@@ -94,7 +95,7 @@ const step = () => { t += 16; clock = t; frameCb(t); };
 step();
 
 const G = sandbox.__RPW;
-const { byId, cast, strike, wardFacing, WARD_R } = G;
+const { byId, cast, strike, wardFacing, WARD_BLOCKS } = G;
 
 /* ---- assertions ---- */
 let fails = 0, ran = 0;
@@ -108,7 +109,7 @@ function check(name, cond, detail){
 function subject(){
   const w = G.you;
   w.dead = false; w.hp = w.hpMax; w.mana = 100; w.facing = 0;
-  w.x = 480; w.y = 310; w.ward = 0; w.wardMax = 0; w.wardT = 0; w.wardTick = 0;
+  w.x = 480; w.y = 310; w.ward = 0; w.wardMax = 0; w.wardFade = 0; w.wardTick = 0;
   w.charge = null; w.chargeT = 0; w.castLock = 0; w.beamOn = false; w.hurt = 0;
   return w;
 }
@@ -131,24 +132,45 @@ console.log("ward");
         near(h.wardMax, S.absorb + S.chargeA*.5), "wardMax=" + h.wardMax);
 }
 
-// --- it eats what it can and passes the rest
+// --- it holds spark and rive, and passes the overflow
 {
   const w = subject(); cast(w, 3, 0);              // bank of 20
-  strike(w, 8, ...inFront(w), false);
-  check("a small blow is eaten whole", near(w.ward, 12) && w.hp === w.hpMax,
+  strike(w, 8, ...inFront(w), "spark", false);
+  check("a spark inside the bank is eaten whole", near(w.ward, 12) && w.hp === w.hpMax,
         "ward=" + w.ward + " hp=" + w.hp);
-  strike(w, 30, ...inFront(w), false);
-  check("an oversized blow is eaten down to the bank, remainder lands",
+  strike(w, 30, ...inFront(w), "rive", false);
+  check("an oversized rive is eaten down to the bank, remainder lands",
         w.ward === 0 && near(w.hp, w.hpMax - 18), "hp=" + w.hp);
-  check("emptying the bank shatters the wall", w.wardT === 0 && w.ward === 0);
+  check("the shot that empties it shatters the wall", w.ward === 0 && w.wardMax === 0);
 }
 
 // --- the exact-fit case: the wall dies but nothing gets through
 {
   const w = subject(); cast(w, 3, 0);
-  strike(w, w.ward, ...inFront(w), false);
-  check("a blow that exactly empties it costs no health",
+  strike(w, w.ward, ...inFront(w), "spark", false);
+  check("a shot that exactly empties it costs no health",
         w.ward === 0 && w.hp === w.hpMax, "hp=" + w.hp);
+}
+
+// --- and it is rated for nothing else
+{
+  for (const kind of ["hex", "beam", "prop"]){
+    const w = subject(); cast(w, 3, 1);            // a full wall, 60
+    const bank = w.ward;
+    strike(w, 24, ...inFront(w), kind, false);
+    check("a " + kind + " is not something a wall holds — full damage lands",
+          near(w.hp, w.hpMax - 24), "hp=" + w.hp);
+    check("a " + kind + " shatters the wall on the way through",
+          w.ward === 0 && w.wardMax === 0, "ward=" + w.ward + " (was " + bank + ")");
+  }
+}
+
+// --- what the wall is rated for, stated once
+{
+  check("only spark and rive are held",
+        !!WARD_BLOCKS.spark && !!WARD_BLOCKS.rive &&
+        !WARD_BLOCKS.hex && !WARD_BLOCKS.beam && !WARD_BLOCKS.prop,
+        JSON.stringify(WARD_BLOCKS));
 }
 
 // --- direction still matters
@@ -157,46 +179,45 @@ console.log("ward");
   check("the wall faces where the wizard faces", wardFacing(w, ...inFront(w)));
   check("nothing guards your back", !wardFacing(w, ...behind(w)));
   const before = w.ward;
-  strike(w, 25, ...behind(w), false);
-  check("a blow from behind ignores the wall entirely",
-        w.ward === before && near(w.hp, w.hpMax - 25), "hp=" + w.hp);
+  strike(w, 25, ...behind(w), "spark", false);
+  check("a spark from behind ignores the wall entirely",
+        near(w.ward, before) && near(w.hp, w.hpMax - 25), "hp=" + w.hp);
 }
 
-// --- a beam grinds it down rather than skipping it
+// --- a beam is no longer answered by a wall
 {
   const w = subject(); cast(w, 3, 1);
-  const bank = w.ward, dps = byId.beam.dmg, dt = 1/60;
-  let frames = 0;
-  while (w.ward > 0 && frames < 1000){ strike(w, dps*dt, w.x + 200, w.y, true); frames++; }
-  // the frame that empties the bank leaks its remainder, and nothing before it does
-  check("a beam drains the wall before it touches the wizard",
-        w.hpMax - w.hp < dps*dt, "lost " + (w.hpMax - w.hp).toFixed(3));
-  check("the wall lasts about bank/dps seconds under a beam",
-        Math.abs(frames/60 - bank/dps) < .05, (frames/60).toFixed(2) + "s vs " + (bank/dps).toFixed(2) + "s");
-  strike(w, dps*dt, w.x + 200, w.y, true);
-  check("once it is gone the beam burns normally", w.hp < w.hpMax);
+  const dt = 1/60;
+  strike(w, byId.beam.dmg*dt, ...inFront(w), "beam", true);
+  check("one frame of beam is enough to take the wall down", w.ward === 0);
+  check("and that same frame still burns the wizard", w.hp < w.hpMax,
+        "lost " + (w.hpMax - w.hp).toFixed(3));
 }
 
-// --- a beam is stopped short at the wall, not at the robe
+// --- the wall thins on its own
 {
-  const a = subject();
-  const b = G.foe;
-  b.dead = false; b.hp = b.hpMax; b.ward = 0; b.wardT = 0;
-  b.x = 200; b.y = 310; b.facing = 0;
-  a.x = 500; a.y = 310; a.facing = Math.PI;   // a faces b
-  cast(a, 3, 1);
-  const reach = Math.hypot(a.x - b.x, a.y - b.y);
-  check("a raised ward stands off the wizard", near(WARD_R, 40) || WARD_R > a.r,
-        "WARD_R=" + WARD_R);
-  check("the ward covers the line the beam would take", wardFacing(a, b.x, b.y),
-        "reach=" + reach.toFixed(0));
+  const tap = subject(); cast(tap, 3, 0);
+  check("a tapped wall bleeds out over its short life",
+        near(tap.wardFade, tap.wardMax / 2.4), "fade=" + tap.wardFade.toFixed(2) + "/s");
+  const full = subject(); cast(full, 3, 1);
+  check("a charged wall banks more but also stands longer",
+        near(full.wardFade, full.wardMax / 3.8), "fade=" + full.wardFade.toFixed(2) + "/s");
+  // drain it with nothing hitting it, exactly as the frame loop does
+  const dt = 1/60; let secs = 0;
+  while (full.ward > 0 && secs < 20){ full.ward -= full.wardFade*dt; secs += dt; }
+  check("left alone it is gone in about its stated life",
+        Math.abs(secs - 3.8) < .05, secs.toFixed(2) + "s");
+  const half = subject(); cast(half, 3, 1);
+  for (let i = 0; i < 114; i++) half.ward -= half.wardFade*dt;   // 1.9s, half its life
+  check("a wall raised early is already half gone when the shot lands",
+        Math.abs(half.ward - half.wardMax/2) < 1, "ward=" + half.ward.toFixed(1));
 }
 
 // --- no ward, no change
 {
   const w = subject();
-  strike(w, 17, ...inFront(w), false);
-  check("with no wall up a blow lands in full", near(w.hp, w.hpMax - 17), "hp=" + w.hp);
+  strike(w, 17, ...inFront(w), "spark", false);
+  check("with no wall up a shot lands in full", near(w.hp, w.hpMax - 17), "hp=" + w.hp);
 }
 
 console.log("\n" + (fails ? fails + " of " + ran + " failed" : "all " + ran + " ward checks pass"));

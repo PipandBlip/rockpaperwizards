@@ -1,0 +1,22 @@
+# Rock, Paper, Wizards — Pages project (the actual site)
+#
+# Serves the static game client from ./public and the /ws WebSocket relay
+# from ./functions/ws.js, which forwards to the RPWRelay Durable Object
+# defined in the separate `rockpaperwizards-relay` Worker (../worker).
+#
+# The `script_name` below is required for Durable Object bindings in a
+# Pages project specifically (Workers don't need it, since they can define
+# the class in the same file) — it must exactly match the `name` in
+# ../worker/wrangler.toml, and that worker must already be deployed.
+#
+#   cd cloudflare/pages
+#   npx wrangler pages deploy
+
+name = "rockpaperwizards"
+pages_build_output_dir = "public"
+compatibility_date = "2026-08-08"
+
+[[durable_objects.bindings]]
+name = "RPW_RELAY"
+class_name = "RPWRelay"
+script_name = "rockpaperwizards-relay"

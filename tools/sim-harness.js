@@ -7,7 +7,8 @@
  *   SEED=7 DIFF=2 SECS=120 node tools/sim-harness.js
  *
  * Env: SEED, SECS, DIFF (0-2 tiers, 3 escalation), ROOM=<2-6>, HUMANS=<1-2>,
- * BEAMY=1 for a beam-heavy player.
+ * BEAMY=1 for a beam-heavy player. HUMANS>1 stands in for the extra human seats
+ * a networked match creates — there is no local co-op in the menu any more.
  */
 const fs = require("fs");
 const vm = require("vm");
@@ -114,12 +115,17 @@ const DIFF = +(process.env.DIFF || 1);
 const db = els.diffRow.children[DIFF]; db.dataset.diff = String(DIFF); db.closest = () => db;
 els.diffRow.dispatch("click", { target: db });
 if (process.env.ROOM){
-  // pick seat counts through the room widgets, then start
-  const total = +(process.env.ROOM);
-  const humans = +(process.env.HUMANS || 1);
-  for (const b of els.segTotal.children) if (b.textContent === total) b.dispatch("click");
-  for (const b of els.segHumans.children) if (b.textContent === humans) b.dispatch("click");
-  els.startRoom.dispatch("click");
+  // Local co-op is gone from the menu, so a multi-human room can only be reached
+  // the way a networked match reaches it — through startMatch. Driving that same
+  // entry point here is better coverage than the old widget clicks anyway.
+  sandbox.window.RPW.startMatch({
+    mode: "match",
+    seed: SEED,
+    total: +(process.env.ROOM),
+    humans: +(process.env.HUMANS || 1),
+    seat: 0,
+    difficulty: DIFF
+  });
 } else {
   els.goBtn.dispatch("click");
 }

@@ -96,21 +96,49 @@ already worked locally.
 
 ## What is left
 
-1. **Lobby UI.** The match room panel still starts a local match. It needs a
-   server URL field, create / join-by-code / quick-match buttons, and a roster
-   with ready toggles. `RPWNet.onChange()` already fires with everything that UI
-   needs; today you drive it from the console.
-2. **Play it over a real connection.** Two browsers, real latency, and a look at
-   whether `DELAY = 3` is enough. Expect to raise it, and to add a visible
-   "waiting for <name>" state when `NET.ready()` returns false for more than a
-   few frames.
+1. **A public relay URL.** The game is static and the relay is not; it needs a
+   websocket-capable host. Set `window.RPW_RELAY` before `src/net.js` loads.
+2. **Latency.** Two browsers have played a full room in lockstep, but over
+   localhost. `DELAY = 3` (~50ms) has not met a real connection yet; expect to
+   raise it, and to show a "waiting for <name>" state when `NET.ready()` returns
+   false for more than a few frames.
 3. **Desync detection.** Both clients already compute `RPW.hash()`. Exchange it
    every second or so; if two clients disagree, say so plainly and end the match
-   rather than letting the two worlds drift apart in silence.
+   rather than letting the worlds drift apart in silence.
 4. **Rejoin.** A dropped player currently becomes a bot for good.
 5. **Server hardening before it faces the open internet:** per-connection rate
    limits on `in` messages, a cap on rooms per IP, and an origin check on the
    WebSocket upgrade.
+
+## Two bugs the first real playtest found
+
+Both were invisible to `tools/determinism.js`, and both made networked play
+impossible.
+
+**The stall.** `beginMatch` prefilled input rows for frames `0..DELAY-1`, but
+the first `onStep` runs at simulation frame 1 and sends for `1 + DELAY`. Frame
+`DELAY` itself was never filled by anybody, so `NET.ready(DELAY)` returned false
+forever and every client froze on frame 3. The prefill now covers `0..DELAY`
+inclusive.
+
+**The drift.** `draw()` jittered the screen shake and `drawBeam()` drew its
+particles from `rand()` — the *simulation's* seeded stream. The render loop runs
+a variable number of times per simulation step, and `prefers-reduced-motion` is a
+per-user setting that gates several particle bursts, so two clients consumed a
+different number of values from a stream that has to stay aligned. Same seed,
+same inputs, different worlds within a second.
+
+The fix is a wall between the two: `rand()` is the simulation's and may only be
+touched inside it; `vrand()` is unseeded and belongs to anything only the eye or
+the ear meets — particles, shake, wand flourishes, which sample of a sound to
+play. The clash orb was the subtle case, because its shiver was being written
+into the orb's real position, which is gameplay; the shiver now happens when it
+is drawn.
+
+`determinism.js` cannot catch this class of bug — it advances the simulation
+once per rendered frame, so the streams never fall out of step. Catching it
+needs two clients with independent frame pacing, compared by hash at equal frame
+numbers.
 
 ## Local development
 

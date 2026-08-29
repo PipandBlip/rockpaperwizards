@@ -5,12 +5,14 @@ collide the heavier one survives, lighter by whatever it just ate. Holding a key
 charges a spell, adding weight at rising mana cost. That is the whole game: read
 what is coming and answer it with something heavy enough.
 
-The **Ward** is the one spell that is not a weight. It is a bank of damage
-hung in front of you, sized by how long you held the key, and everything draws
-on the same bank — a shot, a hurled crate, a beam grinding away at it. It soaks
-as much of each blow as it is still holding and shatters on the blow that empties
-it, passing through only what was left over. It covers the arc you are facing and
-nothing behind you.
+The **Ward** is the one spell that is not a weight. It is light cover with a
+health bar — how long you held the key decides how much it can take — and it
+thins the whole time it stands, so a wall raised early is half spent by the time
+anything reaches it. It is rated for Spark and Rive and nothing else: it eats as
+much of one as it is still holding, and the shot that empties it shatters it and
+spills the remainder onto you. A Hexstone, a beam or a hurled crate is more than
+it was built for and goes straight through, taking the wall with it. It covers
+the arc you are facing and nothing behind you.
 
 Countering pays. A counter that actually stops something returns mana on the
 spot and gives you three seconds of gold corona and doubled regeneration. Being
@@ -47,7 +49,7 @@ docs/multiplayer.md the wire protocol and what is left to do
 | --- | --- |
 | Apprentice / Adept / Archmage | One bot, easy / medium / hard |
 | Escalation | Endless waves — one Apprentice, one Adept, one Archmage, then pairs up the tiers, then threes. A wave only arrives once the last one is cleared. Scored, with a local high-score board. |
-| Match room | Free-for-all, 2–6 wizards, one or two seats at this keyboard, bots fill the rest |
+| Multiplayer | Free-for-all, 2–6 wizards over the network. Host a duel for a four-letter invite code, or paste someone else's. Bots fill any seat nobody takes. |
 
 ## Controls
 
@@ -60,7 +62,6 @@ docs/multiplayer.md the wire protocol and what is left to do
 | `H` `J` `K` | Ward · Beam · Grasp |
 | `P` `R` `M` | pause · restart · mute |
 
-Player two, in a match room: arrow keys, `1`–`6`, right `Shift`.
 
 ## Tests
 
@@ -85,14 +86,29 @@ out of it.
 
 ## Multiplayer status
 
-- **Working and tested:** the matchmaking server — rooms by code, quick match,
-  seating, ready-up, shared seed, input relay, drop handling (13 tests).
-- **Written, not yet played over a real connection:** `src/net.js`, the lockstep
-  client. The protocol matches the server and the determinism it relies on is
-  proven, but it has not been driven by two browsers with real latency between
-  them, and the lobby has no UI yet — you drive it from the console today.
+Two browsers have now played a room together end to end — host, invite code,
+join, ready, start, and a full match in lockstep with both clients agreeing on
+a hash of the world at every shared frame. That run found two real bugs, both
+fixed:
 
-See `docs/multiplayer.md` for the protocol and the remaining work.
+- The input prefill covered frames `0..DELAY-1`, but the first `onStep` sends
+  for `1 + DELAY`, so frame `DELAY` never got a mask and **every match stalled
+  on frame 3 forever**.
+- `draw()` and `drawBeam()` drew screen shake and particles from the
+  **simulation's** seeded RNG. Rendering runs a variable number of times per
+  simulation step, and `prefers-reduced-motion` differs per machine, so the two
+  clients pulled a different number of values off the shared stream and silently
+  diverged. Cosmetic randomness now comes from a separate unseeded `vrand()`,
+  and the clash orb's shiver is applied when drawing rather than baked into its
+  simulated position.
+
+`tools/determinism.js` could never have caught the second one: it steps the
+simulation once per rendered frame, so the streams stay aligned. Only variable
+real-world frame pacing exposes it.
+
+Still open: a public relay URL, latency tuning (`DELAY = 3` has only been tried
+over localhost), desync detection on the wire, and rejoin. See
+`docs/multiplayer.md`.
 
 ## Deploying to blipgaming
 
@@ -100,11 +116,15 @@ The game half is static: copy `index.html`, `src/`, and `assets/` to the host.
 Nothing is bundled or minified, and there is no build step to run.
 
 The relay is a small Node process (`server/`) that needs a websocket-capable
-host and a public URL. Point the client at it with:
+host and a public URL. The game reads that URL from one global, so set it before
+`src/net.js` loads:
 
-```js
-RPWNet.connect("wss://your-host/ws");
+```html
+<script>window.RPW_RELAY = "wss://your-host/ws";</script>
 ```
+
+Leave it unset and the Solo Duel half works exactly as it does now — the
+Multiplayer screens simply say there is no match server to reach.
 
 Until that URL exists, every mode except networked play works exactly as it does
 now — the game never waits on the network unless a match has actually started.

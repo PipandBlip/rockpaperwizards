@@ -1,0 +1,25 @@
+# Rock, Paper, Wizards — multiplayer relay worker
+#
+# This standalone Worker's only job is to own and deploy the RPWRelay
+# Durable Object class. It's not meant to be hit directly by players —
+# the Pages project (cloudflare/pages) is the actual site, and reaches
+# this Durable Object through the binding configured on ITS wrangler.toml
+# (which needs this worker's `name` below as its `script_name`).
+#
+# Deploy this FIRST, before deploying the Pages project — the Pages
+# binding needs this worker (and its RPWRelay class) to already exist.
+#
+#   cd cloudflare/worker
+#   npx wrangler deploy
+
+name = "rockpaperwizards-relay"
+main = "src/index.js"
+compatibility_date = "2026-08-08"
+
+[[durable_objects.bindings]]
+name = "RPW_RELAY"
+class_name = "RPWRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RPWRelay"]
