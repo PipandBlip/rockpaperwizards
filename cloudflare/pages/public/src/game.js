@@ -2303,9 +2303,11 @@ function escGameOver(){
 }
 
 function newRound(){
-  // every machine in a match derives the same arena from the same seed
+  // every machine in a match derives the same arena from the same seed.
+  // simFrame is intentionally NOT reset here: lockstep frames count up
+  // continuously across the whole match (they restart in newMatch), so
+  // round transitions can't race the netcode's input bookkeeping.
   seedRng((Math.imul(matchSeed, 7919) + roundNo * 104729) >>> 0);
-  simFrame = 0;
   resetWizards();
   makeMap();
   phase = "count"; phaseT = 1.4;
@@ -2324,6 +2326,7 @@ function newMatch(seed){
   matchSeed = (seed || ((Date.now() ^ (Math.random()*0xffffffff)) >>> 0)) >>> 0;
   startMusic();
   roundNo = 1;
+  simFrame = 0;   // frame counter restarts once per match, not per round
   runScore = 0; kills = 0; survT = 0; waveNo = 0; waveLive = false; waveGap = 1.1;
   makeSeats();
   newRound();
