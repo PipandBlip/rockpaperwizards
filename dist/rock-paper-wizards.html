@@ -702,7 +702,7 @@ window.addEventListener("keyup", e => {
   keys[k] = false;
   if (k === "shift") keys[(e.code || "") === "ShiftRight" ? "shiftR" : "shiftL"] = false;
 });
-window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; if (phase === "fight") togglePause(); });
+window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; if (phase === "fight" && !NET.active) togglePause(); });
 
 /* ---------------------------------------------------------- casting */
 function beginCharge(w, idx){
@@ -2704,6 +2704,10 @@ function endRound(win){
   }
 }
 function togglePause(){
+  // Pause is local-only and would desync a networked match (one client stops
+  // advancing while the other keeps going, so round reseeds diverge and both
+  // freeze). Disable it entirely in multiplayer.
+  if (NET.active) return;
   if (phase === "fight"){ phase = "paused"; el("pausePanel").hidden = false; msg = null; }
   else if (phase === "paused"){ phase = "fight"; el("pausePanel").hidden = true; msg = null; }
 }
