@@ -2186,24 +2186,75 @@ function drawWizard(w){
 
   ctx.rotate(a);
   const flashK = clamp(w.hurt, 0, 1);
-  // shadow
+  // Straight down on a wizard you see a hat: a dark brim lying flat, and the
+  // cone on top of it catching the light. Tone does the work at thirty pixels —
+  // the cone has to be LIGHTER than the brim and cast a shadow onto it, or it
+  // stops reading as something raised and turns into a wedge cut out of a disc.
+  const brim = w.friendly ? "#1b2739" : "#331a23";
+  const cone = w.friendly ? "#3f5f88" : "#8a4257";
+  const lit  = w.friendly ? "#5b81ad" : "#b06176";
+  // shadow on the floor
   ctx.fillStyle = "rgba(0,0,0,.45)";
-  ctx.beginPath(); ctx.ellipse(2, 3, 17, 15, 0, 0, TAU); ctx.fill();
-  // robe
+  ctx.beginPath(); ctx.ellipse(1, 3, 16, 15, 0, 0, TAU); ctx.fill();
+
+  // shoulders, leading the way — the brim sits back over them
   ctx.beginPath();
-  ctx.moveTo(16, 0);
-  ctx.lineTo(-10, -13);
-  ctx.lineTo(-6, 0);
-  ctx.lineTo(-10, 13);
-  ctx.closePath();
+  ctx.ellipse(5.5, 0, 10.5, 13, 0, 0, TAU);
   ctx.fillStyle = robe; ctx.fill();
-  ctx.strokeStyle = tint; ctx.lineWidth = 2;
-  ctx.shadowColor = tint; ctx.shadowBlur = w.hurt > 0 ? 24 : 10;
-  ctx.stroke();
-  // hood
-  ctx.beginPath(); ctx.arc(0, 0, 8, 0, TAU);
-  ctx.fillStyle = w.hurt > 0 ? "#ff6a78" : "#0d0a18"; ctx.fill();
-  ctx.strokeStyle = tint; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.globalAlpha = .45; ctx.strokeStyle = tint; ctx.lineWidth = 1.3; ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // the brim, flat on the floor
+  ctx.shadowColor = tint; ctx.shadowBlur = w.hurt > 0 ? 24 : 9;
+  ctx.beginPath(); ctx.arc(0, 0, 15, 0, TAU);
+  ctx.fillStyle = brim; ctx.fill();
+  ctx.strokeStyle = tint; ctx.lineWidth = 2; ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = .16; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // The cone droops BACKWARDS, the way a real pointed hat does: it rises off the
+  // crown and its tip trails behind the wizard. Pointing it forward laid the
+  // point over their own face, which is what read wrong. Facing is carried by the
+  // wand out front and the tail streaming behind, like a comet.
+  // Traced twice — once offset as the shadow it throws across the brim, once properly.
+  const conePath = (dx, dy) => {
+    ctx.beginPath();
+    ctx.arc(2.5 + dx, dy, 7.2, -Math.PI*0.5, Math.PI*0.5);
+    ctx.quadraticCurveTo(-5 + dx, 6.4 + dy, -16.4 + dx, dy);
+    ctx.quadraticCurveTo(-5 + dx, -6.4 + dy, 2.5 + dx, -7.2 + dy);
+    ctx.closePath();
+  };
+  ctx.globalAlpha = .5; ctx.fillStyle = "#05060c";
+  conePath(1.6, 2.8); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  conePath(0, 0);
+  ctx.fillStyle = w.hurt > 0 ? "#ff7d89" : cone; ctx.fill();
+  ctx.strokeStyle = tint; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // the lit side of the cone, up along its back
+  ctx.save();
+  conePath(0, 0); ctx.clip();
+  ctx.globalAlpha = .55; ctx.fillStyle = lit;
+  ctx.beginPath();
+  ctx.moveTo(12, -10);
+  ctx.quadraticCurveTo(-4, -8.4, -18, -1.4);
+  ctx.lineTo(-18, -4); ctx.lineTo(12, -4);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // the hat band around the base of the cone
+  ctx.globalAlpha = .55; ctx.strokeStyle = "#0a0d16"; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.arc(2.5, 0, 7.2, -Math.PI*0.38, Math.PI*0.38); ctx.stroke();
+  ctx.globalAlpha = 1;
+  // a glint on the trailing tip
+  ctx.fillStyle = w.hurt > 0 ? "#ff8a94" : tint; ctx.globalAlpha = .9;
+  ctx.beginPath(); ctx.arc(-15.6, 0, 1.9, 0, TAU); ctx.fill();
+  ctx.globalAlpha = 1;
+
   // struck: the whole figure blows out, white for a heavy hit, red for a graze
   if (flashK > 0.02){
     ctx.save();
@@ -2211,10 +2262,8 @@ function drawWizard(w){
     ctx.globalAlpha = flashK * .9;
     ctx.fillStyle = flashK > .55 ? "#ffffff" : "#ff4d5e";
     ctx.shadowColor = "#ff4d5e"; ctx.shadowBlur = 24*flashK;
-    ctx.beginPath();
-    ctx.moveTo(16, 0); ctx.lineTo(-10, -13); ctx.lineTo(-6, 0); ctx.lineTo(-10, 13);
-    ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.arc(0, 0, 9, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, 15, 0, TAU); ctx.fill();
+    conePath(0, 0); ctx.fill();
     ctx.restore();
   }
   // arm sweep when they bat a spell aside
@@ -2244,7 +2293,7 @@ function drawWizard(w){
   // wand
   ctx.shadowBlur = 0;
   ctx.strokeStyle = "#c8b48a"; ctx.lineWidth = 2.4;
-  ctx.beginPath(); ctx.moveTo(8, 6); ctx.lineTo(26, 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, 11); ctx.lineTo(28, 4); ctx.stroke();
 
   // charge glow at wand tip
   if (w.charge !== null){
@@ -2252,16 +2301,16 @@ function drawWizard(w){
     const k = s.maxChg ? w.chargeT/s.maxChg : 0;
     ctx.shadowColor = s.color; ctx.shadowBlur = 10 + k*30;
     ctx.fillStyle = s.color;
-    ctx.beginPath(); ctx.arc(27, 2, 3 + k*9, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(29, 4, 3 + k*9, 0, TAU); ctx.fill();
     ctx.globalAlpha = .5;
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(27, 2, 4 + k*13, 0, TAU*k); ctx.stroke();
+    ctx.beginPath(); ctx.arc(29, 4, 4 + k*13, 0, TAU*k); ctx.stroke();
     ctx.globalAlpha = 1;
   }
   if (w.fizzle > 0){
     ctx.shadowBlur = 0; ctx.globalAlpha = w.fizzle*2;
     ctx.strokeStyle = "#6b6188"; ctx.lineWidth = 1.4;
-    ctx.beginPath(); ctx.arc(27, 2, 7, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(29, 4, 7, 0, TAU); ctx.stroke();
     ctx.globalAlpha = 1;
   }
   ctx.restore();
