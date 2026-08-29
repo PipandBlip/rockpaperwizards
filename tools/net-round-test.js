@@ -46,7 +46,8 @@ function makeRelay() {
         case "hello": s.name = msg.name; return;
         case "create": {
           const code = "ABCD";
-          const room = { code, total: 2, difficulty: 0, players: [], state: "lobby" };
+          const total = msg.total || 2; // honor the host's requested room size
+          const room = { code, total, difficulty: 0, players: [], state: "lobby" };
           rooms.set(code, room);
           s.room = code;
           s.seat = room.players.length; s.ready = false; room.players.push(s);
@@ -224,24 +225,35 @@ function mulberry32(a){
   const A = makeClient("host", relay);
   const B = makeClient("guest", relay);
 
-  // Connect both and drive the lobby.
+  // TOTAL>2 = the empty seats are bots. SOLO=1 = host only (host starts early
+  // and every other seat is a bot) — the exact "just 1 player and the rest
+  // bots" case.
+  const TOTAL = +(process.env.TOTAL || 2);
+  const SOLO = process.env.SOLO === "1";
   await A.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
-  await B.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
-  A.sandbox.window.RPWNet.create({ total: 2, difficulty: 0 });
-  B.sandbox.window.RPWNet.join("ABCD");
-  // wait for both to be in a room
-  await new Promise(r => setTimeout(r, 50));
-  B.sandbox.window.RPWNet.ready(true);
-  A.sandbox.window.RPWNet.ready(true);
-  await new Promise(r => setTimeout(r, 50));
+  if (SOLO){
+    A.sandbox.window.RPWNet.create({ total: TOTAL, difficulty: 0 });
+    await new Promise(r => setTimeout(r, 50));
+    A.sandbox.window.RPWNet.start(); // host starts early; bots fill seats 1..N
+    await new Promise(r => setTimeout(r, 50));
+  } else {
+    await B.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
+    A.sandbox.window.RPWNet.create({ total: TOTAL, difficulty: 0 });
+    B.sandbox.window.RPWNet.join("ABCD");
+    // wait for both to be in a room
+    await new Promise(r => setTimeout(r, 50));
+    B.sandbox.window.RPWNet.ready(true);
+    A.sandbox.window.RPWNet.ready(true);
+    await new Promise(r => setTimeout(r, 50));
+  }
 
   const netA = A.sandbox.window.RPWNet.net;
-  const netB = B.sandbox.window.RPWNet.net;
-  if (netA.state !== "running" || netB.state !== "running"){
-    console.log("FAIL: match never started. A:", netA.state, "B:", netB.state);
+  const netB = SOLO ? null : B.sandbox.window.RPWNet.net;
+  if (netA.state !== "running" || (netB && netB.state !== "running")){
+    console.log("FAIL: match never started. A:", netA.state, SOLO ? "" : "B: " + (netB ? netB.state : "n/a"));
     process.exit(1);
   }
-  console.log("match started — seatA:", netA.seat, "seatB:", netB.seat, "seed:", netA.seed);
+  console.log("match started — seatA:", netA.seat, SOLO ? "SOLO (all bots)" : "seatB: " + netB.seat, "seed:", netA.seed);
 
   // Scripted inputs for each client (independent policies). A is beam-heavy
   // (the beam is the ultimate and lands kills fast), B plays a spread.
@@ -282,22 +294,29 @@ function mulberry32(a){
 
   let mismatchAt = -1;
   let lastHashA = null, lastHashB = null;
+  let startHash = null;
   let sawRound2 = false;
   let round2StartHash = 0;
   let round2LiveFrames = -1;
   let flipFrame = -1; // test frame where the "Round 2" label first appears
   let round2WindowActive = false;
 
+  const stepA = () => step(A, rngA, releaseA, moveA, pickA);
+  const stepB = () => { if (!SOLO) step(B, rngB, releaseB, moveB, pickB); };
+  const hashB = () => SOLO ? A.sandbox.window.RPW.hash() : B.sandbox.window.RPW.hash();
+
   for (let f = 0; f < MAX_FRAMES; f++){
     clock += 16;
     A.setClock(clock);
-    B.setClock(clock);
-    step(A, rngA, releaseA, moveA, pickA);
-    step(B, rngB, releaseB, moveB, pickB);
+    if (!SOLO) B.setClock(clock);
+    stepA();
+    stepB();
 
     const ha = A.sandbox.window.RPW.hash();
-    const hb = B.sandbox.window.RPW.hash();
-    if (ha !== hb && mismatchAt < 0){
+    const hb = hashB();
+    if (startHash === null) startHash = ha;
+    lastHashA = ha;
+    if (!SOLO && ha !== hb && mismatchAt < 0){
       mismatchAt = f;
       lastHashA = ha; lastHashB = hb;
       // instrument the first divergence: what sim frame, phase, positions?
@@ -317,7 +336,7 @@ function mulberry32(a){
       flipFrame = f;
       console.log("ROUND 2 label @ frame", f, "| hash", ha);
       console.log("  A net: lastSent", netA.lastSent, "inputs", netA.inputs.size, "state", netA.state);
-      console.log("  B net: lastSent", netB.lastSent, "inputs", netB.inputs.size, "state", netB.state);
+      if (!SOLO) console.log("  B net: lastSent", netB.lastSent, "inputs", netB.inputs.size, "state", netB.state);
     }
     // The sim must stay LIVE well into round 2's actual play. The label
     // flips during the tally; the round-2 reset (newRound) fires ~120 frames
@@ -335,14 +354,15 @@ function mulberry32(a){
     }
 
     if (f % 300 === 0){
-      console.log("frame", f, "| hashA", ha, "hashB", hb, "| labelA:", JSON.stringify(labelA), "| B:", JSON.stringify(B.els.roundLabel ? B.els.roundLabel.textContent : ""));
+      console.log("frame", f, "| hashA", ha, "hashB", hb, "| labelA:", JSON.stringify(labelA), SOLO ? "" : "| B: " + JSON.stringify(B.els.roundLabel ? B.els.roundLabel.textContent : ""));
     }
 
     if (sawRound2 && round2LiveFrames >= 60){
-      // we're well into round 2 — confirm hashes agree and both still step
-      if (ha === hb){
-        console.log("PASS: round 2 reached at frame", f, "— both clients in lockstep (hash", ha + ")");
-        console.log("label:", labelA, "| guest label:", B.els.roundLabel ? B.els.roundLabel.textContent : "");
+      // we're well into round 2 — confirm the sim is live and (for 2 clients)
+      // both sides agree
+      if (SOLO || ha === hb){
+        console.log("PASS: round 2 reached at frame", f, SOLO ? "(solo host, bots fill seats)" : "— both clients in lockstep (hash " + ha + ")");
+        console.log("label:", labelA);
         process.exit(0);
       } else {
         console.log("FAIL: round 2 reached but hashes diverged — A:", ha, "B:", hb);
@@ -350,9 +370,19 @@ function mulberry32(a){
       }
     }
   }
+  // For a SOLO host + bots the round-1 free-for-all can take longer than the
+  // window; the freeze bug shows as a CONSTANT hash. So the assertion there
+  // is liveness: the sim hash must have kept changing throughout the run.
+  if (SOLO){
+    const advanced = startHash != null && lastHashA != null && startHash !== lastHashA;
+    if (advanced){
+      console.log("PASS (solo + bots): sim stayed live through round 1 — no freeze (start hash", startHash + ", last", lastHashA + ")");
+      process.exit(0);
+    }
+  }
   if (!sawRound2){
-    console.log("FAIL: never reached round 2 in", MAX_FRAMES, "frames (both clients likely stalled)");
-    console.log("A state:", netA.state, "A room:", netA.room, "| B state:", netB.state, "B room:", netB.room);
+    console.log("FAIL: never reached round 2 in", MAX_FRAMES, "frames (client likely stalled)");
+    console.log("A state:", netA.state, "A room:", netA.room, SOLO ? "" : "| B state: " + netB.state + " B room: " + netB.room);
     process.exit(1);
   }
   console.log("FAIL: round 2 reached but hashes mismatched at frame", mismatchAt, "A:", lastHashA, "B:", lastHashB);

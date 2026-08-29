@@ -3283,6 +3283,14 @@ window.RPW = {
     net.stallAt = null;
     net.lastSent = -1;
 
+    // Seats with no human in them are bots, and a bot never sends a mask —
+    // so mark every unoccupied seat as dropped up front, or ready() waits on
+    // those seats forever and every match with bots stalls on round 1. (The
+    // left handler below does the same job when someone leaves mid-match.)
+    for (let s = 0; s < net.total; s++) {
+      if (!net.players.some(p => p.seat === s)) net.dropped.add(s);
+    }
+
     // The first onStep runs at simFrame 1 and sends for 1 + DELAY, so frames 0
     // through DELAY inclusive never get a mask from anybody. Prefill them idle
     // or every client stalls forever on frame DELAY waiting for a mask that is
