@@ -8,7 +8,7 @@
 "use strict";
 
 const assert = require("assert");
-const { Player, handle, rooms } = require("./rooms");
+const { Player, handle, rooms, sweepStalled, STALL_MS } = require("./rooms");
 
 let pass = 0;
 function test(name, fn) {
@@ -188,6 +188,76 @@ test("names are cleaned and clipped", () => {
   const nm = a.last("room").players[0].name;
   assert.ok(!/[<>()]/.test(nm), "markup characters should be stripped: " + nm);
   assert.ok(nm.length <= 14, "names cap at 14 characters");
+});
+
+test("seats are NOT renumbered mid-match", () => {
+  // Renumbering after a mid-match departure hands a survivor someone else's seat,
+  // so their keys drive the wrong wizard and their own stands there doing nothing.
+  const a = fake("A"), code = (a.say({ t: "create", total: 3 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  const c = fake("C"); c.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true }); c.say({ t: "ready", v: true });
+  const seatC = c.last("start").you;
+  assert.strictEqual(seatC, 2, "C should start in seat 2");
+  b.say({ t: "bye" });                       // the middle seat leaves
+  const roster = a.last("left").players;
+  const stillC = roster.find(p => p.name === "C");
+  assert.strictEqual(stillC.seat, 2, "C must keep seat 2 after B leaves mid-match");
+  assert.ok(!roster.some(p => p.seat === 1), "seat 1 is vacant, not reassigned");
+});
+
+test("seats ARE compacted in the lobby, where nothing is running", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 3 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  const c = fake("C"); c.say({ t: "join", code });
+  b.say({ t: "bye" });
+  const roster = a.last("room").players;
+  assert.deepStrictEqual(roster.map(p => p.seat), [0, 1], "lobby seats stay contiguous");
+});
+
+test("the seat that fell behind is dropped, and only that one", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  for (let f = 0; f < 40; f++) a.say({ t: "in", f, m: 0 });   // A plays on
+  b.say({ t: "in", f: 2, m: 0 });                             // B stopped early
+  const gone = sweepStalled(Date.now() + STALL_MS + 1000);
+  assert.strictEqual(gone.length, 1, "only the straggler is dropped");
+  assert.strictEqual(gone[0].seat, 1, "and it is B's seat");
+  assert.ok(b.last("dropped"), "the dropped client is told why");
+  assert.ok(!a.last("dropped"), "the player who kept up is left alone");
+});
+
+test("a room where everyone is merely waiting loses nobody", () => {
+  // lockstep stalls make every client go quiet at once; that must not be read
+  // as everyone failing, or one hiccup would empty the room
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "in", f: 30, m: 0 });
+  b.say({ t: "in", f: 30, m: 0 });          // level with each other, then silence
+  const gone = sweepStalled(Date.now() + STALL_MS + 1000);
+  assert.strictEqual(gone.length, 0, "nobody is dropped for waiting together");
+});
+
+test("clients that disagree at the same frame are told they have desynced", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 120, h: 111 });
+  assert.ok(!a.last("desync"), "one client alone proves nothing");
+  b.say({ t: "hash", f: 120, h: 222 });
+  assert.ok(a.last("desync"), "a disagreement at the same frame is reported");
+  assert.strictEqual(a.last("desync").f, 120);
+});
+
+test("clients that agree are left alone", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 60, h: 999 });
+  b.say({ t: "hash", f: 60, h: 999 });
+  assert.ok(!a.last("desync"), "matching worlds are not reported as desynced");
 });
 
 console.log(`\n${pass} passing`);

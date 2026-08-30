@@ -75,6 +75,7 @@
         ws.onclose = () => {
           net.state = "offline";
           RPW.NET.active = false;
+          if (RPW.pumpSync) RPW.pumpSync();
           emit();
         };
         ws.onerror = err => {
@@ -131,11 +132,40 @@
         emit();
         return;
 
+      case "desync": {
+        // Two clients stopped agreeing about the world. Lockstep has no way back
+        // from that without shipping whole game states around, so stop honestly
+        // instead of leaving people standing in worlds that have parted company.
+        endedBy("desync");
+        return;
+      }
+
+      case "dropped": {
+        // the server gave our seat away because we stopped sending input
+        endedBy("dropped");
+        return;
+      }
+
       case "error":
         net.error = msg.why;
         emit();
         return;
     }
+  }
+
+  // one exit for every way a match can stop being playable
+  function endedBy(reason) {
+    net.state = net.ws && net.ws.readyState === 1 ? "lobby" : "offline";
+    net.room = null;
+    net.players = [];
+    net.seat = -1;
+    net.total = 0;
+    net.inputs.clear();
+    net.dropped.clear();
+    RPW.NET.active = false;
+    if (RPW.pumpSync) RPW.pumpSync();
+    if (RPW.endMatch) RPW.endMatch(reason);
+    emit();
   }
 
   function seatCount() {
@@ -185,6 +215,7 @@
     for (const p of net.players) if (p.seat >= 0) names[p.seat] = p.name;
 
     RPW.NET.active = true;
+    if (RPW.pumpSync) RPW.pumpSync();
     RPW.startMatch({
       mode: "match",
       seed: net.seed,
@@ -241,6 +272,11 @@
       send({ t: "in", f: target, m: mask });
       net.lastSent = target;
     }
+    // Once a second, hand the server a checksum of our whole world. It compares
+    // clients at equal frames; two that disagree have diverged for good.
+    if (frame % 60 === 0 && typeof RPW.hash === "function") {
+      send({ t: "hash", f: frame, h: RPW.hash() >>> 0 });
+    }
     // forget frames we will never look at again
     if (frame % 120 === 0) {
       for (const f of net.inputs.keys()) if (f < frame - 8) net.inputs.delete(f);
@@ -266,6 +302,7 @@
       net.players = [];
       net.seat = -1;
       RPW.NET.active = false;
+      if (RPW.pumpSync) RPW.pumpSync();
       emit();
     },
     onChange: fn => { net.onchange = fn; }

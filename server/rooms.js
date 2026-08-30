@@ -12,6 +12,10 @@
 const PORT = process.env.PORT || 8787;
 const MAX_SEATS = 6;
 const ROOM_IDLE_MS = 10 * 60 * 1000;
+// A seat that has sent no input for this long mid-match is treated as gone. It
+// is the difference between one person closing their laptop and every other
+// player staring at a frozen arena forever.
+const STALL_MS = 6000;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
 
 /** @type {Map<string, Room>} */
@@ -50,6 +54,8 @@ class Room {
     this.state = "lobby"; // lobby | running
     this.seed = 0;
     this.touched = Date.now();
+    this.hashes = new Map();   // frame -> Map(seat -> world checksum)
+    this.desynced = false;
     rooms.set(this.code, this);
   }
 
@@ -71,7 +77,12 @@ class Room {
     const i = this.players.indexOf(player);
     if (i < 0) return;
     this.players.splice(i, 1);
-    this.players.forEach((p, n) => (p.seat = n)); // reseat so seats stay 0..n-1
+    // A seat is the match's identity: one wizard, one row in the input table, one
+    // place in the roster. Renumbering mid-match hands a survivor someone else's
+    // seat, so their keystrokes drive the wrong wizard while their own stands
+    // there doing nothing — and the two worlds part company. Only compact seats
+    // while we are still in the lobby, where nothing is running yet.
+    if (this.state !== "running") this.players.forEach((p, n) => (p.seat = n));
     player.room = null;
     player.seat = -1;
     this.touched = Date.now();
@@ -118,6 +129,11 @@ class Room {
   start() {
     if (this.state === "running") return;
     this.state = "running";
+    this.hashes.clear();
+    this.desynced = false;
+    // everyone starts the clock even; the sweeper below measures from here
+    const now = Date.now();
+    for (const p of this.players) p.lastIn = now;
     this.seed = (Math.random() * 0xffffffff) >>> 0;
     this.touched = Date.now();
     for (const p of this.players) {
@@ -233,7 +249,31 @@ function handle(p, msg) {
       // one input mask for one simulation frame; relayed verbatim
       if (!p.room || p.room.state !== "running") return;
       if (typeof msg.f !== "number" || typeof msg.m !== "number") return;
+      p.lastIn = Date.now();
+      p.maxF = Math.max(p.maxF == null ? -1 : p.maxF, msg.f | 0);
       p.room.broadcast({ t: "in", seat: p.seat, f: msg.f | 0, m: msg.m | 0 }, p);
+      return;
+    }
+
+    case "hash": {
+      // Every client checksums its whole world once a second. Two clients that
+      // disagree at the same frame have diverged and will never converge on
+      // their own, so say so once and let them stop rather than drift.
+      if (!p.room || p.room.state !== "running") return;
+      if (typeof msg.f !== "number" || typeof msg.h !== "number") return;
+      const r = p.room, f = msg.f | 0, h = msg.h >>> 0;
+      let at = r.hashes.get(f);
+      if (!at) { at = new Map(); r.hashes.set(f, at); }
+      at.set(p.seat, h);
+      if (!r.desynced && at.size > 1) {
+        let first = null, split = false;
+        for (const v of at.values()) { if (first === null) first = v; else if (v !== first) split = true; }
+        if (split) {
+          r.desynced = true;
+          r.broadcast({ t: "desync", f });
+        }
+      }
+      for (const k of r.hashes.keys()) if (k < f - 900) r.hashes.delete(k);
       return;
     }
 
@@ -248,4 +288,35 @@ function handle(p, msg) {
 }
 
 
-module.exports = { Room, Player, handle, rooms, MAX_SEATS, ROOM_IDLE_MS, cleanName };
+// A running seat that has gone quiet is dropped, exactly as if the socket had
+// closed: the remaining clients hand that wizard to a bot and carry on. Without
+// this, one person tabbing away or losing their connection freezes the match for
+// everybody, forever, because lockstep waits on a mask that is never coming.
+// When lockstep stalls, EVERY client stops sending — the ones waiting are just as
+// quiet as the one holding things up. So silence alone cannot name the culprit.
+// What separates them is how far ahead each has sent. Work it through: both sit
+// at frame F having sent F+DELAY. The straggler stops there. Everyone else keeps
+// stepping until they run out of its masks — reaching F+DELAY, having sent
+// F+2*DELAY. So the waiting clients end up level with the room's furthest sender
+// and the straggler is exactly DELAY frames behind it. Drop only that one.
+const STALL_LAG = 2;   // frames behind the room's furthest sender
+function sweepStalled(now) {
+  now = now || Date.now();
+  const dropped = [];
+  for (const room of rooms.values()) {
+    if (room.state !== "running") continue;
+    let ahead = -1;
+    for (const q of room.players) ahead = Math.max(ahead, q.maxF == null ? -1 : q.maxF);
+    for (const p of room.players.slice()) {
+      if (now - (p.lastIn || now) <= STALL_MS) continue;
+      if (ahead - (p.maxF == null ? -1 : p.maxF) < STALL_LAG) continue;   // just waiting, like everyone else
+      const seat = p.seat;
+      try { p.send({ t: "dropped", why: "you fell too far behind the match" }); } catch (e) {}
+      room.remove(p);
+      dropped.push({ code: room.code, seat });
+    }
+  }
+  return dropped;
+}
+
+module.exports = { Room, Player, handle, rooms, MAX_SEATS, ROOM_IDLE_MS, STALL_MS, STALL_LAG, sweepStalled, cleanName };

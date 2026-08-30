@@ -17,7 +17,7 @@
 
 const http = require("http");
 const { WebSocketServer } = require("ws");
-const { Player, handle, rooms, MAX_SEATS, ROOM_IDLE_MS } = require("./rooms");
+const { Player, handle, rooms, MAX_SEATS, ROOM_IDLE_MS, sweepStalled } = require("./rooms");
 
 const PORT = process.env.PORT || 8787;
 
@@ -58,6 +58,8 @@ wss.on("connection", ws => {
 // rooms nobody has touched in a while are swept up
 setInterval(() => {
   const now = Date.now();
+  // a seat that has stopped sending input is dropped so the match plays on
+  sweepStalled(now);
   for (const [code, room] of rooms) {
     if (now - room.touched > ROOM_IDLE_MS && room.players.length === 0) rooms.delete(code);
   }

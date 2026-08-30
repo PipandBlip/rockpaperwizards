@@ -601,6 +601,7 @@ function makeWizard(x,y,friendly){
     charge:null, chargeT:0, castLock:0, fizzle:0,
     ward:0, wardMax:0, wardFade:0, wardTick:0,
     seenX:null, seenY:null, seenT:9,   // last place this wizard saw its mark
+    stuckT:0, stuckFor:0, lastPX:null, lastPY:null,   // "am I actually getting anywhere?"
     beamOn:false, beamWind:0, beamT:0,
     held:null, holdT:0,
     hurt:0, dead:false, lives: 3, spawnSafe: 0,
@@ -683,6 +684,7 @@ function makeMap(){
       debris.push(d);
     }
     bakeFloor();
+    buildNav();
     return;
   }
   const spawnA = {x:140,y:H/2}, spawnB = {x:W-140,y:H/2};
@@ -715,6 +717,103 @@ function makeMap(){
         debris.every(o => dist(d,o) > d.r + o.r + 26)){ debris.push(d); walls++; }
   }
   bakeFloor();
+  buildNav();
+}
+
+/* ------------------------------------------------- getting around
+ * Bots used to walk straight at wherever they wanted to be, which is fine in the
+ * open and useless the moment a crate is in the way — they would grind into it,
+ * slide along it, and end up jittering in a corner making no progress at all.
+ * So the arena carries a coarse grid of walkable cells and they follow a route
+ * through it instead. Breadth-first over ~400 cells: cheap, and pure geometry,
+ * so every client computes the same route and lockstep holds.
+ */
+const NAV = 40;                                  // cell size in pixels
+let navW = 0, navH = 0, navBlocked = null;
+function buildNav(){
+  navW = Math.ceil(W / NAV); navH = Math.ceil(H / NAV);
+  navBlocked = new Uint8Array(navW * navH);
+  for (let cy = 0; cy < navH; cy++){
+    for (let cx = 0; cx < navW; cx++){
+      const px = cx*NAV + NAV/2, py = cy*NAV + NAV/2;
+      let blocked = px < 30 || py < 30 || px > W-30 || py > H-30;
+      if (!blocked){
+        for (const d of debris){
+          if (d.gone || d.owner || !d.solid) continue;
+          // a wizard needs its own width of room, not just the cell centre
+          if (dist2({x:px,y:py}, d) < (d.r + 20) * (d.r + 20)){ blocked = true; break; }
+        }
+      }
+      navBlocked[cy*navW + cx] = blocked ? 1 : 0;
+    }
+  }
+}
+const navCX = x => clamp(Math.floor(x / NAV), 0, navW - 1);
+const navCY = y => clamp(Math.floor(y / NAV), 0, navH - 1);
+function navFree(cx, cy){
+  return cx >= 0 && cy >= 0 && cx < navW && cy < navH && !navBlocked[cy*navW + cx];
+}
+// Nearest walkable cell to a point, so a goal that lands inside a crate still
+// gives the search somewhere to aim at.
+function navNear(x, y){
+  const cx = navCX(x), cy = navCY(y);
+  if (navFree(cx, cy)) return cy*navW + cx;
+  for (let r = 1; r <= 4; r++){
+    for (let dy = -r; dy <= r; dy++){
+      for (let dx = -r; dx <= r; dx++){
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (navFree(cx+dx, cy+dy)) return (cy+dy)*navW + (cx+dx);
+      }
+    }
+  }
+  return -1;
+}
+// Breadth-first from the goal outwards, then read the route back from the start.
+// Returns the next corner to walk to, or null if there is no way through.
+const NAV_STEPS = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+function navNext(fromX, fromY, toX, toY){
+  if (!navBlocked) return null;
+  const start = navNear(fromX, fromY), goal = navNear(toX, toY);
+  if (start < 0 || goal < 0) return null;
+  if (start === goal) return { x: toX, y: toY };
+  const prev = new Int32Array(navW * navH).fill(-1);
+  const queue = new Int32Array(navW * navH);
+  let head = 0, tail = 0;
+  queue[tail++] = goal; prev[goal] = goal;
+  let found = false;
+  while (head < tail){
+    const cur = queue[head++];
+    if (cur === start){ found = true; break; }
+    const cx = cur % navW, cy = (cur / navW) | 0;
+    for (let i = 0; i < NAV_STEPS.length; i++){
+      const dx = NAV_STEPS[i][0], dy = NAV_STEPS[i][1];
+      const nx = cx + dx, ny = cy + dy;
+      if (!navFree(nx, ny)) continue;
+      // no cutting a diagonal through the gap between two blocked cells
+      if (dx && dy && (!navFree(cx + dx, cy) || !navFree(cx, cy + dy))) continue;
+      const ni = ny*navW + nx;
+      if (prev[ni] !== -1) continue;
+      prev[ni] = cur;
+      queue[tail++] = ni;
+    }
+  }
+  if (!found) return null;
+  const step = prev[start];
+  if (step < 0 || step === start) return { x: toX, y: toY };
+  return { x: (step % navW)*NAV + NAV/2, y: ((step / navW) | 0)*NAV + NAV/2 };
+}
+
+// A free cell well away from here — what a bot heads for when it has been
+// scraping the same wall for two seconds and getting nowhere.
+function navPickOpen(w){
+  for (let tries = 0; tries < 24; tries++){
+    const cx = (rand()*navW)|0, cy = (rand()*navH)|0;
+    if (!navFree(cx, cy)) continue;
+    const x = cx*NAV + NAV/2, y = cy*NAV + NAV/2;
+    if (dist2(w, {x, y}) < 200*200) continue;
+    return { x, y };
+  }
+  return null;
 }
 
 function bakeFloor(){
@@ -1243,14 +1342,41 @@ function aiTick(w, opp, dt){
 
   // ---- movement
   w.panic -= dt;
+  // Getting nowhere? Sample the distance covered every half second; a bot that has
+  // barely moved for a second and a half is stuck on something, so send it
+  // somewhere else entirely rather than let it keep scraping the same crate.
+  w.stuckT = (w.stuckT || 0) + dt;
+  if (w.stuckT >= 0.5){
+    const moved = Math.hypot(w.x - (w.lastPX == null ? w.x : w.lastPX),
+                             w.y - (w.lastPY == null ? w.y : w.lastPY));
+    if (moved < 12){
+      w.stuckFor = (w.stuckFor || 0) + w.stuckT;
+      if (w.stuckFor > 1.5){
+        const away = navPickOpen(w);
+        if (away){ w.goal = away; w.panic = 1.6; }
+        w.stuckFor = 0;
+      }
+    } else w.stuckFor = 0;
+    w.lastPX = w.x; w.lastPY = w.y; w.stuckT = 0;
+  }
   let ax = 0, ay = 0;
   const wantD = w.hp < 35 ? 380 : 300;
+  // a long walk goes through the nav grid; the last few strides are direct
+  const routeTo = (tx, ty) => {
+    if (Math.hypot(tx - w.x, ty - w.y) < 60) return [tx - w.x, ty - w.y];
+    const wp = navNext(w.x, w.y, tx, ty);
+    return wp ? [wp.x - w.x, wp.y - w.y] : [tx - w.x, ty - w.y];
+  };
   if (w.panic > 0 && w.goal){
-    ax = w.goal.x - w.x; ay = w.goal.y - w.y;
-    if (Math.hypot(ax,ay) < 26) { w.panic = 0; w.goal = null; }
+    [ax, ay] = routeTo(w.goal.x, w.goal.y);
+    if (Math.hypot(w.goal.x - w.x, w.goal.y - w.y) < 26) { w.panic = 0; w.goal = null; }
   } else if (w.goal && !losShoot){
-    ax = w.goal.x - w.x; ay = w.goal.y - w.y;
-    if (Math.hypot(ax,ay) < 30) w.goal = null;
+    [ax, ay] = routeTo(w.goal.x, w.goal.y);
+    if (Math.hypot(w.goal.x - w.x, w.goal.y - w.y) < 30) w.goal = null;
+  } else if (!seen && w.seenX != null && Math.hypot(w.x - bx, w.y - by) > 90){
+    // hunting: walk the route to where they were last seen instead of pressing
+    // straight at it through whatever happens to be in between
+    [ax, ay] = routeTo(bx, by);
   } else {
     const dx = (w.x-bx)/(d||1), dy = (w.y-by)/(d||1);
     const push = d < wantD - 60 ? 1 : d > wantD + 90 ? -1 : 0;
@@ -1778,6 +1904,7 @@ function breakProp(d){
   if (d.owner){ d.owner.held = null; d.owner = null; }
   const i = debris.indexOf(d);
   if (i >= 0) debris.splice(i,1);
+  buildNav();   // a smashed crate is a doorway now
 }
 
 /* ---------------------------------------------------------- draw */
@@ -3396,21 +3523,52 @@ function simStep(){
   NET.onStep(simFrame);
 }
 let last = performance.now(), acc = 0;
-function frame(now){
-  const real = Math.min((now - last)/1000, .25);
+// Browsers stop requestAnimationFrame in a hidden tab. In a lockstep match that
+// is fatal for EVERYONE, not just the person who tabbed away: their client stops
+// stepping, so it stops sending input masks, so every peer waits on a frame that
+// will never arrive and the whole match freezes. So the loop has two drivers —
+// rAF while the tab is visible, a plain timer while it is not — and the hidden
+// one skips drawing (nothing to draw to) but keeps the simulation, and therefore
+// the outgoing masks, flowing.
+function hiddenTab(){
+  return typeof document !== "undefined" && document.hidden === true;
+}
+function pump(now){
+  const bg = hiddenTab();
+  // background timers are clamped to about a second, so a hidden tab wakes up
+  // owing a lot of frames; let it pay them off in one go rather than fall behind
+  const real = Math.min((now - last)/1000, bg ? 2 : .25);
   last = now;
   acc += real;
   let steps = 0;
-  while (acc >= STEP && steps < 5){
+  const cap = bg ? 300 : 5;
+  while (acc >= STEP && steps < cap){
     if (NET.active && !NET.ready(simFrame)) break;   // stalled waiting on a peer
     acc -= STEP;
     simStep();
     steps++;
   }
-  if (steps >= 5) acc = 0;
-  draw();
-  syncHUD();
+  if (steps >= cap) acc = 0;
+  if (!bg){ draw(); syncHUD(); }
+}
+function frame(now){
+  pump(now);
   requestAnimationFrame(frame);
+}
+let bgTimer = 0;
+function stopBgPump(){
+  if (bgTimer && typeof clearInterval === "function") clearInterval(bgTimer);
+  bgTimer = 0;
+}
+function syncPumpToVisibility(){
+  stopBgPump();
+  // only in a networked match: a solo game politely pauses when you look away
+  if (hiddenTab() && NET.active && typeof setInterval === "function"){
+    bgTimer = setInterval(() => { try { pump(performance.now()); } catch (e) {} }, 16);
+  }
+}
+if (typeof document !== "undefined" && document.addEventListener){
+  document.addEventListener("visibilitychange", syncPumpToVisibility);
 }
 makeMap();
 resetWizards();
@@ -3423,6 +3581,27 @@ window.RPW = {
   NET, BIT, STEP,
   seedRng,
   localMask: () => localMask(you),
+  // net.js calls this whenever a match starts or ends, so the hidden-tab pump
+  // starts and stops with the match and not only on a visibility change
+  pumpSync: () => syncPumpToVisibility(),
+  // net.js calls this when a match cannot continue. Saying plainly what happened
+  // beats leaving somebody standing in an arena that has stopped agreeing with
+  // everyone else's.
+  endMatch(reason){
+    phase = "menu"; msg = null;
+    hushBeams();
+    el("pausePanel").hidden = true;
+    el("curtain").hidden = false;
+    show("mp");
+    if (reason === "dropped"){
+      el("curtainTitle").textContent = "You dropped out";
+      el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";
+    } else {
+      el("curtainTitle").textContent = "The match fell out of sync";
+      el("curtainText").textContent = "Two players stopped agreeing about the state of the arena, so the match was stopped rather than left to drift apart. Host or join again to play on.";
+    }
+    el("curtainText").hidden = false;
+  },
   seatOf: () => you.seat,
   frameNow: () => simFrame,
   startMatch(opts){
@@ -3532,6 +3711,7 @@ window.RPW = {
         ws.onclose = () => {
           net.state = "offline";
           RPW.NET.active = false;
+          if (RPW.pumpSync) RPW.pumpSync();
           emit();
         };
         ws.onerror = err => {
@@ -3588,11 +3768,40 @@ window.RPW = {
         emit();
         return;
 
+      case "desync": {
+        // Two clients stopped agreeing about the world. Lockstep has no way back
+        // from that without shipping whole game states around, so stop honestly
+        // instead of leaving people standing in worlds that have parted company.
+        endedBy("desync");
+        return;
+      }
+
+      case "dropped": {
+        // the server gave our seat away because we stopped sending input
+        endedBy("dropped");
+        return;
+      }
+
       case "error":
         net.error = msg.why;
         emit();
         return;
     }
+  }
+
+  // one exit for every way a match can stop being playable
+  function endedBy(reason) {
+    net.state = net.ws && net.ws.readyState === 1 ? "lobby" : "offline";
+    net.room = null;
+    net.players = [];
+    net.seat = -1;
+    net.total = 0;
+    net.inputs.clear();
+    net.dropped.clear();
+    RPW.NET.active = false;
+    if (RPW.pumpSync) RPW.pumpSync();
+    if (RPW.endMatch) RPW.endMatch(reason);
+    emit();
   }
 
   function seatCount() {
@@ -3642,6 +3851,7 @@ window.RPW = {
     for (const p of net.players) if (p.seat >= 0) names[p.seat] = p.name;
 
     RPW.NET.active = true;
+    if (RPW.pumpSync) RPW.pumpSync();
     RPW.startMatch({
       mode: "match",
       seed: net.seed,
@@ -3698,6 +3908,11 @@ window.RPW = {
       send({ t: "in", f: target, m: mask });
       net.lastSent = target;
     }
+    // Once a second, hand the server a checksum of our whole world. It compares
+    // clients at equal frames; two that disagree have diverged for good.
+    if (frame % 60 === 0 && typeof RPW.hash === "function") {
+      send({ t: "hash", f: frame, h: RPW.hash() >>> 0 });
+    }
     // forget frames we will never look at again
     if (frame % 120 === 0) {
       for (const f of net.inputs.keys()) if (f < frame - 8) net.inputs.delete(f);
@@ -3723,6 +3938,7 @@ window.RPW = {
       net.players = [];
       net.seat = -1;
       RPW.NET.active = false;
+      if (RPW.pumpSync) RPW.pumpSync();
       emit();
     },
     onChange: fn => { net.onchange = fn; }

@@ -26,6 +26,16 @@ import { DurableObject } from "cloudflare:workers";
 
 const MAX_SEATS = 6;
 const ROOM_IDLE_MS = 10 * 60 * 1000;
+// A seat that has sent no input for this long mid-match is treated as gone. It is
+// the difference between one person closing their laptop and everybody else
+// staring at a frozen arena forever, because lockstep waits on every live seat.
+const STALL_MS = 6000;
+// When lockstep stalls, EVERY client stops sending — the ones waiting are as quiet
+// as the one holding things up, so silence alone cannot name the culprit. What
+// separates them is how far ahead each has sent: a client merely waiting has
+// already queued its next DELAY frames and sits level with the room, while the one
+// that stopped stepping is measurably behind. Only that one is dropped.
+const STALL_LAG = 2;   // frames behind the room's furthest sender
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
 
 function cleanName(n) {
@@ -51,6 +61,10 @@ export class RPWRelay extends DurableObject {
     super(ctx, env);
     this.rooms = new Map();  // code -> room  (loaded from ctx.storage)
     this.byId = new Map();   // playerId -> {id,name,seat,ready,roomCode} (loaded)
+    // desync bookkeeping is best-effort and deliberately NOT persisted: it is a
+    // running conversation about the current match, worthless after an eviction
+    this.hashes = new Map();   // room code -> Map(frame -> Map(seat -> checksum))
+    this.desynced = new Set(); // room codes already told they diverged
     this.wsOf = new Map();   // ws -> playerId  (rebuilt from attachments)
     this.nextId = 1;
     this._loaded = null;
@@ -189,7 +203,14 @@ export class RPWRelay extends DurableObject {
     const i = room.playerIds.indexOf(player.id);
     if (i < 0) return;
     room.playerIds.splice(i, 1);
-    room.playerIds.forEach((pid, n) => { const q = this.byId.get(pid); if (q) q.seat = n; });
+    // A seat is the match's identity: one wizard, one row in the input table, one
+    // place in the roster. Renumbering mid-match hands a survivor someone else's
+    // seat, so their keys drive the wrong wizard while their own stands there
+    // doing nothing — and the two worlds part company for good. Only compact
+    // seats in the lobby, where nothing is running yet.
+    if (room.state !== "running") {
+      room.playerIds.forEach((pid, n) => { const q = this.byId.get(pid); if (q) q.seat = n; });
+    }
     player.roomCode = null;
     player.seat = -1;
     room.touched = Date.now();
@@ -206,8 +227,11 @@ export class RPWRelay extends DurableObject {
   }
 
   roster(room) {
-    return room.playerIds.map((pid, seat) => {
+    // report each player's OWN seat, not their position in the array — after a
+    // mid-match departure those two stop agreeing, and the seat is what counts
+    return room.playerIds.map(pid => {
       const p = this.byId.get(pid);
+      const seat = p ? p.seat : -1;
       return { seat, name: p ? p.name : "?", ready: p ? p.ready : false, host: seat === 0 };
     });
   }
@@ -237,6 +261,14 @@ export class RPWRelay extends DurableObject {
     room.state = "running";
     room.seed = (Math.random() * 0xffffffff) >>> 0;
     room.touched = Date.now();
+    room.startedAt = Date.now();
+    for (const pid of room.playerIds) { const q = this.byId.get(pid); if (q) q.maxF = -1; }
+    this.hashes.delete(room.code);
+    this.desynced.delete(room.code);
+    for (const pid of room.playerIds) {
+      const q = this.byId.get(pid);
+      if (q) q.lastIn = room.startedAt;
+    }
     const msg = {
       t: "start",
       seed: room.seed,
@@ -347,11 +379,60 @@ export class RPWRelay extends DurableObject {
         const r = this.rooms.get(p.roomCode);
         if (!r || r.state !== "running") break;
         if (typeof msg.f !== "number" || typeof msg.m !== "number") break;
+        const now = Date.now();
+        p.lastIn = now;
+        p.maxF = Math.max(p.maxF == null ? -1 : p.maxF, msg.f | 0);
+        let ahead = -1;
+        for (const pid of r.playerIds) {
+          const q = this.byId.get(pid);
+          if (q) ahead = Math.max(ahead, q.maxF == null ? -1 : q.maxF);
+        }
+        // Anyone still playing sweeps for seats that have gone quiet. Checked here
+        // rather than on a timer because if nobody is sending input there is
+        // nothing to unfreeze anyway — and this path already runs every frame.
+        for (const pid of r.playerIds.slice()) {
+          if (pid === p.id) continue;
+          const q = this.byId.get(pid);
+          if (!q) continue;
+          if (now - (q.lastIn || r.startedAt || now) <= STALL_MS) continue;
+          if (ahead - (q.maxF == null ? -1 : q.maxF) < STALL_LAG) continue;  // just waiting, like everyone else
+          this.sendToId(q.id, { t: "dropped", why: "you fell too far behind the match" });
+          this.removeFromRoom(q);
+          dirty = true;
+        }
         this.broadcast(r, { t: "in", seat: p.seat, f: msg.f | 0, m: msg.m | 0 }, p.id);
         break;
       }
 
+      case "hash": {
+        // Every client checksums its whole world once a second. Two that disagree
+        // at the same frame have diverged and will never converge on their own,
+        // so say so once and let them stop rather than drift apart in silence.
+        if (!p.roomCode) break;
+        const r = this.rooms.get(p.roomCode);
+        if (!r || r.state !== "running") break;
+        if (typeof msg.f !== "number" || typeof msg.h !== "number") break;
+        if (this.desynced.has(r.code)) break;
+        let byFrame = this.hashes.get(r.code);
+        if (!byFrame) { byFrame = new Map(); this.hashes.set(r.code, byFrame); }
+        const f = msg.f | 0;
+        let at = byFrame.get(f);
+        if (!at) { at = new Map(); byFrame.set(f, at); }
+        at.set(p.seat, msg.h >>> 0);
+        if (at.size > 1) {
+          let first = null, split = false;
+          for (const v of at.values()) { if (first === null) first = v; else if (v !== first) split = true; }
+          if (split) {
+            this.desynced.add(r.code);
+            this.broadcast(r, { t: "desync", f });
+          }
+        }
+        for (const k of byFrame.keys()) if (k < f - 900) byFrame.delete(k);
+        break;
+      }
+
       case "bye":
+        if (p.roomCode) { this.hashes.delete(p.roomCode); this.desynced.delete(p.roomCode); }
         if (p.roomCode) this.removeFromRoom(p);
         dirty = true;
         break;

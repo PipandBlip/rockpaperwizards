@@ -102,13 +102,43 @@ already worked locally.
    localhost. `DELAY = 3` (~50ms) has not met a real connection yet; expect to
    raise it, and to show a "waiting for <name>" state when `NET.ready()` returns
    false for more than a few frames.
-3. **Desync detection.** Both clients already compute `RPW.hash()`. Exchange it
-   every second or so; if two clients disagree, say so plainly and end the match
-   rather than letting the worlds drift apart in silence.
-4. **Rejoin.** A dropped player currently becomes a bot for good.
+3. **Rejoin.** A dropped player currently becomes a bot for good.
 5. **Server hardening before it faces the open internet:** per-connection rate
    limits on `in` messages, a cap on rooms per IP, and an origin check on the
    WebSocket upgrade.
+
+## Staying alive
+
+Three things keep a match from freezing, and they are worth understanding
+together because each covers what the others cannot.
+
+**The hidden tab.** Browsers stop `requestAnimationFrame` in a background tab.
+In lockstep that is fatal for *everyone*: the tabbed-away client stops stepping,
+so it stops sending masks, so every peer waits on a frame that never arrives. The
+loop therefore has two drivers — rAF while visible, a plain `setInterval` while
+hidden — and the hidden one skips drawing but keeps the simulation, and the
+outgoing masks, flowing. Measured with two browsers: with the pump disabled the
+other player ran at about 1 frame a second; with it, 58.
+
+**The seat that really is gone.** If a client dies outright the relay times it out
+after `STALL_MS` and drops it, exactly as if the socket had closed — the remaining
+clients hand that wizard to a bot and play on. The subtlety is naming the culprit:
+when lockstep stalls *every* client goes quiet, so silence alone proves nothing.
+What separates them is how far ahead each has sent. Both sit at frame F having
+sent `F+DELAY`; the straggler stops there while everyone else keeps stepping until
+they exhaust its masks, reaching `F+DELAY` having sent `F+2*DELAY`. The waiting
+clients end up level with the room's furthest sender and the straggler is exactly
+`DELAY` behind it. Only that one is dropped.
+
+**Seats are fixed for the match.** `remove()` used to renumber seats so they
+stayed contiguous. Mid-match that hands a survivor someone else's seat: their keys
+drive the wrong wizard while their own stands there doing nothing, and the two
+worlds part company. Seats are now compacted only in the lobby.
+
+**Desync detection.** Every client checksums its whole world once a second and
+sends it with the frame number. The relay compares clients at equal frames; two
+that disagree have diverged and will never converge without shipping whole game
+states around, so it says so once and both stop honestly rather than drifting.
 
 ## Two bugs the first real playtest found
 
