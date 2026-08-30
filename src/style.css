@@ -95,6 +95,19 @@
   .curtain[hidden]{display:none}
   .curtain h2{font-family:var(--display);font-weight:900;text-transform:uppercase;letter-spacing:.08em;font-size:clamp(22px,4vw,36px);margin:0;text-wrap:balance}
   .curtain p{font-family:var(--prose);font-size:15px;color:#c4bade;max-width:46ch;margin:0;line-height:1.55}
+  .stats[hidden]{display:none}
+  .stats{width:min(440px,92%);margin:0}
+  .statline{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px}
+  .statline caption{font-family:var(--display);font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted);padding-bottom:6px}
+  .statline th{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:400;padding:4px 8px;border-bottom:1px solid var(--edge);text-align:right}
+  .statline th:first-child{text-align:left}
+  .statline td{padding:5px 8px;border-bottom:1px solid color-mix(in srgb, var(--edge) 55%, transparent);text-align:right;color:#c4bade;white-space:nowrap}
+  .statline td.who{text-align:left;font-weight:600;color:var(--chalk)}
+  .statline td.who i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c,#fff);margin-right:8px;vertical-align:baseline;box-shadow:0 0 8px var(--c,#fff)}
+  .statline td.who em{font-style:normal;color:var(--spark);font-size:9px;letter-spacing:.12em;margin-left:6px}
+  .statline tr.best td{color:#fff}
+  .statline tr.best td.who{color:var(--spark)}
+  .statline tr.best td{text-shadow:0 0 10px rgba(63,231,255,.35)}
   .choices{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
   button{
     font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;

@@ -159,6 +159,8 @@ function makeWizard(x,y,friendly){
     beamOn:false, beamWind:0, beamT:0,
     held:null, holdT:0,
     hurt:0, dead:false, lives: 3, spawnSafe: 0,
+    // per-wizard match stats (deterministic — pure arithmetic on sim values)
+    kills:0, deaths:0, dmg:0, counters:0, lastBy:null,
     // ai
     think:0, react:0, goal:null, strafe:1, panic:0, dodge:0, aiChargeTo:null, beamCool:0, wasBeam:false, beamReact:0, hitCool:0, beamBurn:0, dashT:0, dashCool:0, dashVX:0, dashVY:0,
     swish:0, swishDir:1, swishColor:"#fff", swishKind:"cast", swishT0:.19, beamSounding:false, beamCharging:false, clash:false, beamLen:0
@@ -538,7 +540,7 @@ function explodeOrb(s){
   for (const q of wizards){
     if (q.dead || q === s.owner) continue;
     const d = dist(q, s);
-    if (d < 84) hurt(q, 26 * (1 - d/84) * dmgMul(s.owner));
+    if (d < 84) hurt(q, 26 * (1 - d/84) * dmgMul(s.owner), s.owner);
   }
   for (const d of debris){
     if (d.gone || d.owner || d.hp === Infinity) continue;
@@ -795,8 +797,12 @@ function aiTick(w, opp, dt){
 }
 
 /* ---------------------------------------------------------- damage */
-function hurt(w, amount){
+function hurt(w, amount, by){
   if (w.dead || w.spawnSafe > 0) return;
+  if (by && by !== w && !by.dead){
+    by.dmg += amount;           // damage dealt, attributed to the attacker
+    w.lastBy = by;              // and remembered for kill credit
+  }
   w.hp -= amount;
   w.hurt = Math.min(1, w.hurt + amount/22);
   if (amount >= 3 && w.hitCool <= 0){
@@ -820,14 +826,14 @@ function wardFacing(w, sx, sy){
 }
 // `soak` marks damage arriving in sixty small pieces a second, so the wall
 // sparks on a steady budget instead of once a frame.
-function strike(w, amount, sx, sy, kind, soak){
+function strike(w, amount, sx, sy, kind, soak, by){
   if (!w || w.dead || amount <= 0) return 0;
-  if (!wardFacing(w, sx, sy)){ hurt(w, amount); return 0; }
+  if (!wardFacing(w, sx, sy)){ hurt(w, amount, by); return 0; }
   if (!WARD_BLOCKS[kind]){
     // heavier than the wall was ever rated for: straight through, and the wall
     // goes with it
     breakWard(w);
-    hurt(w, amount);
+    hurt(w, amount, by);
     return 0;
   }
   const eaten = Math.min(w.ward, amount);
@@ -841,7 +847,7 @@ function strike(w, amount, sx, sy, kind, soak){
   }
   if (w.ward <= 0) breakWard(w);
   const through = amount - eaten;
-  if (through > 0) hurt(w, through);
+  if (through > 0) hurt(w, through, by);
   return eaten;
 }
 function breakWard(w){
@@ -878,6 +884,7 @@ function impact(x, y, power, color){
 const SURGE_T = 3, SURGE_COLOR = "#ffd24a";
 function surge(w, weight){
   if (!w || w.dead) return;
+  w.counters++;                        // a successful counter that stopped something
   w.mana = clamp(w.mana + 6 + weight*7, 0, 100);
   w.surge = SURGE_T;                       // a clean counter is worth three full seconds
   rings.push({ x:w.x, y:w.y, r:12, max:40, t:0, life:.34, color:SURGE_COLOR, width:2 });
@@ -1042,11 +1049,11 @@ function update(dt){
       // the orb touching a wizard is far worse than being beamed
       const touch = Math.min(.34, (a.r + 16) / Math.max(1, sep));
       if (t < touch){
-        hurt(a, 62*dt*dmgMul(b));
+        hurt(a, 62*dt*dmgMul(b), b);
         a.vx -= Math.cos(a.facing)*90*dt; a.vy -= Math.sin(a.facing)*90*dt;
         if (!REDUCED) puff(cx, cy, "#fff", 2);
       } else if (t > 1 - touch){
-        hurt(b, 62*dt*dmgMul(a));
+        hurt(b, 62*dt*dmgMul(a), a);
         b.vx -= Math.cos(b.facing)*90*dt; b.vy -= Math.sin(b.facing)*90*dt;
         if (!REDUCED) puff(cx, cy, "#fff", 2);
       }
@@ -1094,7 +1101,7 @@ function update(dt){
       if (o.dead || o.team === w.team) continue;
       // a ward is no answer to a beam: the beam burns straight through it
       if (segCircle(w.x, w.y, ex, ey, o.x, o.y, o.r + 4))
-        strike(o, byId.beam.dmg*dt*dmgMul(w), w.x, w.y, "beam", true);
+        strike(o, byId.beam.dmg*dt*dmgMul(w), w.x, w.y, "beam", true, w);
     }
   }
   // beams vaporize shots & chew crates
@@ -1211,7 +1218,7 @@ function update(dt){
     }
     if (tgt){
       const held = wardFacing(tgt, s.x, s.y) && WARD_BLOCKS[s.kind];
-      strike(tgt, s.dmg, s.x, s.y, s.kind, false);
+      strike(tgt, s.dmg, s.x, s.y, s.kind, false, s.owner);
       if (held && tgt.ward > 0) surge(tgt, s.weight);   // the wall held
       if (s.orb) explodeOrb(s);
       shots.splice(i,1);
@@ -1238,7 +1245,7 @@ function update(dt){
         if (dist2(d,q) < (d.r + q.r)**2){ tgt = q; break; }
       }
       if (tgt && Math.hypot(d.vx,d.vy) > 80){
-        strike(tgt, byId.grasp.dmg * dmgMul(d.thrower), d.x, d.y, "prop", false);
+        strike(tgt, byId.grasp.dmg * dmgMul(d.thrower), d.x, d.y, "prop", false, d.thrower);
         impact(d.x, d.y, 3.4, byId.grasp.color);
         d.vx = d.vy = 0; d.thrown = 0; d.hp -= 2;
         if (d.hp <= 0) { breakProp(d); continue; }
@@ -2342,12 +2349,15 @@ function onDeath(w){
   if (mode === "escalation"){
     if (w.human){ escGameOver(); return; }
     kills++;
+    if (w.lastBy && w.lastBy !== w) w.lastBy.kills++;
     runScore += 100 * ((w.tier || 0) + 1);
     you.hp = Math.min(you.hpMax, you.hp + 10 + (w.tier || 0)*4);
     impact(w.x, w.y, 5, w.tint);
     puff(w.x, w.y, w.tint, 30);
     return;
   }
+  w.deaths++;                                  // this wizard went down
+  if (w.lastBy && w.lastBy !== w) w.lastBy.kills++;
   // lives mode: a downed wizard spends a life and comes back; only a wizard
   // with no lives left is out, and the match ends when one wizard is standing.
   if (matchCfg.mode === "lives"){
@@ -2419,6 +2429,7 @@ function escGameOver(){
   msg = { text: "Fallen", sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
   setTimeout(() => {
     show("solo");   // first, because it rewrites the copy — then say what happened
+    renderStats();
     el("curtainTitle").textContent = playerName + " held out to wave " + Math.max(1, waveNo);
     el("curtainText").textContent = final.toLocaleString() + " points · " + kills +
       (kills === 1 ? " wizard" : " wizards") + " put down · " + Math.round(survT) + " seconds standing.";
@@ -2462,6 +2473,27 @@ function newMatch(seed){
   el("board").hidden = true;
   el("pausePanel").hidden = true;
 }
+function renderStats(){
+  const box = el("stats");
+  const rows = wizards.slice().sort((a, b) =>
+    (b.kills - a.kills) || (b.dmg - a.dmg) || (b.counters - a.counters) || a.name.localeCompare(b.name));
+  const best = rows[0];
+  const rowsHTML = rows.map(w =>
+    '<tr' + (w === best ? ' class="best"' : '') + '>' +
+      '<td class="who"><i style="--c:' + w.tint + '"></i>' + esc(w.name) + (w === you ? ' <em>you</em>' : '') + '</td>' +
+      '<td>' + w.kills + '</td>' +
+      '<td>' + w.deaths + '</td>' +
+      '<td>' + Math.round(w.dmg) + '</td>' +
+      '<td>' + w.counters + '</td>' +
+    '</tr>').join("");
+  box.innerHTML =
+    '<table class="statline">' +
+      '<caption>Match report</caption>' +
+      '<thead><tr><th>Wizard</th><th>Kills</th><th>Deaths</th><th>Dmg dealt</th><th>Counters</th></tr></thead>' +
+      '<tbody>' + rowsHTML + '</tbody>' +
+    '</table>';
+  box.hidden = false;
+}
 function endRound(win){
   if (phase === "over" || phase === "tally") return;
   if (win){
@@ -2484,6 +2516,7 @@ function endRound(win){
       const networked = NET.active;
       leaveRoom();
       show(networked ? "mp" : "solo");
+      renderStats();
       el("curtainTitle").textContent = mine ? "You take the match" : win.name + " takes the match";
       el("curtainText").textContent = mine
         ? (matchCfg.mode === "lives"
