@@ -143,7 +143,12 @@
   fieldset.levels button:hover{border-color:var(--tint);background:color-mix(in srgb, var(--tint) 12%, transparent)}
   fieldset.levels button.sel{border-color:var(--tint);color:#fff;
     background:color-mix(in srgb, var(--tint) 26%, #120f1f);box-shadow:0 0 20px -6px var(--tint)}
-  .namefield{display:flex;align-items:center;gap:9px;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
+  /* The label floats to the left of the box; the box itself is centered on the
+     curtain. (Before this, the label+input row was centered as a unit, which
+     pushed the input box off to the right of the screen center by half the label
+     width — visible on every menu screen.) */
+  .namefield{position:relative;display:block;width:170px;margin:0 auto;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
+  .namefield span{position:absolute;right:100%;margin-right:9px;top:50%;transform:translateY(-50%);white-space:nowrap}
   .namefield input{font-family:var(--mono);font-size:13px;letter-spacing:.06em;color:var(--chalk);
     background:#0f0c1c;border:1px solid var(--edge);border-radius:2px;padding:7px 10px;width:170px;text-align:center}
   .namefield input:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
