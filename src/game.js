@@ -2169,6 +2169,14 @@ let localSeat = 0, seatNames = null;
 // message. The relay sanitises them server-side too, so the lockstep sim can
 // trust they never diverge.
 let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random" };
+// Offline play (solo duel, escalation, or a local fallback match) always gets
+// the fresh default world. Multiplayer opts are set by startMatch from the
+// relay's start message and must NOT be carried into solo — solo has no map
+// selector, so a preset left over from a hosted game would otherwise replace
+// the random-scatter arena forever.
+function resetOfflineCfg(){
+  matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random" };
+}
 function sanitizeMatchCfg(o){
   o = o || {};
   return {
@@ -2713,6 +2721,7 @@ el("diffRow").addEventListener("click", e => {
 el("goBtn").addEventListener("click", () => {
   leaveRoom();
   if (mode === "match") mode = "duel";
+  resetOfflineCfg();
   newMatch();
   cvs.focus();
 });
@@ -2764,6 +2773,7 @@ el("startRoom").addEventListener("click", () => {
   if (inRoom()){ window.RPWNet.start(); return; }   // the server hands everyone the same seed
   mode = "match";
   roomHumans = 1;
+  resetOfflineCfg();
   newMatch();
   cvs.focus();
 });
