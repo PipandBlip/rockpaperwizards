@@ -97,15 +97,20 @@
           <button id="copyCode" type="button">Copy</button>
         </div>
         <div class="opts">
-          <div class="rrow full"><span>Wizards in the arena</span><div class="seg" id="segTotal"></div></div>
+          <div class="rrow full"><span>Wizards</span><div class="seg" id="segTotal"></div></div>
           <div class="rrow full"><span>Bots fill the rest</span><div class="seg" id="segBotLvl"></div></div>
-          <div class="rrow"><span>Mode</span><div class="seg" id="segMode"></div></div>
-          <div class="rrow"><span>Fog of war</span><div class="seg" id="segFog"></div></div>
-          <div class="rrow full" id="rowRounds"><span>Rounds to win</span><input type="range" id="hostRounds" min="1" max="9" value="2" aria-label="Rounds to win"><b id="hostRoundsVal">2</b></div>
-          <div class="rrow full" id="rowLives" hidden><span>Lives each</span><input type="range" id="hostLives" min="1" max="9" value="3" aria-label="Lives"><b id="hostLivesVal">3</b></div>
-          <div class="rrow full"><span>Map size</span><div class="seg" id="segMapSize"></div></div>
-          <div class="rrow full"><span>Preset map</span><div class="seg" id="segPreset"></div></div>
         </div>
+        <details class="moreopts">
+          <summary>Match options</summary>
+          <div class="opts">
+            <div class="rrow full"><span>Mode</span><div class="seg" id="segMode"></div></div>
+            <div class="rrow full" id="rowRounds"><span>Rounds to win</span><input type="range" id="hostRounds" min="1" max="9" value="2" aria-label="Rounds to win"><b id="hostRoundsVal">2</b></div>
+            <div class="rrow full" id="rowLives" hidden><span>Lives each</span><input type="range" id="hostLives" min="1" max="9" value="3" aria-label="Lives"><b id="hostLivesVal">3</b></div>
+            <div class="rrow full"><span>Map size</span><div class="seg" id="segMapSize"></div></div>
+            <div class="rrow full"><span>Preset map</span><div class="seg" id="segPreset"></div></div>
+            <div class="rrow full"><span>Fog of war</span><div class="seg" id="segFog"></div></div>
+          </div>
+        </details>
         <div class="roster" id="hostRoster"></div>
         <p class="note" id="hostNote">Send the code to your friends. Any seat still empty when you start becomes a bot.</p>
         <div class="room-actions">
@@ -182,7 +187,7 @@
 </div>
 
   <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
-  <script src="src/game.js?v=11"></script>
-  <script src="src/net.js?v=11"></script>
+  <script src="src/game.js?v=12"></script>
+  <script src="src/net.js?v=12"></script>
 </body>
 </html>

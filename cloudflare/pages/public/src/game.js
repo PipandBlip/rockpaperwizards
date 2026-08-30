@@ -9,6 +9,11 @@ let ctx = cvs.getContext("2d");
 const fx = document.createElement("canvas");
 fx.width = W; fx.height = H;
 const fxc = fx.getContext("2d");
+// the fog shroud is built on its own layer so the sight radius can be cut out of
+// the darkness and then painted back in wherever a wall casts a shadow
+const fogCv = document.createElement("canvas");
+fogCv.width = W; fogCv.height = H;
+const fogC = fogCv.getContext("2d");
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ---------------------------------------------------------- spells */
@@ -156,6 +161,7 @@ function makeWizard(x,y,friendly){
     hp:100, hpMax:100, mana:100, facing:0,
     charge:null, chargeT:0, castLock:0, fizzle:0,
     ward:0, wardMax:0, wardFade:0, wardTick:0,
+    seenX:null, seenY:null, seenT:9,   // last place this wizard saw its mark
     beamOn:false, beamWind:0, beamT:0,
     held:null, holdT:0,
     hurt:0, dead:false, lives: 3, spawnSafe: 0,
@@ -172,13 +178,16 @@ let foe = makeWizard(W-140,H/2,false);
 you.human = true;
 wizards = [you, foe];
 function nearestEnemy(w){
-  let best = null, bd = Infinity;
+  let best = null, bd = Infinity, any = null, ad = Infinity;
   for (const o of wizards){
     if (o.dead || o.team === w.team) continue;
     const d = dist2(w, o);
-    if (d < bd){ bd = d; best = o; }
+    if (d < ad){ ad = d; any = o; }
+    if (perceives(w, o) && d < bd){ bd = d; best = o; }
   }
-  return best;
+  // fall back to the nearest enemy at all, so nobody is ever left without a
+  // target — but the aim code below will not track one it cannot see
+  return best || any;
 }
 function livingOf(team){ return wizards.filter(o => !o.dead && o.team === team); }
 function enemiesOf(w){ return wizards.filter(o => !o.dead && o.team !== w.team); }
@@ -617,6 +626,7 @@ function incomingThreat(w, foeW){
   let weight = 0, light = 0, soonest = 9;
   for (const s of shots){
     if (s.owner !== foeW) continue;
+    if (!perceives(w, s)) continue;          // it has not come into sight yet
     const toX = w.x - s.x, toY = w.y - s.y;
     const d = Math.hypot(toX,toY) || 1;
     const sp = Math.hypot(s.vx,s.vy) || 1;
@@ -630,6 +640,7 @@ function incomingThreat(w, foeW){
   }
   for (const d of debris){
     if (!d.thrown) continue;
+    if (!perceives(w, d)) continue;
     const toX = w.x-d.x, toY = w.y-d.y;
     const dd = Math.hypot(toX,toY)||1;
     const sp = Math.hypot(d.vx,d.vy)||1;
@@ -652,6 +663,12 @@ function canSee(a, b){
   if (dist(a, b) > FOG_R * mapScale() + 30) return false;
   return lineClear(a, b, false);
 }
+// The one question everything asks before it is allowed to know something. With
+// fog off nobody is blind and every behaviour is exactly what it always was;
+// with it on this gates bots and humans alike — no tracking a wand through a
+// wall, no reacting to a beam you cannot see. Pure geometry over synced config,
+// so every client computes the same answer and lockstep holds.
+function perceives(a, b){ return !matchCfg.fog || canSee(a, b); }
 function nearestCover(w, from){
   let best = null, bs = -1e9;
   for (const d of debris){
@@ -679,9 +696,17 @@ function ownWeightToward(w, opp){
 }
 function aiTick(w, opp, dt){
   const D = w.D || DIFF[difficulty];
+  // A bot reasons about where it BELIEVES its mark is: the truth while it can see
+  // them, the last place it saw them once it cannot. Every use of the opponent's
+  // position below goes through bx/by, so a bot in fog hunts rather than cheats.
+  const seen = perceives(w, opp);
+  if (seen){ w.seenX = opp.x; w.seenY = opp.y; w.seenT = 0; }
+  else w.seenT = Math.min(9, (w.seenT || 0) + dt);
+  const bx = seen ? opp.x : (w.seenX != null ? w.seenX : opp.x);
+  const by = seen ? opp.y : (w.seenY != null ? w.seenY : opp.y);
   const evade = () => {
     if (!D.dash || w.dashCool > 0) return;
-    const dx = opp.x - w.x, dy = opp.y - w.y, L = Math.hypot(dx,dy) || 1;
+    const dx = bx - w.x, dy = by - w.y, L = Math.hypot(dx,dy) || 1;
     if (rand() < D.aim) tryDash(w, -dy/L * w.strafe, dx/L * w.strafe);
   };
   w.think -= dt;
@@ -690,9 +715,9 @@ function aiTick(w, opp, dt){
   if (w.wasBeam && !w.beamOn) w.beamCool = rnd(.6, 1.5) * (1.8 - D.greed);
   w.wasBeam = w.beamOn;
   const threat = incomingThreat(w, opp);
-  const los = lineClear(w, opp, false);
-  const losShoot = lineClear(w, opp, true);
-  const d = dist(w, opp);
+  const los = lineClear(w, opp, false) && seen;
+  const losShoot = lineClear(w, opp, true) && seen;
+  const d = Math.hypot(w.x - bx, w.y - by);
 
   // ---- reaction to threats
   w.react -= dt;
@@ -769,7 +794,10 @@ function aiTick(w, opp, dt){
       else if (roll < .55) { w.charge = 1; w.chargeT = 0; w.aiChargeTo = byId.rive.maxChg*rnd(.1,.8); }
       else cast(w, 0, rand()*.4);
     } else if (!losShoot && rand() < .6){
-      w.goal = { x: clamp(opp.x + rnd(-260,260), 40, W-40), y: clamp(opp.y + rnd(-260,260), 40, H-40) };
+      // sweep around where they were last seen — in fog this is a search, not a chase
+      const spread = seen ? 260 : 150;
+      w.goal = { x: clamp(bx + rnd(-spread,spread), 40, W-40),
+                 y: clamp(by + rnd(-spread,spread), 40, H-40) };
     }
     if (!w.held && rand() < .16 * D.greed && liftable(w)) beginCharge(w, 5);
   }
@@ -785,7 +813,7 @@ function aiTick(w, opp, dt){
     ax = w.goal.x - w.x; ay = w.goal.y - w.y;
     if (Math.hypot(ax,ay) < 30) w.goal = null;
   } else {
-    const dx = (w.x-opp.x)/(d||1), dy = (w.y-opp.y)/(d||1);
+    const dx = (w.x-bx)/(d||1), dy = (w.y-by)/(d||1);
     const push = d < wantD - 60 ? 1 : d > wantD + 90 ? -1 : 0;
     ax = dx*push; ay = dy*push;
     const sideways = w.dodge > 0 ? 2.2 : 1.1;
@@ -925,7 +953,16 @@ function update(dt){
   }
 
   for (const w of wizards){
-    if (w.target) w.facing = Math.atan2(w.target.y - w.y, w.target.x - w.x);
+    // the wand tracks what the wizard can see. Lose sight and it holds on the
+    // last place they were, rather than following them through the wall.
+    if (w.target){
+      if (perceives(w, w.target)){
+        w.seenX = w.target.x; w.seenY = w.target.y; w.seenT = 0;
+        w.facing = Math.atan2(w.target.y - w.y, w.target.x - w.x);
+      } else if (w.seenX != null){
+        w.facing = Math.atan2(w.seenY - w.y, w.seenX - w.x);
+      }
+    }
     w.castLock = Math.max(0, w.castLock - dt);
     w.fizzle = Math.max(0, w.fizzle - dt);
     w.hurt = Math.max(0, w.hurt - dt*3);
@@ -1313,11 +1350,18 @@ function draw(){
   fxc.globalCompositeOperation = "source-over";
   const main = ctx;
   ctx = fxc;
-  for (const s of shots) drawShot(s);
-  for (const w of wizards) if (w.beamOn && !w.dead) drawBeam(w);
-  for (const g of ghosts) drawGhost(g);
-  for (const r of rings) drawRing(r);
+  // In fog you see the flash of a spell only where your own eyes reach: inside the
+  // sight radius and with nothing solid in the way. Everything on this layer is
+  // something happening in the world, so it all answers to the same question.
+  // (`lit` is view-only — the simulation never asks it.)
+  const dark = matchCfg.fog && you && !you.dead;
+  const lit = o => !dark || canSee(you, o);
+  for (const s of shots) if (lit(s)) drawShot(s);
+  for (const w of wizards) if (w.beamOn && !w.dead && (w === you || lit(w))) drawBeam(w);
+  for (const g of ghosts) if (lit(g)) drawGhost(g);
+  for (const r of rings) if (lit(r)) drawRing(r);
   for (const b of bits){
+    if (!lit(b)) continue;
     const k = 1 - b.t/b.life;
     ctx.globalAlpha = k;
     ctx.fillStyle = b.color;
@@ -1376,13 +1420,46 @@ function draw(){
   ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
   ctx.restore();
 
-  // fog of war: a soft shroud around the player — darkness past their sight
+  // Fog of war. Not a vignette: the lit region is the sight radius MINUS the
+  // shadow every solid thing throws away from you, so you genuinely cannot see
+  // around a corner. Built on its own layer — fill it dark, cut the radius out,
+  // then paint the darkness back into each wall's shadow.
   if (matchCfg.fog && you && !you.dead){
     const fr = Math.max(80, FOG_R * mapScale());
-    const fg = ctx.createRadialGradient(you.x, you.y, fr*0.55, you.x, you.y, fr);
-    fg.addColorStop(0,"rgba(3,2,8,0)");
-    fg.addColorStop(1,"rgba(3,2,8,0.92)");
-    ctx.fillStyle = fg; ctx.fillRect(0,0,W,H);
+    const SHADE = "rgba(3,2,8,0.94)";
+    const g = fogC;
+    g.setTransform(1,0,0,1,0,0);
+    g.globalCompositeOperation = "source-over";
+    g.clearRect(0,0,W,H);
+    g.fillStyle = SHADE; g.fillRect(0,0,W,H);
+
+    g.globalCompositeOperation = "destination-out";
+    const rg = g.createRadialGradient(you.x, you.y, fr*0.55, you.x, you.y, fr);
+    rg.addColorStop(0,"rgba(0,0,0,1)");
+    rg.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle = rg; g.fillRect(0,0,W,H);
+
+    g.globalCompositeOperation = "source-over";
+    g.fillStyle = SHADE;
+    const FAR = fr * 2.2;
+    for (const d of debris){
+      if (d.gone || d.owner || !blocksBeam(d)) continue;
+      const dx = d.x - you.x, dy = d.y - you.y;
+      const dd = Math.hypot(dx, dy);
+      if (dd <= d.r + 2 || dd - d.r > fr) continue;   // standing in it, or past the light
+      // the two tangent rays from the eye graze the prop; everything beyond them is dark
+      const a = Math.atan2(dy, dx);
+      const sp = Math.asin(Math.min(1, d.r / dd));
+      const L = Math.sqrt(Math.max(1, dd*dd - d.r*d.r));
+      const a1 = a - sp, a2 = a + sp;
+      g.beginPath();
+      g.moveTo(you.x + Math.cos(a1)*L,   you.y + Math.sin(a1)*L);
+      g.lineTo(you.x + Math.cos(a1)*FAR, you.y + Math.sin(a1)*FAR);
+      g.lineTo(you.x + Math.cos(a2)*FAR, you.y + Math.sin(a2)*FAR);
+      g.lineTo(you.x + Math.cos(a2)*L,   you.y + Math.sin(a2)*L);
+      g.closePath(); g.fill();
+    }
+    ctx.drawImage(fogCv, 0, 0);
     // a faint visible boundary so the edge of the world reads as fog, not void
     ctx.strokeStyle = "rgba(160,150,220,0.10)";
     ctx.lineWidth = 1.5;
@@ -2475,6 +2552,9 @@ function newMatch(seed){
   el("curtain").hidden = true;
   el("board").hidden = true;
   el("pausePanel").hidden = true;
+  // the menus hide these; a match puts them back
+  const st = el("stats"); if (st) st.hidden = true;
+  const rl = el("roundLabel"); if (rl) rl.hidden = false;
 }
 function renderStats(){
   const box = el("stats");
@@ -2571,6 +2651,11 @@ let panel = "home";
 function show(which){
   panel = which;
   for (const k in PANEL) PANEL[k].hidden = (k !== which);
+  // the last match's report and round counter are not part of any menu — navigating
+  // anywhere clears them, and renderStats() puts the report back after a match ends
+  const st = el("stats"); if (st) st.hidden = true;
+  const rl = el("roundLabel");
+  if (rl) rl.hidden = (which === "host" || which === "join" || which === "home");
   if (which === "solo"){ modeCopy(); return; }
   el("board").hidden = true;
   el("curtainTitle").textContent = COPY[which][0];

@@ -60,7 +60,7 @@ function fakeEl(id) {
 }
 
 /** run one match, returning a checksum every `every` frames */
-function run({ seed, diff, room, frames, every = 30 }) {
+function run({ seed, diff, room, frames, every = 30, opts = null }) {
   const els = {};
   const listeners = {};
   let frameCb = null;
@@ -104,7 +104,8 @@ function run({ seed, diff, room, frames, every = 30 }) {
     seed,
     difficulty: diff,
     total: room || 2,
-    humans: 1
+    humans: 1,
+    opts
   });
 
   const SPELLS = [["y", .42, [2, 10]], ["u", .24, [6, 30]], ["i", .13, [20, 70]],
@@ -148,7 +149,13 @@ let bad = 0;
 for (let seed = 1; seed <= SEEDS; seed++) {
   const cases = [
     { name: `duel   seed ${seed}`, opts: { seed, diff: 1, frames: FRAMES } },
-    { name: `room 4 seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES } }
+    { name: `room 4 seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES } },
+    // Fog changes what the bots are allowed to know, so it is a different
+    // simulation — and one every client must still agree on frame for frame.
+    { name: `fog    seed ${seed}`, opts: { seed, diff: 2, frames: FRAMES,
+                                          opts: { fog: 1, mapPreset: "random" } } },
+    { name: `fog r4 seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES,
+                                          opts: { fog: 1, mapSize: "large", mapPreset: "random" } } }
   ];
   for (const c of cases) {
     const a = run(c.opts);

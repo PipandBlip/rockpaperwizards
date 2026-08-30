@@ -7,7 +7,8 @@
  *   SEED=7 DIFF=2 SECS=120 node tools/sim-harness.js
  *
  * Env: SEED, SECS, DIFF (0-2 tiers, 3 escalation), ROOM=<2-6>, HUMANS=<1-2>,
- * BEAMY=1 for a beam-heavy player. HUMANS>1 stands in for the extra human seats
+ * BEAMY=1 for a beam-heavy player, FOG=1 for fog of war (with ROOM).
+ * HUMANS>1 stands in for the extra human seats
  * a networked match creates — there is no local co-op in the menu any more.
  */
 const fs = require("fs");
@@ -124,7 +125,8 @@ if (process.env.ROOM){
     total: +(process.env.ROOM),
     humans: +(process.env.HUMANS || 1),
     seat: 0,
-    difficulty: DIFF
+    difficulty: DIFF,
+    opts: process.env.FOG ? { fog: 1, mapPreset: "random" } : null
   });
 } else {
   els.goBtn.dispatch("click");

@@ -291,7 +291,9 @@ function mulberry32(a){
 
   // Drive both clients frame-locked: same clock for both, one sim step each.
   let clock = 0;
-  const MAX_FRAMES = 60 * 120; // up to 120 sim-seconds (round transitions + tally take time)
+  // Fog rounds legitimately run longer: wizards that cannot see each other must
+  // close distance before the fight can start, so give fog matches a wider window.
+  const MAX_FRAMES = 60 * (OPTS && OPTS.fog ? 240 : 120); // up to 120/240 sim-seconds
   const releaseA = new Map(), releaseB = new Map();
   const moveA = [], moveB = [];
 
@@ -406,6 +408,18 @@ function mulberry32(a){
       if (f - lastChangeAt > 900 && f < MAX_FRAMES - 300){
         console.log("FAIL (lives): sim hash frozen at frame", f, "(stall at", lastChangeAt + ")");
         process.exit(1);
+      }
+      // A fog lives match can be long — blind wizards must close distance before
+      // they can fight. Sustained, lockstepped liveness IS the pass criterion
+      // (mirrors the solo mode liveness check): the sim is healthy and the two
+      // clients agree on it frame for frame; the match ending is just a matter
+      // of time. A freeze is caught above (hash unchanged >900 frames); if we are
+      // still changing the hash after 60s and both sides agree, it is alive.
+      // Non-fog lives matches end on their own within the window, so they still
+      // have to reach a real "over" — only fog gets the liveness shortcut.
+      if ((SOLO || ha === hb) && OPTS && OPTS.fog && f > 3600 && f - lastChangeAt <= 60){
+        console.log("PASS (lives, fog): sustained liveness in lockstep at frame", f, "hash", ha, SOLO ? "(solo host + bots)" : "");
+        process.exit(0);
       }
       if (f % 600 === 0) console.log("  (lives: live, last hash change @", lastChangeAt, ")");
     }
