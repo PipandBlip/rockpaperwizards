@@ -2517,10 +2517,8 @@ const COPY = {
          "Every spell carries a weight — when two collide the heavier one wins and flies on, lighter by whatever it just ate. Take a bot apart on your own, or send someone a code and settle it properly."],
   mp:   ["Multiplayer",
          "Host a duel and you get a four-letter code to hand out. Join one and you paste the code you were given. Bots fill any seat nobody takes."],
-  host: ["Hosting",
-         "The arena is open. Anyone holding the code below can walk into it."],
-  join: ["Join a duel",
-         "Four letters, from whoever is hosting."]
+  host: ["Hosting", "Send the code. Empty seats become bots."],
+  join: ["Join a duel", "Four letters, from whoever is hosting."]
 };
 let panel = "home";
 function show(which){
@@ -2530,6 +2528,14 @@ function show(which){
   el("board").hidden = true;
   el("curtainTitle").textContent = COPY[which][0];
   el("curtainText").textContent = COPY[which][1];
+  // lobby panels carry their own controls; keep the banner overhead small
+  if (which === "host" || which === "join"){
+    el("curtainTitle").style.fontSize = "clamp(18px,3vw,26px)";
+    el("curtainText").hidden = true;
+  } else {
+    el("curtainTitle").style.fontSize = "";
+    el("curtainText").hidden = false;
+  }
 }
 function modeCopy(){
   if (mode === "escalation"){
