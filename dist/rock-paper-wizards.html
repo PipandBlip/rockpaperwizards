@@ -664,9 +664,12 @@ function makeMap(){
   const spawnA = {x:140,y:H/2}, spawnB = {x:W-140,y:H/2};
   const count = 11 + Math.floor(rand()*7);
   let guard = 0;
-  // scale the placement bounds around the arena centre with map size
-  const bx = (W-90) * s, by = (H-70) * s;
-  const px = (a,b) => W/2 + (a - W/2)*s, py = (a,b) => H/2 + (b - H/2)*s;
+  // Scale a random placement in around the arena centre. These each take ONE
+  // argument: py was written (a,b) but reads b, so every call — all of which
+  // pass a single value — made b undefined and every prop's y NaN. Props with a
+  // NaN coordinate simply do not draw, which is why the random scatter vanished
+  // from every mode that uses it (solo AND a multiplayer Random map).
+  const px = a => W/2 + (a - W/2)*s, py = b => H/2 + (b - H/2)*s;
   while (debris.length < count && guard++ < 1400){
     const d = makeProp(pickProp(), px(rnd(90, W-90)), py(rnd(70, H-70)));
     if (dist(d,spawnA) < 120 || dist(d,spawnB) < 120) continue;
