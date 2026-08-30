@@ -2222,8 +2222,11 @@ function buildRails(){
     const who = mk("div", "who", d);
     const nm = mk("b", null, who);
     nm.textContent = w.name;
-    const hpTxt = mk("span", null, who);
-    const wins = mk("div", "wins", who);
+    // the health number and the round pips share a line beneath the name, so a
+    // long name has the row to itself instead of squeezing the pips off the end
+    const line = mk("div", "line", d);
+    const hpTxt = mk("span", null, line);
+    const wins = mk("div", "wins", line);
     const pipN = matchCfg.mode === "lives" ? matchCfg.lives : Math.max(2, matchCfg.roundsToWin);
     const pips = [];
     for (let i = 0; i < pipN; i++) pips.push(mk("i", null, wins));
@@ -2691,7 +2694,9 @@ function renderBoard(fresh){
   if (!list.length){
     box.innerHTML = '<h4>Escalation records</h4><div class="none">No runs recorded yet.</div>';
   } else {
-    box.innerHTML = '<h4>Escalation records</h4><ol>' + list.map((r, i) => {
+    // Eight are kept, six are shown: the end screen has to fit the arena without
+    // scrolling, and the bottom two entries are the least interesting rows on it.
+    box.innerHTML = '<h4>Escalation records</h4><ol>' + list.slice(0, 6).map((r, i) => {
       const isNew = fresh && r.s === fresh.s && r.d === fresh.d;
       return '<li class="' + (isNew ? "fresh" : "") + '"><span>' + (i+1) + '</span>' +
              '<span>' + esc(r.n || "Wizard") + ' · wave ' + r.w + ' · ' + r.k + (r.k === 1 ? " kill" : " kills") + '</span>' +
@@ -2699,6 +2704,7 @@ function renderBoard(fresh){
     }).join("") + '</ol>';
   }
   box.hidden = false;
+  scheduleFit();
 }
 function escGameOver(){
   phase = "over"; phaseT = 1.2;
@@ -2776,6 +2782,7 @@ function renderStats(){
       '<tbody>' + rowsHTML + '</tbody>' +
     '</table>';
   box.hidden = false;
+  scheduleFit();
 }
 function endRound(win){
   if (phase === "over" || phase === "tally") return;
@@ -2799,6 +2806,7 @@ function endRound(win){
       const networked = NET.active;
       leaveRoom();
       show(networked ? "mp" : "solo");
+      if (networked) el("mpNote").hidden = true;   // not a menu hint on a results screen
       renderStats();
       el("curtainTitle").textContent = mine ? "You take the match" : win.name + " takes the match";
       el("curtainText").textContent = mine
@@ -2832,6 +2840,44 @@ function toMenu(){
   show("home");
 }
 
+/* ------------------------------------------------- fitting the curtain
+ * The end screen carries the most: a title, the match report, the name field,
+ * the level picker, the buttons and the records board. On a short window that
+ * used to overflow and the whole panel grew a scrollbar, which is not what a
+ * game should do. The content is gathered into one inner box; if it still will
+ * not fit, that box is scaled down as a unit so everything stays on screen.
+ */
+const curtainEl = el("curtain");
+let curtainInner = null;
+if (curtainEl && typeof document.createElement === "function" && ("firstChild" in curtainEl)){
+  curtainInner = document.createElement("div");
+  curtainInner.className = "curtain-inner";
+  while (curtainEl.firstChild) curtainInner.appendChild(curtainEl.firstChild);
+  curtainEl.appendChild(curtainInner);
+}
+function fitCurtain(){
+  if (!curtainInner || !curtainEl) return;
+  curtainInner.style.transform = "";
+  curtainInner.style.height = "";
+  if (curtainEl.hidden || curtainEl.clientHeight < 80) return;   // nothing to measure yet
+  const avail = curtainEl.clientHeight - 36;                     // the 18px padding, top and bottom
+  const need = curtainInner.scrollHeight;
+  if (!need || need <= avail) return;
+  const k = Math.max(0.55, avail / need);
+  curtainInner.style.transform = "scale(" + k + ")";
+  curtainInner.style.height = (need * k) + "px";                 // so the parent stops overflowing too
+}
+let fitPending = false;
+function scheduleFit(){
+  if (fitPending || !curtainInner) return;
+  fitPending = true;
+  const run = () => { fitPending = false; fitCurtain(); };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+  else if (typeof setTimeout === "function") setTimeout(run, 0);
+  else run();
+}
+if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("resize", scheduleFit);
+
 /* --------------------------------------------------- menu wiring */
 // The curtain is a stack of panels and exactly one is ever visible. Every
 // button routes through show(); nothing else touches a panel's hidden flag.
@@ -2851,6 +2897,7 @@ let panel = "home";
 function show(which){
   panel = which;
   musicFor("lobby");   // any menu, including the one a finished match drops you on
+  scheduleFit();
   for (const k in PANEL) PANEL[k].hidden = (k !== which);
   // the last match's report and round counter are not part of any menu — navigating
   // anywhere clears them, and renderStats() puts the report back after a match ends
@@ -3033,11 +3080,14 @@ function onNetChange(n){
 
 /* ---------------------------------------------------- the buttons */
 el("soloBtn").addEventListener("click", () => { leaveRoom(); show("solo"); });
+const MP_NOTE = "Host a duel to get an invite code, or paste a friend\u2019s code to join theirs.";
 el("mpBtn").addEventListener("click", () => {
   show("mp");
   const note = el("mpNote");
+  note.hidden = false;              // a results screen hides it; the menu wants it back
   note.classList.toggle("bad", !hasNet());
-  if (!hasNet()) note.textContent = "No match server is configured yet, so hosting and joining will not connect. Solo play works as normal.";
+  note.textContent = hasNet() ? MP_NOTE
+    : "No match server is configured yet, so hosting and joining will not connect. Solo play works as normal.";
 });
 el("diffRow").addEventListener("click", e => {
   const b = e.target.closest ? e.target.closest("button[data-diff]") : null;
@@ -3228,6 +3278,7 @@ window.RPW = {
     el("pausePanel").hidden = true;
     el("curtain").hidden = false;
     show("mp");
+    el("mpNote").hidden = true;
     if (reason === "dropped"){
       el("curtainTitle").textContent = "You dropped out";
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";

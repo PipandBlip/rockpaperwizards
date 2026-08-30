@@ -52,8 +52,6 @@
     <div class="curtain" id="curtain">
       <h2 id="curtainTitle">Choose your rival</h2>
       <p id="curtainText">Your wand tracks the enemy on its own. Your job is timing: read what is coming, and answer it with something heavy enough to stop it.</p>
-      <div class="stats" id="stats" hidden></div>
-
       <label class="namefield"><span>Name</span><input id="nameInput" maxlength="14" placeholder="Wizard" autocomplete="off" spellcheck="false"></label>
 
       <!-- landing: two doors, nothing else -->
@@ -131,7 +129,12 @@
         <button class="back" id="joinBack">Back</button>
       </div>
 
-      <div class="board" id="board" hidden></div>
+      <!-- the two post-match panels sit side by side so the end screen fits
+           on one canvas instead of scrolling -->
+      <div class="over-cols">
+        <div class="stats" id="stats" hidden></div>
+        <div class="board" id="board" hidden></div>
+      </div>
     </div>
     <div class="pausebox" id="pausePanel" hidden>
       <h3>Paused</h3>
@@ -188,7 +191,7 @@
 </div>
 
   <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
-  <script src="src/game.js?v=14"></script>
-  <script src="src/net.js?v=14"></script>
+  <script src="src/game.js?v=16"></script>
+  <script src="src/net.js?v=16"></script>
 </body>
 </html>
