@@ -47,7 +47,7 @@ function makeRelay() {
         case "create": {
           const code = "ABCD";
           const total = msg.total || 2; // honor the host's requested room size
-          const room = { code, total, difficulty: 0, players: [], state: "lobby" };
+          const room = { code, total, difficulty: 0, players: [], state: "lobby", opts: msg.opts || null };
           rooms.set(code, room);
           s.room = code;
           s.seat = room.players.length; s.ready = false; room.players.push(s);
@@ -93,7 +93,7 @@ function makeRelay() {
       room.state = "running";
       room.seed = 424242;
       for (const p of room.players) {
-        this.sendTo(p, { t: "start", seed: room.seed, total: room.total, difficulty: room.difficulty, you: p.seat, players: this.roster(room) });
+        this.sendTo(p, { t: "start", seed: room.seed, total: room.total, difficulty: room.difficulty, opts: room.opts, you: p.seat, players: this.roster(room) });
       }
     }
   };
@@ -230,15 +230,18 @@ function mulberry32(a){
   // bots" case.
   const TOTAL = +(process.env.TOTAL || 2);
   const SOLO = process.env.SOLO === "1";
+  // OPTS=<json> sends a host match config with the create, like the real host
+  // panel does; the test then verifies every client applied it.
+  const OPTS = process.env.OPTS ? JSON.parse(process.env.OPTS) : null;
   await A.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
   if (SOLO){
-    A.sandbox.window.RPWNet.create({ total: TOTAL, difficulty: 0 });
+    A.sandbox.window.RPWNet.create({ total: TOTAL, difficulty: 0, opts: OPTS });
     await new Promise(r => setTimeout(r, 50));
     A.sandbox.window.RPWNet.start(); // host starts early; bots fill seats 1..N
     await new Promise(r => setTimeout(r, 50));
   } else {
     await B.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
-    A.sandbox.window.RPWNet.create({ total: TOTAL, difficulty: 0 });
+    A.sandbox.window.RPWNet.create({ total: TOTAL, difficulty: 0, opts: OPTS });
     B.sandbox.window.RPWNet.join("ABCD");
     // wait for both to be in a room
     await new Promise(r => setTimeout(r, 50));
@@ -254,6 +257,29 @@ function mulberry32(a){
     process.exit(1);
   }
   console.log("match started — seatA:", netA.seat, SOLO ? "SOLO (all bots)" : "seatB: " + netB.seat, "seed:", netA.seed);
+
+  // OPTS verification: the config the host sent must have landed on the client.
+  if (OPTS){
+    const got = A.sandbox.window.RPW.matchCfg();
+    const want = {
+      roundsToWin: OPTS.roundsToWin || 2,
+      mode: OPTS.mode || "rounds",
+      lives: OPTS.lives || 3,
+      mapSize: OPTS.mapSize || "medium",
+      fog: OPTS.fog ? 1 : 0,
+      mapPreset: OPTS.mapPreset || "random"
+    };
+    const ok = Object.keys(want).every(k => got[k] === want[k]);
+    console.log("OPTS check:", ok ? "PASS" : "FAIL", "got", JSON.stringify(got), "want", JSON.stringify(want));
+    if (!ok) process.exit(1);
+    if (!SOLO){
+      const gotB = B.sandbox.window.RPW.matchCfg();
+      if (JSON.stringify(gotB) !== JSON.stringify(got)){
+        console.log("OPTS check: FAIL — clients disagree", JSON.stringify(got), JSON.stringify(gotB));
+        process.exit(1);
+      }
+    }
+  }
 
   // Scripted inputs for each client (independent policies). A is beam-heavy
   // (the beam is the ultimate and lands kills fast), B plays a spread.
@@ -300,6 +326,9 @@ function mulberry32(a){
   let round2LiveFrames = -1;
   let flipFrame = -1; // test frame where the "Round 2" label first appears
   let round2WindowActive = false;
+  const LIVES = !!(OPTS && OPTS.mode === "lives");
+  let lastChangeAt = 0;    // last test-frame the hash changed (liveness)
+  let lastChangeHash = -1;
 
   const stepA = () => step(A, rngA, releaseA, moveA, pickA);
   const stepB = () => { if (!SOLO) step(B, rngB, releaseB, moveB, pickB); };
@@ -355,6 +384,30 @@ function mulberry32(a){
 
     if (f % 300 === 0){
       console.log("frame", f, "| hashA", ha, "hashB", hb, "| labelA:", JSON.stringify(labelA), SOLO ? "" : "| B: " + JSON.stringify(B.els.roundLabel ? B.els.roundLabel.textContent : ""));
+    }
+
+    if (ha !== lastChangeHash){ lastChangeHash = ha; lastChangeAt = f; }
+
+    // lives mode: no "Round 2" — it's one continuous match until the last
+    // wizard is standing. PASS when the match legitimately ends (phase "over",
+    // agreed on both clients) OR we've proven sustained liveness + lockstep.
+    if (LIVES && f > 1200){
+      const endA = A.sandbox.window.RPW.phase() === "over";
+      const endB = SOLO ? endA : B.sandbox.window.RPW.phase() === "over";
+      if (endA || endB){
+        if (SOLO || ha === hb){
+          console.log("PASS (lives): match ended in lockstep at frame", f, "hash", ha, SOLO ? "(solo host + bots)" : "");
+          process.exit(0);
+        } else {
+          console.log("FAIL (lives): match ended but hashes diverged — A:", ha, "B:", hb);
+          process.exit(1);
+        }
+      }
+      if (f - lastChangeAt > 900 && f < MAX_FRAMES - 300){
+        console.log("FAIL (lives): sim hash frozen at frame", f, "(stall at", lastChangeAt + ")");
+        process.exit(1);
+      }
+      if (f % 600 === 0) console.log("  (lives: live, last hash change @", lastChangeAt, ")");
     }
 
     if (sawRound2 && round2LiveFrames >= 60){

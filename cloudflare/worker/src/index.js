@@ -32,6 +32,20 @@ function cleanName(n) {
   return String(n == null ? "" : n).replace(/[^\w \-'.]/g, "").trim().slice(0, 14) || "Wizard";
 }
 
+// Host match settings. Sanitised here so every client in the room runs the
+// same rules — the sim is lockstep, so these must never diverge.
+function sanitizeOpts(o) {
+  o = o || {};
+  return {
+    roundsToWin: Math.min(9, Math.max(1, o.roundsToWin | 0 || 2)),
+    mode: o.mode === "lives" ? "lives" : "rounds",
+    lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
+    mapSize: ["small", "medium", "large"].includes(o.mapSize) ? o.mapSize : "medium",
+    fog: o.fog ? 1 : 0,
+    mapPreset: ["random", "arena", "gauntlet", "crossfire"].includes(o.mapPreset) ? o.mapPreset : "random"
+  };
+}
+
 export class RPWRelay extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -149,6 +163,7 @@ export class RPWRelay extends DurableObject {
       total: Math.min(MAX_SEATS, Math.max(2, opts.total | 0 || 4)),
       difficulty: Math.min(2, Math.max(0, opts.difficulty | 0)),
       isPublic: !!opts.isPublic,
+      opts: sanitizeOpts(opts.opts),
       playerIds: [], // in seat order
       state: "lobby", // lobby | running
       seed: 0,
@@ -203,6 +218,7 @@ export class RPWRelay extends DurableObject {
       code: room.code,
       total: room.total,
       difficulty: room.difficulty,
+      opts: room.opts,
       state: room.state,
       players: this.roster(room)
     };
@@ -226,6 +242,7 @@ export class RPWRelay extends DurableObject {
       seed: room.seed,
       total: room.total,
       difficulty: room.difficulty,
+      opts: room.opts,
       players: this.roster(room)
     };
     for (const pid of room.playerIds) {
@@ -250,7 +267,8 @@ export class RPWRelay extends DurableObject {
         const room = this.createRoom({
           total: msg.total,
           difficulty: msg.difficulty,
-          isPublic: msg.isPublic !== false
+          isPublic: msg.isPublic !== false,
+          opts: msg.opts
         });
         this.addToRoom(room, p);
         this.sync(room);
@@ -312,6 +330,7 @@ export class RPWRelay extends DurableObject {
         if (!r || p.seat !== 0 || r.state !== "lobby") break;
         if (msg.total != null) r.total = Math.min(MAX_SEATS, Math.max(2, msg.total | 0));
         if (msg.difficulty != null) r.difficulty = Math.min(2, Math.max(0, msg.difficulty | 0));
+        if (msg.opts) r.opts = sanitizeOpts({ ...r.opts, ...msg.opts });
         while (r.playerIds.length > r.total) {
           const last = this.byId.get(r.playerIds[r.playerIds.length - 1]);
           if (last) this.removeFromRoom(last);

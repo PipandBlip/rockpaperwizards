@@ -193,6 +193,7 @@
       seat: net.seat < 0 ? 0 : net.seat,
       names,
       difficulty: msg.difficulty,
+      opts: msg.opts || null,
       name: currentName()
     });
     emit();
@@ -252,7 +253,7 @@
     net,
     DELAY,
     connect,
-    create: opts => send({ t: "create", name: currentName(), total: (opts && opts.total) || 4, difficulty: (opts && opts.difficulty) || 0, isPublic: !(opts && opts.private) }),
+    create: opts => send({ t: "create", name: currentName(), total: (opts && opts.total) || 4, difficulty: (opts && opts.difficulty) || 0, isPublic: !(opts && opts.private), opts: opts && opts.opts }),
     join: code => send({ t: "join", name: currentName(), code: String(code || "").toUpperCase() }),
     quick: opts => send({ t: "quick", name: currentName(), total: (opts && opts.total) || 4 }),
     config: opts => send({ t: "config", ...opts }),

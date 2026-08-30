@@ -158,7 +158,7 @@ function makeWizard(x,y,friendly){
     ward:0, wardMax:0, wardFade:0, wardTick:0,
     beamOn:false, beamWind:0, beamT:0,
     held:null, holdT:0,
-    hurt:0, dead:false,
+    hurt:0, dead:false, lives: 3, spawnSafe: 0,
     // ai
     think:0, react:0, goal:null, strafe:1, panic:0, dodge:0, aiChargeTo:null, beamCool:0, wasBeam:false, beamReact:0, hitCool:0, beamBurn:0, dashT:0, dashCool:0, dashVX:0, dashVY:0,
     swish:0, swishDir:1, swishColor:"#fff", swishKind:"cast", swishT0:.19, beamSounding:false, beamCharging:false, clash:false, beamLen:0
@@ -221,11 +221,25 @@ function makeProp(type, x, y){
 }
 function makeMap(){
   debris = [];
+  const s = mapScale();
+  const preset = MAP_PRESETS[matchCfg.mapPreset];
+  if (preset){
+    // a fixed layout — identical on every machine, no RNG touched
+    for (const [type, fx, fy] of preset){
+      const d = makeProp(type, W*fx, H*fy);
+      debris.push(d);
+    }
+    bakeFloor();
+    return;
+  }
   const spawnA = {x:140,y:H/2}, spawnB = {x:W-140,y:H/2};
   const count = 11 + Math.floor(rand()*7);
   let guard = 0;
+  // scale the placement bounds around the arena centre with map size
+  const bx = (W-90) * s, by = (H-70) * s;
+  const px = (a,b) => W/2 + (a - W/2)*s, py = (a,b) => H/2 + (b - H/2)*s;
   while (debris.length < count && guard++ < 1400){
-    const d = makeProp(pickProp(), rnd(90, W-90), rnd(70, H-70));
+    const d = makeProp(pickProp(), px(rnd(90, W-90)), py(rnd(70, H-70)));
     if (dist(d,spawnA) < 120 || dist(d,spawnB) < 120) continue;
     const pad = d.solid ? 26 : 12;
     let ok = true;
@@ -235,12 +249,12 @@ function makeMap(){
   // every arena owes you something to throw and something to hide behind
   let lifts = debris.filter(d => d.lift).length;
   while (lifts < 3 && guard++ < 2000){
-    const d = makeProp(rand() < .5 ? "crate" : "barrel", rnd(W*.28, W*.72), rnd(70, H-70));
+    const d = makeProp(rand() < .5 ? "crate" : "barrel", px(rnd(W*.28, W*.72)), py(rnd(70, H-70)));
     if (debris.every(o => dist(d,o) > d.r + o.r + 24)){ debris.push(d); lifts++; }
   }
   let walls = debris.filter(d => d.stopsBeam).length;
   while (walls < 4 && guard++ < 2600){
-    const d = makeProp(rand() < .6 ? "stone" : "pillar", rnd(W*.2, W*.8), rnd(70, H-70));
+    const d = makeProp(rand() < .6 ? "stone" : "pillar", px(rnd(W*.2, W*.8)), py(rnd(70, H-70)));
     if (dist(d,spawnA) > 120 && dist(d,spawnB) > 120 &&
         debris.every(o => dist(d,o) > d.r + o.r + 26)){ debris.push(d); walls++; }
   }
@@ -623,6 +637,13 @@ function lineClear(a, b, forShots){
   }
   return true;
 }
+// Fog of war: can `a` see `b`? LOS is a clear beam path plus a soft sight
+// radius (scaled with the arena). Pure geometry — never touches RNG.
+function canSee(a, b){
+  if (!a || !b) return true;
+  if (dist(a, b) > FOG_R * mapScale() + 30) return false;
+  return lineClear(a, b, false);
+}
 function nearestCover(w, from){
   let best = null, bs = -1e9;
   for (const d of debris){
@@ -772,7 +793,7 @@ function aiTick(w, opp, dt){
 
 /* ---------------------------------------------------------- damage */
 function hurt(w, amount){
-  if (w.dead) return;
+  if (w.dead || w.spawnSafe > 0) return;
   w.hp -= amount;
   w.hurt = Math.min(1, w.hurt + amount/22);
   if (amount >= 3 && w.hitCool <= 0){
@@ -895,6 +916,7 @@ function update(dt){
     w.castLock = Math.max(0, w.castLock - dt);
     w.fizzle = Math.max(0, w.fizzle - dt);
     w.hurt = Math.max(0, w.hurt - dt*3);
+    w.spawnSafe = Math.max(0, w.spawnSafe - dt);
     w.hitCool = Math.max(0, w.hitCool - dt);
     w.swish = Math.max(0, w.swish - dt);
     w.dashCool = Math.max(0, w.dashCool - dt);
@@ -1317,7 +1339,8 @@ function draw(){
     }
     ctx.restore();
   }
-  for (const w of wizards) if (w !== you && !w.dead) drawWizard(w);
+  const fog = matchCfg.fog && you && !you.dead;
+  for (const w of wizards) if (w !== you && !w.dead && !(fog && !canSee(you, w))) drawWizard(w);
   if (!you.dead) drawWizard(you);
 
   let windK = 0;
@@ -1339,6 +1362,19 @@ function draw(){
   vg.addColorStop(1,"rgba(0,0,0,.72)");
   ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
   ctx.restore();
+
+  // fog of war: a soft shroud around the player — darkness past their sight
+  if (matchCfg.fog && you && !you.dead){
+    const fr = Math.max(80, FOG_R * mapScale());
+    const fg = ctx.createRadialGradient(you.x, you.y, fr*0.55, you.x, you.y, fr);
+    fg.addColorStop(0,"rgba(3,2,8,0)");
+    fg.addColorStop(1,"rgba(3,2,8,0.92)");
+    ctx.fillStyle = fg; ctx.fillRect(0,0,W,H);
+    // a faint visible boundary so the edge of the world reads as fog, not void
+    ctx.strokeStyle = "rgba(160,150,220,0.10)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(you.x, you.y, fr*0.98, 0, TAU); ctx.stroke();
+  }
 
   if (flash > 0.004){
     ctx.save();
@@ -1972,7 +2008,9 @@ function buildRails(){
     nm.textContent = w.name;
     const hpTxt = mk("span", null, who);
     const wins = mk("div", "wins", who);
-    const pips = [mk("i", null, wins), mk("i", null, wins)];
+    const pipN = matchCfg.mode === "lives" ? matchCfg.lives : Math.max(2, matchCfg.roundsToWin);
+    const pips = [];
+    for (let i = 0; i < pipN; i++) pips.push(mk("i", null, wins));
     const hpB = mk("i", null, mk("div", "meter hp", d));
     const mpB = mk("i", null, mk("div", "meter mp", d));
     return { w, d, nm, hpTxt, hpB, mpB, pips };
@@ -1989,7 +2027,10 @@ function syncHUD(){
     r.d.classList.toggle("out", w.dead);
     r.d.classList.toggle("surge", w.surge > 0);
     r.d.classList.toggle("locked", you.lock === w);
-    for (let i = 0; i < r.pips.length; i++) r.pips[i].classList.toggle("on", i < w.wins);
+    r.d.classList.toggle("hidden-wiz", matchCfg.fog && you && w !== you && !canSee(you, w));
+    for (let i = 0; i < r.pips.length; i++)
+      r.pips[i].classList.toggle("on", matchCfg.mode === "lives" ? i < w.lives : i < w.wins);
+    if (matchCfg.mode === "lives") r.d.classList.toggle("out", w.dead && w.lives <= 0);
   }
   cards.forEach((c, i) => {
     const s = SPELLS[i];
@@ -2012,7 +2053,9 @@ function syncHUD(){
     el("roundLabel").textContent =
       `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ${alive} ${alive === 1 ? "rival" : "rivals"}`;
   } else {
-    el("roundLabel").textContent = `Round ${roundNo} · first to two`;
+    el("roundLabel").textContent = matchCfg.mode === "lives"
+      ? `Lives · ${matchCfg.lives} each`
+      : `Round ${roundNo} · first to ${matchCfg.roundsToWin}`;
   }
 }
 
@@ -2122,9 +2165,52 @@ let roomTotal = 4, roomHumans = 1;
 // keys off localSeat, and seatNames carries the roster the server sent.
 let localSeat = 0, seatNames = null;
 
+// Host match settings, applied identically on every client from the start
+// message. The relay sanitises them server-side too, so the lockstep sim can
+// trust they never diverge.
+let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random" };
+function sanitizeMatchCfg(o){
+  o = o || {};
+  return {
+    roundsToWin: Math.min(9, Math.max(1, o.roundsToWin | 0 || 2)),
+    mode: o.mode === "lives" ? "lives" : "rounds",
+    lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
+    mapSize: ["small","medium","large"].includes(o.mapSize) ? o.mapSize : "medium",
+    fog: o.fog ? 1 : 0,
+    mapPreset: ["random","arena","gauntlet","crossfire"].includes(o.mapPreset) ? o.mapPreset : "random"
+  };
+}
+// The host panel UI state (what the host is choosing in the lobby).
+let hostRounds = 2, hostMode = "rounds", hostLives = 3,
+    hostMapSize = "medium", hostFog = 0, hostMapPreset = "random";
+
+// Map-size factor: scales the arena's spawn ring and prop placement bounds.
+const MAP_SCALE = { small: 0.82, medium: 1.0, large: 1.28 };
+function mapScale(){ return MAP_SCALE[matchCfg.mapSize] || 1; }
+
+// Fixed map layouts — "always same layout" presets (deterministic, no RNG),
+// plus "random" which keeps the seeded scatter. Positions are fractions of W/H
+// so a layout reads the same on every machine.
+const MAP_PRESETS = {
+  arena:   [["pillar",.50,.18],["pillar",.50,.82],["pillar",.18,.50],["pillar",.82,.50],
+            ["crate",.30,.30],["crate",.70,.70],["crate",.30,.70],["crate",.70,.30],
+            ["stone",.50,.38],["stone",.50,.62],["lattice",.38,.50],["lattice",.62,.50]],
+  gauntlet:[["stone",.26,.22],["stone",.26,.50],["stone",.26,.78],
+            ["pillar",.74,.22],["pillar",.74,.50],["pillar",.74,.78],
+            ["crate",.50,.14],["crate",.50,.86],["lattice",.38,.33],["lattice",.62,.67],
+            ["barrel",.62,.33],["barrel",.38,.67]],
+  crossfire:[["stone",.20,.35],["stone",.20,.65],["pillar",.80,.35],["pillar",.80,.65],
+             ["crate",.40,.20],["crate",.60,.80],["barrel",.40,.80],["barrel",.60,.20],
+             ["lattice",.50,.50],["chair",.33,.33],["stool",.67,.67],["urn",.50,.28]]
+};
+
+// Fog of war: how far a wizard can see, scaled a little with the arena.
+const FOG_R = 250;
+
 function spawnRing(n){
   const pts = [];
-  const rx = W*0.36, ry = H*0.33;
+  const s = mapScale();
+  const rx = W*0.36*s, ry = H*0.33*s;
   for (let i = 0; i < n; i++){
     const a = Math.PI + (i/n)*TAU;
     pts.push({ x: W/2 + Math.cos(a)*rx, y: H/2 + Math.sin(a)*ry });
@@ -2143,7 +2229,8 @@ function makeSeats(){
           : DIFF[difficulty].name + " " + (i - roomHumans + 1),
         tint: TINTS[i % TINTS.length],
         D: human ? null : DIFF[difficulty],
-        wins: 0
+        wins: 0,
+        lives: matchCfg.lives
       });
     }
   } else if (mode === "escalation"){
@@ -2167,6 +2254,8 @@ function buildRoster(){
     w.name = seat.name;
     w.tint = seat.tint;
     w.wins = seat.wins;
+    w.lives = seat.lives != null ? seat.lives : matchCfg.lives;
+    w.spawnSafe = 0;
     w.human = seat.human;
     w.D = seat.D;
     if (w.D && w.D.hp){ w.hpMax = w.D.hp; w.hp = w.D.hp; }
@@ -2248,9 +2337,35 @@ function onDeath(w){
     puff(w.x, w.y, w.tint, 30);
     return;
   }
+  // lives mode: a downed wizard spends a life and comes back; only a wizard
+  // with no lives left is out, and the match ends when one wizard is standing.
+  if (matchCfg.mode === "lives"){
+    w.lives--;
+    if (seats[w.seat]) seats[w.seat].lives = w.lives;
+    if (w.lives > 0){
+      respawnWizard(w);
+      return;
+    }
+    // out of lives — stays dead; fall through to the standing check
+  }
   const teams = new Set(wizards.filter(q => !q.dead).map(q => q.team));
   if (teams.size <= 1) endRound(wizards.find(q => !q.dead) || null);
 }
+function respawnWizard(w){
+  const pts = spawnRing(Math.max(2, mode === "escalation" ? 2 : seats.length));
+  const p = pts[w.seat % pts.length];
+  w.x = p.x; w.y = p.y;
+  w.hp = w.hpMax || 100; w.mana = 100;
+  w.dead = false;
+  w.beamOn = false; w.beamWind = 0; w.charge = null; w.chargeT = 0;
+  w.ward = 0; w.wardMax = 0; w.held = null; w.lock = null;
+  w.target = nearestEnemy(w);
+  w.spawnSafe = 1.6;   // brief grace so nobody dies on top of the spawn point
+  rings.push({ x:p.x, y:p.y, r:6, max:70, t:0, life:.7, color:w.tint, width:3 });
+  puff(p.x, p.y, w.tint, 24);
+  if (w === you) cvs.focus();
+}
+
 
 /* --------------------------------------------------- high scores */
 const HS_KEY = "rpw.escalation.scores";
@@ -2313,7 +2428,9 @@ function newRound(){
   phase = "count"; phaseT = 1.4;
   msg = mode === "escalation"
     ? { text: "Survive", sub: "They keep coming.", t: 1.4, color: "#ff4d5e" }
-    : { text: `Round ${roundNo}`, sub: "Wands up.", t: 1.4, color: "#a97cff" };
+    : matchCfg.mode === "lives"
+      ? { text: `Round ${roundNo}`, sub: `${matchCfg.lives} lives each — last one standing`, t: 1.4, color: "#a97cff" }
+      : { text: `Round ${roundNo}`, sub: "Wands up.", t: 1.4, color: "#a97cff" };
 }
 function readName(){
   const inp = el("nameInput");
@@ -2347,7 +2464,8 @@ function endRound(win){
     sub: win ? "takes the round." : "is left standing.",
     t: 2.0, color: win ? win.tint : "#8b81a8"
   };
-  if (win && win.wins >= 2){
+  // lives mode ends the whole match on the last one standing — no round tally
+  if (matchCfg.mode === "lives" || (win && win.wins >= matchCfg.roundsToWin)){
     phase = "over"; phaseT = 1.2;
     msg = { text: mine ? "Victory" : win.name + " wins", sub: null, t: 1.2, color: win.tint };
     setTimeout(() => {
@@ -2357,7 +2475,10 @@ function endRound(win){
       show(networked ? "mp" : "solo");
       el("curtainTitle").textContent = mine ? "You take the match" : win.name + " takes the match";
       el("curtainText").textContent = mine
-        ? "Two rounds to your name. Pick a harder rival, or fill the room with more of them."
+        ? (matchCfg.mode === "lives"
+            ? "Last one standing. Pick a harder rival, or fill the room with more of them."
+            : (matchCfg.roundsToWin > 2 ? matchCfg.roundsToWin + " rounds to your name. Pick a harder rival, or fill the room with more of them."
+                                       : "Two rounds to your name. Pick a harder rival, or fill the room with more of them."))
         : "Read the incoming weight before you answer it — and remember a good counter pays you back in mana.";
       if (!networked) el("goBtn").textContent = "Play again";
       el("curtain").hidden = false;
@@ -2448,10 +2569,35 @@ let botLevel = 1;                       // who fills the empty seats in a hosted
 const paintTotal = segRow(el("segTotal"), [2,3,4,5,6], () => roomTotal, v => { roomTotal = v; });
 const paintBotLvl = segRow(el("segBotLvl"), [0,1,2], () => botLevel, v => { botLevel = v; },
                            v => DIFF[v].name);
+const paintMode = segRow(el("segMode"), ["rounds","lives"], () => hostMode, v => { hostMode = v; paintModeRows(); },
+                         v => v === "lives" ? "Lives" : "Rounds");
+const paintMapSize = segRow(el("segMapSize"), ["small","medium","large"], () => hostMapSize, v => { hostMapSize = v; },
+                            v => v[0].toUpperCase() + v.slice(1));
+const paintFog = segRow(el("segFog"), [0,1], () => hostFog, v => { hostFog = v; },
+                        v => v ? "On" : "Off");
+const paintPreset = segRow(el("segPreset"), ["random","arena","gauntlet","crossfire"], () => hostMapPreset, v => { hostMapPreset = v; },
+                           v => v === "random" ? "Random" : v[0].toUpperCase() + v.slice(1));
+function paintModeRows(){
+  const lives = hostMode === "lives";
+  el("rowRounds").hidden = lives;
+  el("rowLives").hidden = !lives;
+}
+el("hostRounds").addEventListener("input", e => { hostRounds = +e.target.value; el("hostRoundsVal").textContent = hostRounds; afterSeg(); });
+el("hostLives").addEventListener("input", e => { hostLives = +e.target.value; el("hostLivesVal").textContent = hostLives; afterSeg(); });
+function hostOpts(){
+  return {
+    roundsToWin: hostRounds,
+    mode: hostMode,
+    lives: hostLives,
+    mapSize: hostMapSize,
+    fog: hostFog,
+    mapPreset: hostMapPreset
+  };
+}
 function afterSeg(){
   hostNote();
   // the lobby only obeys the host, and only before the match starts
-  if (panel === "host" && inRoom()) window.RPWNet.config({ total: roomTotal, difficulty: botLevel });
+  if (panel === "host" && inRoom()) window.RPWNet.config({ total: roomTotal, difficulty: botLevel, opts: hostOpts() });
 }
 function hostNote(){
   const taken = inRoom() ? window.RPWNet.net.players.length : 1;
@@ -2566,11 +2712,12 @@ el("goBtn").addEventListener("click", () => {
 });
 el("hostBtn").addEventListener("click", () => {
   show("host");
+  paintModeRows();
   setInvite(null);
   renderRoster(el("hostRoster"));
   hostNote();
   ensureConnected()
-    .then(() => window.RPWNet.create({ total: roomTotal, difficulty: botLevel, private: true }))
+    .then(() => window.RPWNet.create({ total: roomTotal, difficulty: botLevel, private: true, opts: hostOpts() }))
     .catch(() => netFail("host"));
 });
 el("joinBtn").addEventListener("click", () => {
@@ -2706,10 +2853,13 @@ window.RPW = {
     roomHumans = opts.humans || 1;
     localSeat = opts.seat != null ? opts.seat : 0;
     seatNames = opts.names || null;
+    matchCfg = sanitizeMatchCfg(opts.opts || null);
     if (opts.name) { const inp = el("nameInput"); if (inp) inp.value = opts.name; }
     newMatch(opts.seed);
   },
   seats: () => seats.map(x => ({ name: x.name, human: x.human })),
+  matchCfg: () => ({ ...matchCfg }),
+  phase: () => phase,
   // a cheap checksum of everything the simulation owns, for determinism tests
   hash(){
     let h = 2166136261 >>> 0;

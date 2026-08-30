@@ -124,6 +124,8 @@
   .seg{display:flex;gap:4px}
   .seg button{padding:5px 10px;font-size:11px;letter-spacing:.04em}
   .seg button.sel{border-color:var(--spark);color:var(--spark);background:rgba(63,231,255,.12)}
+  .rrow input[type=range]{flex:1;max-width:150px;accent-color:var(--spark);background:transparent;cursor:pointer}
+  .plate.hidden-wiz{opacity:.12;filter:blur(1.5px)}
   .room .note{font-family:var(--prose);font-size:12.5px;line-height:1.5;color:var(--muted);margin:0;text-transform:none;letter-spacing:0}
   /* the curtain is a stack of panels; exactly one is ever unhidden */
   .panel{display:flex;flex-direction:column;align-items:center;gap:11px;width:100%}

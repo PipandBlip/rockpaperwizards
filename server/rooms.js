@@ -27,12 +27,25 @@ function makeCode() {
   return code;
 }
 
+function sanitizeOpts(o) {
+  o = o || {};
+  return {
+    roundsToWin: Math.min(9, Math.max(1, o.roundsToWin | 0 || 2)),
+    mode: o.mode === "lives" ? "lives" : "rounds",
+    lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
+    mapSize: ["small", "medium", "large"].includes(o.mapSize) ? o.mapSize : "medium",
+    fog: o.fog ? 1 : 0,
+    mapPreset: ["random", "arena", "gauntlet", "crossfire"].includes(o.mapPreset) ? o.mapPreset : "random"
+  };
+}
+
 class Room {
   constructor(opts) {
     this.code = makeCode();
     this.total = Math.min(MAX_SEATS, Math.max(2, opts.total | 0 || 4));
     this.difficulty = Math.min(2, Math.max(0, opts.difficulty | 0));
     this.isPublic = !!opts.isPublic;
+    this.opts = sanitizeOpts(opts.opts);
     this.players = []; // Player[]  — seat order is array order
     this.state = "lobby"; // lobby | running
     this.seed = 0;
@@ -86,6 +99,7 @@ class Room {
         code: this.code,
         total: this.total,
         difficulty: this.difficulty,
+        opts: this.opts,
         state: this.state,
         you: p.seat,
         players: this.roster()
@@ -112,6 +126,7 @@ class Room {
         seed: this.seed,
         total: this.total,
         difficulty: this.difficulty,
+        opts: this.opts,
         you: p.seat,
         players: this.roster()
       });
