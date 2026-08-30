@@ -632,7 +632,10 @@ function makeProp(type, x, y){
 function makeMap(){
   debris = [];
   const s = mapScale();
-  const preset = MAP_PRESETS[matchCfg.mapPreset];
+  // Presets are a multiplayer host choice only. In solo, duel, or escalation the
+  // arena ALWAYS uses the seeded random scatter — never a fixed layout — no
+  // matter what state a previous networked match left behind.
+  const preset = NET.active ? MAP_PRESETS[matchCfg.mapPreset] : null;
   if (preset){
     // a fixed layout — identical on every machine, no RNG touched
     for (const [type, fx, fy] of preset){
@@ -729,7 +732,7 @@ window.addEventListener("keydown", e => {
   keys[k] = true;
   if (k === "m") toggleMusic();
   if (k === "p" && (phase === "fight" || phase === "paused")) togglePause();
-  if (k === "r" && phase !== "menu") { newMatch(); }
+  if (k === "r" && phase !== "menu") { resetOfflineCfg(); newMatch(); }
 });
 window.addEventListener("keyup", e => {
   if (typing(e)) return;
