@@ -140,14 +140,37 @@
   .room .roster{max-height:104px;overflow-y:auto}
   /* the advanced knobs live behind a disclosure so the lobby is a code, a size
      and a roster — not a wall of sliders */
-  .moreopts{width:100%;border:1px solid var(--edge);border-radius:3px;background:rgba(0,0,0,.22)}
-  .moreopts>summary{list-style:none;cursor:pointer;padding:6px 10px;font-size:10px;letter-spacing:.2em;
-    text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px;user-select:none}
+  /* Match options reads as a select control: a raised bar with a caret on the
+     right, and a panel that drops out of it like a real menu. It used to be a
+     flat bordered box that nobody could tell was clickable. */
+  .moreopts{width:100%;position:relative}
+  .moreopts>summary{
+    list-style:none;cursor:pointer;user-select:none;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:9px 12px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--chalk);font-weight:600;
+    border:1px solid var(--edge);border-radius:3px;
+    background:linear-gradient(rgba(255,255,255,.045), rgba(255,255,255,0)) , rgba(10,7,18,.9);
+    box-shadow:0 1px 0 rgba(255,255,255,.04) inset;
+    transition:border-color .14s, color .14s, background .14s}
   .moreopts>summary::-webkit-details-marker{display:none}
-  .moreopts>summary::before{content:"\25B8";font-size:9px;transition:transform .15s}
-  .moreopts[open]>summary::before{transform:rotate(90deg)}
-  .moreopts>summary:hover{color:var(--chalk)}
-  .moreopts .opts{padding:2px 10px 10px}
+  .moreopts>summary::after{
+    content:"";width:0;height:0;flex:none;
+    border-left:4.5px solid transparent;border-right:4.5px solid transparent;
+    border-top:5px solid currentColor;opacity:.75;transition:transform .16s}
+  .moreopts>summary:hover{border-color:#5a4f7a;background:rgba(63,231,255,.06)}
+  .moreopts>summary:focus-visible{outline:none;border-color:var(--spark);
+    box-shadow:0 0 0 1px var(--spark), 0 0 16px -6px var(--spark)}
+  .moreopts[open]>summary{border-color:var(--spark);color:var(--spark);
+    border-bottom-left-radius:0;border-bottom-right-radius:0}
+  .moreopts[open]>summary::after{transform:rotate(180deg)}
+  /* the panel hangs off the bottom of the control, sharing its edge */
+  .moreopts[open]>.opts{
+    border:1px solid var(--spark);border-top:0;
+    border-bottom-left-radius:3px;border-bottom-right-radius:3px;
+    background:rgba(6,4,12,.96);
+    box-shadow:0 10px 24px -14px #000;
+    padding:11px 12px 12px;gap:9px 12px}
   .room-actions{display:flex;gap:8px;justify-content:center;width:100%}
   .room-actions button{flex:1;max-width:180px}
   .room h4{margin:0;font-family:var(--display);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:600}

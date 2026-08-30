@@ -7,7 +7,7 @@
  *
  *   node tools/build-single.js [outfile]     # default: dist/rock-paper-wizards.html
  *
- * The trade is size: roughly 3.5MB, because the audio is base64. For the web
+ * The trade is size: roughly 9MB, because the audio is base64. For the web
  * build, deploy the folder as it is instead — the browser will cache the audio
  * separately and the page itself stays under 30KB.
  */

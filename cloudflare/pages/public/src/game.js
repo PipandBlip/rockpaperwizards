@@ -429,11 +429,10 @@ window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   const code = e.code || "";
   if (k === "shift") keys[code === "ShiftRight" ? "shiftR" : "shiftL"] = true;
-  if (["w","a","s","d","y","u","i","h","j","k","p","r","m","shift"," ",
+  if (["w","a","s","d","y","u","i","h","j","k","p","r","shift"," ",
        "1","2","3","4","5","6","tab","arrowup","arrowdown","arrowleft","arrowright"].includes(k)) e.preventDefault();
   if (keys[k]) return;
   keys[k] = true;
-  if (k === "m") toggleMusic();
   if (k === "p" && (phase === "fight" || phase === "paused")) togglePause();
   if (k === "r" && phase !== "menu") { resetOfflineCfg(); newMatch(); }
 });
@@ -2277,7 +2276,7 @@ function syncHUD(){
 }
 
 /* ---------------------------------------------------------- music */
-const bgm = el("bgm"), bgmBtn = el("bgmBtn");
+const bgm = el("bgm"), lobbyBgm = el("lobbyBgm"), bgmBtn = el("bgmBtn");
 const beamSfx = { you: el("sfxBeamA"), foe: el("sfxBeamB") };
 const chargeSfx = { you: el("sfxChargeA"), foe: el("sfxChargeB") };
 const clashSfx = el("sfxClash");
@@ -2338,7 +2337,8 @@ function dashSound(w){
   playSfx(dashS, w.friendly ? 0.5 : 0.34);
 }
 let muted = false;
-if (bgm) bgm.volume = 0.42;
+if (bgm) bgm.volume = 0;          // both tracks start silent; the crossfade raises one
+if (lobbyBgm) lobbyBgm.volume = 0;
 function beamSound(w, on){
   const a = w.friendly ? beamSfx.you : beamSfx.foe;
   if (!a) return;
@@ -2360,19 +2360,91 @@ function hushBeams(){
   stopSfx(clashSfx);
   for (const k in castSfx) for (const a of castSfx[k]) stopSfx(a);
 }
-function startMusic(){
-  if (!bgm || muted) return;
-  const p = bgm.play();
+/* Two tracks, one at a time: the lobby waits on the menu, the battle theme takes
+ * over the moment a match starts, and each hands over by fading rather than
+ * cutting. Both elements loop from the first interaction onward and it is only
+ * their volume that moves — restarting an <audio> mid-fade clicks, and browsers
+ * will not begin playback at all until the page has been touched.
+ */
+const MUSIC_VOL = { lobby: 0.38, battle: 0.42 };
+const FADE_MS = 900;
+let musicTrack = "lobby";        // which one should be audible right now
+let musicStarted = false;        // have we been allowed to play at all yet?
+let fadeTimer = 0;
+function trackEl(which){ return which === "lobby" ? lobbyBgm : bgm; }
+function fadeMusic(){
+  if (typeof clearInterval === "function" && fadeTimer) clearInterval(fadeTimer);
+  if (typeof setInterval !== "function") return;
+  const stepMs = 50, step = stepMs / FADE_MS;
+  fadeTimer = setInterval(() => {
+    let settled = true;
+    for (const which of ["lobby", "battle"]){
+      const a = trackEl(which);
+      if (!a) continue;
+      const want = (muted || !musicStarted || which !== musicTrack) ? 0 : MUSIC_VOL[which];
+      const now = a.volume;
+      if (Math.abs(now - want) < 0.02){
+        a.volume = want;
+        // a track faded to nothing stops, so it is not burning battery in silence
+        if (want === 0 && !a.paused) a.pause();
+      } else {
+        // never step past the target: a step bigger than the settle tolerance
+        // would overshoot, come back, overshoot again — an audible wobble and a
+        // timer that never clears
+        const d = want - now;
+        const moved = now + Math.sign(d) * Math.min(step, Math.abs(d));
+        a.volume = Math.max(0, Math.min(1, moved));
+        settled = false;
+      }
+    }
+    if (settled && fadeTimer){ clearInterval(fadeTimer); fadeTimer = 0; }
+  }, stepMs);
+}
+function playTrack(which){
+  const a = trackEl(which);
+  if (!a || muted || !musicStarted) return;
+  const p = a.play();
   if (p && p.catch) p.catch(() => {});
+}
+// `startMusic` is the first-interaction unlock; `musicFor` is the switch.
+function startMusic(){
+  musicStarted = true;
+  if (muted) return;
+  playTrack(musicTrack);
+  fadeMusic();
+}
+function musicFor(which){
+  if (musicTrack === which && musicStarted) { fadeMusic(); return; }
+  musicTrack = which;
+  if (!musicStarted) return;      // nothing to fade into until we are allowed to play
+  playTrack(which);
+  fadeMusic();
 }
 function toggleMusic(){
   muted = !muted;
-  if (!bgm) return;
-  if (muted){ bgm.pause(); hushBeams(); } else startMusic();
+  if (muted){
+    if (bgm) bgm.pause();
+    if (lobbyBgm) lobbyBgm.pause();
+    if (bgm) bgm.volume = 0;
+    if (lobbyBgm) lobbyBgm.volume = 0;
+    if (fadeTimer && typeof clearInterval === "function"){ clearInterval(fadeTimer); fadeTimer = 0; }
+    hushBeams();
+  } else {
+    playTrack(musicTrack);
+    fadeMusic();
+  }
   bgmBtn.textContent = muted ? "\u266A Music off" : "\u266A Music on";
   bgmBtn.setAttribute("aria-pressed", String(!muted));
 }
 if (bgmBtn) bgmBtn.addEventListener("click", toggleMusic);
+// Browsers refuse to play audio until the page has been interacted with, so the
+// lobby track starts on the first click or keypress. It is also attempted right
+// away, for a visitor who has already earned autoplay on this origin.
+if (typeof window !== "undefined" && window.addEventListener){
+  window.addEventListener("pointerdown", startMusic, { once: true });
+  window.addEventListener("keydown", startMusic, { once: true });
+}
+startMusic();
 
 /* ---------------------------------------------------------- flow */
 let seats = [];
@@ -2671,6 +2743,7 @@ function newMatch(seed){
   readName();
   matchSeed = (seed || ((Date.now() ^ (Math.random()*0xffffffff)) >>> 0)) >>> 0;
   startMusic();
+  musicFor("battle");
   roundNo = 1;
   simFrame = 0;   // frame counter restarts once per match, not per round
   runScore = 0; kills = 0; survT = 0; waveNo = 0; waveLive = false; waveGap = 1.1;
@@ -2777,6 +2850,7 @@ const COPY = {
 let panel = "home";
 function show(which){
   panel = which;
+  musicFor("lobby");   // any menu, including the one a finished match drops you on
   for (const k in PANEL) PANEL[k].hidden = (k !== which);
   // the last match's report and round counter are not part of any menu — navigating
   // anywhere clears them, and renderStats() puts the report back after a match ends
