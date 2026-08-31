@@ -26,9 +26,10 @@ const dataUri = p =>
 
 let html = read("index.html");
 
-// styles
+// styles (match the src with an optional ?v= cache-bust query — the inline
+// build discards the version anyway)
 html = html.replace(
-  '<link rel="stylesheet" href="src/style.css">',
+  /<link rel="stylesheet" href="src\/style\.css(\?[^"]*)?">/,
   "<style>\n" + read("src/style.css") + "\n</style>"
 );
 
