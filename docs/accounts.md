@@ -78,6 +78,56 @@ Two things it depends on, both easy to break:
   `<details>`, which is skipped on purpose so the how-to-play manual can sit
   below the fold.
 
+## Drawing cost: shadowBlur
+
+A full room of Archmages ran at about six frames a second, and the obvious
+story — that six clever bots cost six times the thinking — was wrong. `aiTick`
+measures at roughly **one millisecond**. A CPU profile blamed `drawImage`, which
+was also wrong: canvas defers its work, so the cost of everything queued lands
+on whichever call happens to force the flush.
+
+Counting the actual draw calls found it. Per frame, six Archmages:
+
+| | fills | shadowed | frame |
+|---|---|---|---|
+| before | 309 | **90** | 158ms |
+| after | ~300 | **23** | 82ms |
+
+**A blurred fill is one of the most expensive things a 2D canvas can be asked
+for** — it draws the shape, blurs a copy, then composites both. Ninety of those
+a frame is the whole story; the fill count barely moved.
+
+What was done, all of it view-only and none of it touching the simulation:
+
+* **`strokeJag` had a bug.** The lightning filaments along a beam inherited
+  whatever `shadowBlur` happened to be set when they were drawn — twenty-odd
+  blurred polyline strokes a frame, the single most expensive thing on screen.
+  It now forces `shadowBlur = 0` and draws a wide faint pass under a crisp one,
+  which under the beam's `lighter` compositing looks the same and costs a
+  fraction.
+* **Small repeated glows are pre-rendered once and blitted**: cloak jewels,
+  beam motes, bolts, the charge orb. `glowSprite` / `jewelSprite` / `haloSprite`
+  cache by colour and size and stay tiny.
+* **`haloSprite`** is the glow with the shape punched back out, for things that
+  still draw their own crisp body — a wizard's brim, which alone was two large
+  blurred draws per wizard per frame.
+
+Result: **6 Apprentices 33→26ms, 6 Adepts 44→21ms, 6 Archmages 158→82ms**, and
+p90 frame time roughly halved. Twenty-three shadowed draws a frame remain, none
+of them dominant.
+
+### Proving a rendering change did not change the game
+
+`tools/golden.js` records a digest of the simulation across twenty
+seed/tier/room/fog combinations. `determinism.js` can only show a build agrees
+with *itself* — two runs of a subtly different build agree perfectly well. The
+golden file is what shows the bots still make the same decisions:
+
+    npm run test:golden
+
+Run it after anything meant to be a pure optimisation. Every change above
+leaves it byte-identical.
+
 ## Why the sign-in page is shaped the way it is
 
 A brand-new domain that suddenly grows a password field is exactly the profile
@@ -188,11 +238,48 @@ integer in 1..999 (`cleanLevel`), because "banana" arriving in someone else's
 rendering code is a crash, not a cheat. An older client that sends no level is
 simply level one.
 
-`updateCapes()` is a spring-to-rest verlet chain — each node is pulled towards
-where it would hang if the wizard stood still (straight out behind, with a
-travelling sine running down the length), its own inertia drags it, and a
-distance constraint stops the cloth stretching. So turning or dashing whips it
-out sideways and standing still leaves it breathing.
+### How it moves
+
+`updateCapes()` simulates **three** verlet chains — the spine and both hems —
+stitched to one another by distance constraints (along each chain, across the
+cloth, and one diagonal per side to stop it folding through itself).
+
+The first version ran a single chain and derived the outline from it at a fixed
+width. That is what made it move like a signboard on a stick: the silhouette
+could only ever be the same rigid fan, lagging slightly. Letting the edges be
+their own particles is what makes it read as cloth — they swing wide on a turn,
+the hem curls, and the two sides stop mirroring each other.
+
+The rest pose is barely enforced. Only the spine is drawn back towards hanging
+straight behind, and that pull falls off as `(1-k)²` to almost nothing by the
+hem, so the far end is governed by inertia and the stitching alone. A slow wind
+field sampled from **world position** — not from each node's index — keeps it
+alive when nobody is moving, and makes neighbouring capes ripple in sympathy
+like one breeze crossing the arena.
+
+Two things that took a second pass to get right:
+
+* **Four constraint passes, with the spine re-satisfied at the end of each.**
+  The cross and diagonal stitches pull against the spine; with a single pass per
+  link its segments varied by a third of their own length while the cape
+  whipped about.
+* **The hem braid is clipped to the cloth.** Free hems can fold across one
+  another, and an unclipped braid then draws a stray gold line out across the
+  cloak.
+
+### What it costs
+
+Nothing measurable. Frame times with and without capes, same seeds, same
+machine:
+
+| | no capes | with capes |
+|---|---|---|
+| 2 wizards | 16.7ms | 16.7ms |
+| 6 wizards, Apprentice | 43.1ms | 39.3ms |
+| 6 wizards, Archmage | 153.0ms | 153.0ms |
+
+**That 153ms was never the capes — and it was not the bot AI either**, which is
+what this file said first and got wrong. See below.
 
 **It is view-only and must stay that way.** It never touches the seeded RNG,
 never reads back into the simulation, and appears nowhere in `RPW.hash()` —

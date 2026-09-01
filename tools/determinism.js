@@ -142,6 +142,13 @@ function run({ seed, diff, room, frames, every = 30, opts = null }) {
   return marks;
 }
 
+// Also usable as a module, so tools/golden.js can drive the same rig to record
+// what the bots actually DO — the check that an optimisation left behaviour
+// alone, which this file on its own cannot make (it compares a build against
+// itself, not against yesterday's).
+module.exports = { run };
+if (require.main !== module) return;
+
 const SEEDS = +(process.env.SEEDS || 6);
 const FRAMES = +(process.env.FRAMES || 2400);
 let bad = 0;

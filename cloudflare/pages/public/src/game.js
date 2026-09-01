@@ -1820,12 +1820,9 @@ function drawShot(s){
     ctx.beginPath(); ctx.arc(p.x, p.y, s.r*k*0.8, 0, TAU); ctx.fill();
   }
   ctx.globalAlpha = 1;
-  ctx.shadowColor = s.color; ctx.shadowBlur = s.glow || 22;
-  ctx.fillStyle = s.color;
-  ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(s.x, s.y, s.r*0.42, 0, TAU); ctx.fill();
+  // the bolt itself and its white heart, both from the sprite cache
+  blitSprite(glowSprite(s.color, s.r, s.glow || 22), s.x, s.y);
+  blitSprite(glowSprite("#ffffff", s.r*0.42, 8, s.color), s.x, s.y);
   if (s.seek && s.kind === "hex" && s.lvl > .4){
     ctx.translate(s.x, s.y);
     ctx.rotate(s.spin);
@@ -1869,13 +1866,117 @@ function jag(x1,y1,x2,y2,segs,amp){
   }
   return pts;
 }
+/* ---------------------------------------------------- pre-rendered glow
+
+   A blurred fill is one of the most expensive things you can ask a 2D canvas
+   for: the rasteriser draws the shape, blurs a copy of it, and composites
+   both. Doing that ninety times a frame is what put a full room of Archmages
+   at five frames a second — not the bots' thinking, which measured at barely
+   one millisecond.
+
+   So the small glowing things that repeat — cloak jewels, beam motes — are
+   rendered ONCE into a little offscreen canvas, blur and all, and blitted from
+   then on. Identical picture, and a blit is close to free. The caches are keyed
+   by colour and size and stay tiny: a dozen jewel colours at a handful of sizes.
+
+   View-only, like everything else here: no seeded RNG, nothing the simulation
+   reads. */
+const glowCache = new Map(), jewelCache = new Map();
+function makeSprite(size, paint){
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = size;
+  const g = cv.getContext("2d");
+  if (g) paint(g, size / 2);
+  return cv;
+}
+// a soft round glow, the way a shadowed arc looks
+function glowSprite(color, radius, blur, glowColor){
+  const r = Math.max(0.5, Math.round(radius * 2) / 2);
+  const b = Math.round(blur);
+  const halo = glowColor || color;
+  const key = color + "|" + halo + "|" + r + "|" + b;
+  let cv = glowCache.get(key);
+  if (!cv){
+    cv = makeSprite(Math.ceil((r + b) * 2) + 4, (g, c) => {
+      g.shadowColor = halo; g.shadowBlur = b;
+      g.fillStyle = color;
+      g.beginPath(); g.arc(c, c, r, 0, TAU); g.fill();
+    });
+    glowCache.set(key, cv);
+  }
+  return cv;
+}
+// one cloak jewel, glow and outline baked in; blitted rotated to the cloth
+function jewelSprite(color, size){
+  const sz = Math.max(1, Math.round(size * 2) / 2);
+  const key = color + "|" + sz;
+  let cv = jewelCache.get(key);
+  if (!cv){
+    cv = makeSprite(Math.ceil((sz + 7) * 2), (g, c) => {
+      g.translate(c, c);
+      g.beginPath();
+      g.moveTo(sz, 0); g.lineTo(0, sz); g.lineTo(-sz, 0); g.lineTo(0, -sz);
+      g.closePath();
+      g.fillStyle = color; g.globalAlpha = .95;
+      g.shadowColor = color; g.shadowBlur = 6;
+      g.fill();
+      g.globalAlpha = .8; g.shadowBlur = 0;
+      g.strokeStyle = "#0a0d18"; g.lineWidth = .7; g.stroke();
+    });
+    jewelCache.set(key, cv);
+  }
+  return cv;
+}
+// Just the glow, with the shape itself punched back out — for things that still
+// want to draw their own crisp body on top, like a wizard's brim.
+const haloCache = new Map();
+function haloSprite(color, radius, blur){
+  const r = Math.max(1, Math.round(radius));
+  const b = Math.round(blur);
+  const key = color + "|" + r + "|" + b;
+  let cv = haloCache.get(key);
+  if (!cv){
+    cv = makeSprite(Math.ceil((r + b) * 2) + 4, (g, c) => {
+      g.shadowColor = color; g.shadowBlur = b;
+      g.fillStyle = color;
+      g.beginPath(); g.arc(c, c, r, 0, TAU); g.fill();
+      g.shadowBlur = 0;
+      g.globalCompositeOperation = "destination-out";
+      g.beginPath(); g.arc(c, c, r, 0, TAU); g.fill();
+    });
+    haloCache.set(key, cv);
+  }
+  return cv;
+}
+
+// blit a cached sprite centred on a point
+function blitSprite(cv, x, y, alpha, angle){
+  const w = cv && cv.width;
+  if (!w) return;                       // headless rigs have no real canvas
+  ctx.save();
+  if (alpha != null) ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  if (angle) ctx.rotate(angle);
+  ctx.drawImage(cv, -w / 2, -w / 2);
+  ctx.restore();
+}
+
 function strokeJag(pts, color, width, alpha){
-  ctx.globalAlpha = alpha;
+  // The halo on these used to come from whatever shadowBlur happened to be set
+  // when they were drawn — twenty-odd blurred polyline strokes a frame, the
+  // single most expensive thing on screen. A wide faint pass under a crisp one
+  // gives the same look for a fraction of the cost, because the whole beam is
+  // composited with "lighter" anyway and simply adds up.
+  ctx.shadowBlur = 0;
   ctx.strokeStyle = color;
-  ctx.lineWidth = width;
   ctx.beginPath();
   ctx.moveTo(pts[0], pts[1]);
   for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i+1]);
+  ctx.globalAlpha = alpha * .3;
+  ctx.lineWidth = width * 3.4;
+  ctx.stroke();
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = width;
   ctx.stroke();
   ctx.globalAlpha = 1;
 }
@@ -1897,9 +1998,8 @@ function drawBeam(w){
     ctx.lineTo(w.x + Math.cos(a)*(20 + 600*k), w.y + Math.sin(a)*(20 + 600*k));
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.shadowColor = byId.beam.color; ctx.shadowBlur = 20*k;
-    ctx.fillStyle = byId.beam.color;
-    ctx.beginPath(); ctx.arc(w.x + Math.cos(a)*22, w.y + Math.sin(a)*22, 3 + k*7, 0, TAU); ctx.fill();
+    blitSprite(glowSprite(byId.beam.color, 3 + k*7, 20*k),
+               w.x + Math.cos(a)*22, w.y + Math.sin(a)*22);
     const tx = w.x + Math.cos(a)*24, ty = w.y + Math.sin(a)*24;
     if (!REDUCED){
       const now = performance.now();
@@ -1907,12 +2007,8 @@ function drawBeam(w){
       for (let i = 0; i < dots; i++){
         const ang = now/280 * (w.friendly ? 1 : -1) + i/dots*TAU;
         const rad = 8 + 42*(1-k) + Math.sin(now/130 + i)*2.5;
-        ctx.globalAlpha = .3 + .65*k;
-        ctx.fillStyle = i % 3 ? byId.beam.color : "#ffd6df";
-        ctx.shadowColor = byId.beam.color; ctx.shadowBlur = 12;
-        ctx.beginPath();
-        ctx.arc(tx + Math.cos(ang)*rad, ty + Math.sin(ang)*rad, .9 + 2.2*k, 0, TAU);
-        ctx.fill();
+        blitSprite(glowSprite(i % 3 ? byId.beam.color : "#ffd6df", .9 + 2.2*k, 12),
+                   tx + Math.cos(ang)*rad, ty + Math.sin(ang)*rad, .3 + .65*k);
       }
       ctx.globalAlpha = 1;
       if (k > .25) for (let i = 0; i < 2; i++){
@@ -2015,6 +2111,13 @@ const CAPE_NODES = 8;
 const CAPE_SEG_MIN = 5.6, CAPE_SEG_MAX = 8.4;   // per-segment length, low rank to high
 const CAPE_MAX_MARKS = 13;                      // one plain mark plus twelve jewels
 
+// Half the cloth's width at node i: narrow at the collar, flaring to the hem.
+// A cloak seen from above is WIDER than the wizard wearing it.
+function capeHalf(i, last){
+  const k = i / last;
+  return (4.0 + k * 16.5) * (1 - Math.pow(k, 10) * 0.14);
+}
+
 /* How many marks a wizard has earned, and in what colours.
 
    Only a LEVEL crosses the wire (see currentLevel() in src/net.js) — never the
@@ -2053,50 +2156,135 @@ function capeSeg(marks){
   const k = Math.min(1, (marks - 1) / (CAPE_MAX_MARKS - 1));
   return CAPE_SEG_MIN + (CAPE_SEG_MAX - CAPE_SEG_MIN) * k;
 }
+
+/* THREE chains, not one: the spine and both hems are each simulated, and they
+   are stitched to one another by distance constraints.
+
+   The first version ran a single chain and derived the outline from it at a
+   fixed width, which is why it moved like a signboard on a stick — the
+   silhouette could only ever be the same rigid fan, lagging a little. Letting
+   the edges be their own particles is what makes it read as cloth: they swing
+   wide on a turn, the hem curls, and the two sides stop mirroring each other.
+
+   The rest pose is barely enforced. Only the spine is drawn back towards
+   hanging straight behind, and even then the pull falls to almost nothing by
+   the hem, so the far end is governed by inertia and the stitching alone. A
+   slow wind field — sampled from world position, so neighbouring capes ripple
+   together like one breeze crossing the arena — keeps it alive when nobody is
+   moving. */
 function makeCape(w, seg){
-  const dx = Math.cos(w.facing), dy = Math.sin(w.facing), n = [];
+  const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
+  const px = -dy, py = dx;                       // across the shoulders
+  const last = CAPE_NODES - 1;
+  const node = (x, y) => ({ x, y, px: x, py: y });
+  const c = { seg, s: [], l: [], r: [], w: [], dl: [], dr: [] };
   for (let i = 0; i < CAPE_NODES; i++){
-    const x = w.x - dx * (3 + i * seg), y = w.y - dy * (3 + i * seg);
-    n.push({ x, y, px: x, py: y });
+    const bx = w.x - dx * (3 + i * seg), by = w.y - dy * (3 + i * seg);
+    const h = capeHalf(i, last);
+    c.w.push(h);
+    c.s.push(node(bx, by));
+    c.l.push(node(bx + px * h, by + py * h));
+    c.r.push(node(bx - px * h, by - py * h));
+    // rest length along each hem, which is slightly longer than the spine
+    // because the cloth widens as it goes
+    if (i > 0){
+      const dw = c.w[i] - c.w[i - 1];
+      c.dl.push(Math.hypot(seg, dw));
+      c.dr.push(Math.hypot(seg, dw));
+    }
   }
-  return n;
+  return c;
 }
+
+// One smooth, slowly-turning field. Sampled from world position rather than
+// from each node's index, so two wizards standing near each other ripple in
+// sympathy instead of each running its own private metronome.
+function capeWind(x, y, t){
+  return {
+    x: Math.sin(x * 0.031 + t * 1.35) + Math.cos(y * 0.047 - t * 0.9),
+    y: Math.cos(x * 0.043 - t * 1.05) + Math.sin(y * 0.029 + t * 1.6)
+  };
+}
+
 function updateCapes(dt){
   if (!(dt > 0)) return;
+  const step = Math.min(dt, 1 / 30);                 // one slow frame must not explode the cloth
   const t = (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
-  const drag = Math.pow(0.86, dt * 60);        // how much of last frame's motion carries
-  const pull = 1 - Math.pow(0.84, dt * 60);    // how hard it is drawn back to rest
+  const drag = Math.pow(0.90, step * 60);            // cloth keeps its motion longer than a stick does
+  const last = CAPE_NODES - 1;
+
   for (const w of wizards){
     const seg = capeSeg(capeMarks(w).n);
-    if (!w.cape || w.cape.length !== CAPE_NODES) w.cape = makeCape(w, seg);
-    const c = w.cape;
     const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
-    // pinned at the shoulders, a little behind centre
-    const ax = w.x - dx * 3, ay = w.y - dy * 3;
-    c[0].px = c[0].x; c[0].py = c[0].y;
-    c[0].x = ax; c[0].y = ay;
+    const px = -dy, py = dx;
+    const ax = w.x - dx * 3, ay = w.y - dy * 3;      // pinned at the shoulders
 
-    // moving fast lifts the cloth and makes it snap harder
-    const speed = Math.min(1, Math.hypot(w.vx || 0, w.vy || 0) / 190);
-    const phase = w.seat * 1.7;                // so six wizards do not ripple in step
+    let c = w.cape;
+    // rebuild on a rank change, a fresh round, or any teleport — otherwise the
+    // cloth whips across the whole arena to catch up
+    if (!c || c.s.length !== CAPE_NODES || c.seg !== seg ||
+        Math.hypot(c.s[0].x - ax, c.s[0].y - ay) > 70){
+      c = w.cape = makeCape(w, seg);
+    }
 
-    for (let i = 1; i < c.length; i++){
-      const p = c[i], prev = c[i - 1], k = i / (c.length - 1);
-      const vx = (p.x - p.px) * drag, vy = (p.y - p.py) * drag;
-      p.px = p.x; p.py = p.y;
+    const speed = Math.min(1.6, Math.hypot(w.vx || 0, w.vy || 0) / 150);
+    const gust = (22 + speed * 34) * step;
 
-      // where it wants to hang: behind, with a wave running down the cloth
-      const sway = Math.sin(t * 2.4 - i * 0.62 + phase) * (1.1 + k * 5.2) * (0.55 + speed * 0.75);
-      const rx = ax - dx * (i * seg) - dy * sway;
-      const ry = ay - dy * (i * seg) + dx * sway;
+    // ---- integrate every particle
+    for (const chain of [c.s, c.l, c.r]){
+      for (let i = 1; i < chain.length; i++){
+        const p = chain[i], k = i / last;
+        const vx = (p.x - p.px) * drag, vy = (p.y - p.py) * drag;
+        p.px = p.x; p.py = p.y;
+        const g = capeWind(p.x, p.y, t);
+        // the hem catches far more of the wind than the collar does
+        p.x += vx + g.x * gust * k;
+        p.y += vy + g.y * gust * k;
+      }
+    }
 
-      p.x += vx + (rx - p.x) * pull;
-      p.y += vy + (ry - p.y) * pull;
+    // ---- the spine remembers, faintly, that it would like to hang straight
+    //      back. Strong at the collar, all but gone by the hem.
+    for (let i = 1; i < CAPE_NODES; i++){
+      const k = i / last;
+      const hold = (1 - k) * (1 - k) * 0.34;
+      if (hold <= 0.001) continue;
+      const rx = ax - dx * (i * seg), ry = ay - dy * (i * seg);
+      c.s[i].x += (rx - c.s[i].x) * hold;
+      c.s[i].y += (ry - c.s[i].y) * hold;
+    }
 
-      // the cloth does not stretch
-      let sx = p.x - prev.x, sy = p.y - prev.y;
-      const d = Math.hypot(sx, sy) || 1, f = (d - seg) / d;
-      p.x -= sx * f; p.y -= sy * f;
+    // ---- pin the collar
+    c.s[0].x = ax; c.s[0].y = ay;
+    c.l[0].x = ax + px * c.w[0]; c.l[0].y = ay + py * c.w[0];
+    c.r[0].x = ax - px * c.w[0]; c.r[0].y = ay - py * c.w[0];
+
+    // ---- and stitch it all together. Several passes, because one pass leaves
+    //      the far end visibly stretchy.
+    const link = (a, b, want, aPinned) => {
+      let ux = b.x - a.x, uy = b.y - a.y;
+      const d = Math.hypot(ux, uy) || 1, f = (d - want) / d;
+      if (aPinned){ b.x -= ux * f; b.y -= uy * f; }
+      else { const h = f * 0.5; a.x += ux * h; a.y += uy * h; b.x -= ux * h; b.y -= uy * h; }
+    };
+    // Four passes, and the spine is re-satisfied at the end of each one. The
+    // cross and diagonal stitches pull against it, and with a single pass per
+    // link the spine ended up visibly stretchy — segments varying by a third
+    // of their own length while the cape whipped about.
+    for (let pass = 0; pass < 4; pass++){
+      for (let i = 1; i < CAPE_NODES; i++){
+        const pin = i === 1;                       // node 0 of every chain is fixed
+        link(c.s[i - 1], c.s[i], seg, pin);        // along the spine
+        link(c.l[i - 1], c.l[i], c.dl[i - 1], pin);// along each hem
+        link(c.r[i - 1], c.r[i], c.dr[i - 1], pin);
+        link(c.s[i], c.l[i], c.w[i], false);       // across the cloth
+        link(c.s[i], c.r[i], c.w[i], false);
+        // one diagonal each side keeps it from folding through itself
+        const diag = Math.hypot(seg, c.w[i]);
+        link(c.s[i - 1], c.l[i], diag, pin);
+        link(c.s[i - 1], c.r[i], diag, pin);
+      }
+      for (let i = 1; i < CAPE_NODES; i++) link(c.s[i - 1], c.s[i], seg, i === 1);
     }
   }
 }
@@ -2105,43 +2293,16 @@ function updateCapes(dt){
 // its own world-space shape instead of turning rigidly with the hat.
 function drawCape(w){
   const c = w.cape;
-  if (!c || c.length < 3) return;
+  if (!c || !c.s || c.s.length < 3) return;
   const { n: marks, gems } = capeMarks(w);
   const hem  = w.friendly ? "#1b2947" : "#331a24";   // deep, at the hem
   const back = w.friendly ? "#415c97" : "#7a4353";   // lit, at the shoulders
 
-  // Spine and edges, in coordinates relative to the wizard. The outline is
-  // traced as curves rather than as the raw eight-point polyline — straight
-  // segments made it read as a folded paper wedge instead of cloth.
-  const P = c.map(p => ({ x: p.x - w.x, y: p.y - w.y }));
+  const rel = p => ({ x: p.x - w.x, y: p.y - w.y });
+  const P = c.s.map(rel), L = c.l.map(rel), R = c.r.map(rel);
   const last = P.length - 1;
 
-  // half-width of the cloth at each node, narrow at the collar and flaring to
-  // the hem. A cloak seen from above is WIDER than the wizard wearing it.
-  const halfAt = i => {
-    const k = i / last;
-    return (4.0 + k * 16.5) * (1 - Math.pow(k, 10) * 0.14);
-  };
-  // unit vector along the spine at a node
-  const dirAt = i => {
-    const a = P[Math.max(0, i - 1)], b = P[Math.min(last, i + 1)];
-    let ux = b.x - a.x, uy = b.y - a.y;
-    const d = Math.hypot(ux, uy) || 1;
-    return { x: ux / d, y: uy / d };
-  };
-  // both edges at a given fraction of the full width
-  const edges = scale => {
-    const L = [], R = [];
-    for (let i = 0; i <= last; i++){
-      const u = dirAt(i), h = halfAt(i) * scale;
-      L.push({ x: P[i].x - u.y * h, y: P[i].y + u.x * h });
-      R.push({ x: P[i].x + u.y * h, y: P[i].y - u.x * h });
-    }
-    const u = dirAt(last), h = halfAt(last) * scale;
-    return { L, R, bulge: { x: P[last].x + u.x * h * 1.15, y: P[last].y + u.y * h * 1.15 } };
-  };
-
-  // a smooth run through a list of points, midpoint-to-midpoint
+  // a smooth run through a list of points, midpoint to midpoint
   const runThrough = pts => {
     for (let i = 1; i < pts.length - 1; i++){
       const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
@@ -2149,24 +2310,36 @@ function drawCape(w){
     }
     ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
   };
-  const trace = (scale = 1) => {
-    const e = edges(scale);
+  // the edges at some fraction of the way out from the spine, so the braid
+  // follows the cloth the simulation actually produced
+  const inset = f => ({
+    L: P.map((s, i) => ({ x: s.x + (L[i].x - s.x) * f, y: s.y + (L[i].y - s.y) * f })),
+    R: P.map((s, i) => ({ x: s.x + (R[i].x - s.x) * f, y: s.y + (R[i].y - s.y) * f }))
+  });
+  // where the hem bulges past the last row of nodes
+  const bulgeOf = e => {
+    const mid = { x: (e.L[last].x + e.R[last].x) / 2, y: (e.L[last].y + e.R[last].y) / 2 };
+    let ux = mid.x - P[last - 1].x, uy = mid.y - P[last - 1].y;
+    const d = Math.hypot(ux, uy) || 1;
+    const wide = Math.hypot(e.L[last].x - e.R[last].x, e.L[last].y - e.R[last].y) * 0.5;
+    return { x: mid.x + (ux / d) * wide * 0.85, y: mid.y + (uy / d) * wide * 0.85 };
+  };
+  const trace = (f = 1) => {
+    const e = inset(f), b = bulgeOf(e);
     ctx.beginPath();
     ctx.moveTo(e.L[0].x, e.L[0].y);
     runThrough(e.L);
-    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);   // round hem
-    const rev = e.R.slice().reverse();
-    runThrough(rev);
+    ctx.quadraticCurveTo(b.x, b.y, e.R[last].x, e.R[last].y);
+    runThrough(e.R.slice().reverse());
     ctx.closePath();
   };
-  // just the hem, for the braid: up one edge's last stretch, round the bottom,
-  // back down the other — an open curve, not the whole silhouette
-  const traceHem = scale => {
-    const e = edges(scale), from = Math.max(1, last - 3);
+  // just the hem, for the braid: an open curve round the bottom
+  const traceHem = f => {
+    const e = inset(f), b = bulgeOf(e), from = Math.max(1, last - 2);
     ctx.beginPath();
     ctx.moveTo(e.L[from].x, e.L[from].y);
     runThrough(e.L.slice(from));
-    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);
+    ctx.quadraticCurveTo(b.x, b.y, e.R[last].x, e.R[last].y);
     runThrough(e.R.slice(from).reverse());
   };
 
@@ -2187,10 +2360,23 @@ function drawCape(w){
   ctx.globalAlpha = .75; ctx.strokeStyle = w.tint; ctx.lineWidth = 1.2; ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // two gold braids following the hem
+  // A fold running down the cloth, shaded from where the spine actually sits
+  // between its two hems. It is what sells the cloak as having a near side and
+  // a far side rather than being one flat cut-out.
+  ctx.save(); trace(); ctx.clip();
+  ctx.globalAlpha = .3; ctx.strokeStyle = "#05070f"; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y); runThrough(P); ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // Two gold braids following the hem, clipped to the cloth. Now that the two
+  // hems are free particles they can fold across one another, and an unclipped
+  // braid then draws a stray line out across the cloak.
+  ctx.save(); trace(); ctx.clip();
   ctx.strokeStyle = "#e8cfa0"; ctx.lineCap = "round";
   ctx.globalAlpha = .85; ctx.lineWidth = 1.5; traceHem(0.9); ctx.stroke();
   ctx.globalAlpha = .55; ctx.lineWidth = 0.9; traceHem(0.78); ctx.stroke();
+  ctx.restore();
   ctx.globalAlpha = 1;
 
   // The marks down the spine: one plain to begin with, then one per cloak
@@ -2208,24 +2394,21 @@ function drawCape(w){
     const a = P[i0], b = P[i0 + 1];
     let ux = b.x - a.x, uy = b.y - a.y;
     const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
-    // across the cloth, spread scaled to how wide it is at this point
-    const spread = (perRow === 1 || alone) ? 0 : (col === 0 ? -1 : 1) * (2.6 + f * 3.6);
-    const x = a.x + (b.x - a.x) * fr - uy * spread;
-    const y = a.y + (b.y - a.y) * fr + ux * spread;
+    // Across the cloth — and towards the hem the simulation actually produced,
+    // not a fixed offset from the spine, so the jewels ride the fabric as it
+    // billows instead of floating in formation above it.
+    const bx = a.x + (b.x - a.x) * fr, by = a.y + (b.y - a.y) * fr;
+    let x = bx, y = by;
+    if (perRow > 1 && !alone){
+      const side = col === 0 ? L : R;
+      const ex = side[i0].x + (side[i0 + 1].x - side[i0].x) * fr;
+      const ey = side[i0].y + (side[i0 + 1].y - side[i0].y) * fr;
+      x = bx + (ex - bx) * 0.32;
+      y = by + (ey - by) * 0.32;
+    }
     const size = 2.4 + f * 1.9;
     const paint = m === 0 ? "#eef2ff" : (gems[m - 1] || "#eef2ff");
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(Math.atan2(uy, ux));
-    ctx.beginPath();
-    ctx.moveTo(size, 0); ctx.lineTo(0, size); ctx.lineTo(-size, 0); ctx.lineTo(0, -size);
-    ctx.closePath();
-    ctx.fillStyle = paint; ctx.globalAlpha = .95;
-    ctx.shadowColor = paint; ctx.shadowBlur = 6;
-    ctx.fill();
-    ctx.globalAlpha = .8; ctx.shadowBlur = 0;
-    ctx.strokeStyle = "#0a0d18"; ctx.lineWidth = .7; ctx.stroke();
-    ctx.restore();
+    blitSprite(jewelSprite(paint, size), x, y, 1, Math.atan2(uy, ux));
   }
   ctx.restore();
 }
@@ -2307,12 +2490,13 @@ function drawWizard(w){
   ctx.globalAlpha = .45; ctx.strokeStyle = tint; ctx.lineWidth = 1.3; ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // the brim, flat on the floor
-  ctx.shadowColor = tint; ctx.shadowBlur = w.hurt > 0 ? 24 : 9;
+  // The brim, flat on the floor. Its halo is a cached sprite — every wizard on
+  // screen was otherwise costing two large blurred draws a frame, which at six
+  // wizards was the most expensive thing left in the picture.
+  blitSprite(haloSprite(tint, 15, w.hurt > 0 ? 24 : 9), 0, 0);
   ctx.beginPath(); ctx.arc(0, 0, 15, 0, TAU);
   ctx.fillStyle = brim; ctx.fill();
   ctx.strokeStyle = tint; ctx.lineWidth = 2; ctx.stroke();
-  ctx.shadowBlur = 0;
   ctx.globalAlpha = .16; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.stroke();
   ctx.globalAlpha = 1;
@@ -2402,9 +2586,7 @@ function drawWizard(w){
   if (w.charge !== null){
     const s = SPELLS[w.charge];
     const k = s.maxChg ? w.chargeT/s.maxChg : 0;
-    ctx.shadowColor = s.color; ctx.shadowBlur = 10 + k*30;
-    ctx.fillStyle = s.color;
-    ctx.beginPath(); ctx.arc(29, 4, 3 + k*9, 0, TAU); ctx.fill();
+    blitSprite(glowSprite(s.color, 3 + k*9, 10 + k*30), 29, 4);
     ctx.globalAlpha = .5;
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(29, 4, 4 + k*13, 0, TAU*k); ctx.stroke();
@@ -3805,20 +3987,28 @@ window.RPW = {
     newMatch(opts.seed);
   },
   seats: () => seats.map(x => ({ name: x.name, human: x.human })),
-  // test hook: the cape's cloth for a seat, as offsets from the wizard, plus
-  // how far each node sits off the straight line behind them — which is the
-  // only way to assert that it actually sways rather than trailing rigidly
+  // test hook: the cape's cloth for a seat, as offsets from the wizard. The
+  // spine's distance off the straight line behind them says whether it sways;
+  // the two hems say whether it behaves like cloth rather than a signboard —
+  // if they always mirror each other, it is still rigid.
   capeOf(seat){
     const w = wizards.find(x => x.seat === seat);
     if (!w || !w.cape) return null;
     const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
+    const rel = p => {
+      const ox = p.x - w.x, oy = p.y - w.y;
+      return { x: ox, y: oy, lateral: ox * -dy + oy * dx };
+    };
+    const c = w.cape;
     return {
       marks: capeMarks(w).n,
-      nodes: w.cape.map(p => {
-        const ox = p.x - w.x, oy = p.y - w.y;
-        return { x: ox, y: oy, lateral: ox * -dy + oy * dx };   // + is one side, - the other
-      }),
-      segs: w.cape.slice(1).map((p, i) => Math.hypot(p.x - w.cape[i].x, p.y - w.cape[i].y))
+      nodes: c.s.map(rel),
+      left: c.l.map(rel),
+      right: c.r.map(rel),
+      segs: c.s.slice(1).map((p, i) => Math.hypot(p.x - c.s[i].x, p.y - c.s[i].y)),
+      // how wide the cloth is at each row right now, versus how wide it rests
+      widths: c.s.map((p, i) => Math.hypot(c.l[i].x - c.r[i].x, c.l[i].y - c.r[i].y)),
+      restWidths: c.w.map(h => h * 2)
     };
   },
   // test hook: land a finishing blow on a seat, so a rig can reach the end of
