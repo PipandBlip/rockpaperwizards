@@ -24,13 +24,13 @@ function test(name, fn) {
 }
 
 /** a player whose outbox we can read back */
-function fake(name) {
+function fake(name, lv) {
   const inbox = [];
   const p = new Player({ send: raw => inbox.push(JSON.parse(raw)) });
   p.inbox = inbox;
   p.last = t => [...inbox].reverse().find(m => m.t === t);
   p.say = msg => handle(p, msg);
-  p.say({ t: "hello", name });
+  p.say({ t: "hello", name, lv });
   return p;
 }
 
@@ -188,6 +188,51 @@ test("names are cleaned and clipped", () => {
   const nm = a.last("room").players[0].name;
   assert.ok(!/[<>()]/.test(nm), "markup characters should be stripped: " + nm);
   assert.ok(nm.length <= 14, "names cap at 14 characters");
+});
+
+test("a player's level reaches everybody else", () => {
+  // It is only there so the others can draw the right jewels on your cape, but
+  // if it does not arrive, every stranger looks like a beginner.
+  const a = fake("A", 14), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B", 3); b.say({ t: "join", code });
+  const seen = a.last("room").players;
+  assert.strictEqual(seen.find(x => x.name === "A").lv, 14);
+  assert.strictEqual(seen.find(x => x.name === "B").lv, 3);
+});
+
+test("and it survives into the match itself", () => {
+  const a = fake("A", 22), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B", 9); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  const players = b.last("start").players;
+  assert.strictEqual(players.find(x => x.name === "A").lv, 22);
+  assert.strictEqual(players.find(x => x.name === "B").lv, 9);
+});
+
+test("a missing level is simply level one", () => {
+  const a = fake("A");                       // no level at all, like an older client
+  a.say({ t: "create", total: 2 });
+  assert.strictEqual(a.last("room").players[0].lv, 1);
+});
+
+test("a nonsense level cannot reach anyone's renderer", () => {
+  // A client can claim any level — it wins nothing but a prettier cloak — but
+  // "banana" arriving in somebody else's drawing code is a crash, not a cheat.
+  for (const junk of ["banana", -5, 0, 1e9, null, {}, NaN, "12; DROP"]){
+    const a = fake("A", junk);
+    a.say({ t: "create", total: 2 });
+    const lv = a.last("room").players[0].lv;
+    assert.ok(Number.isInteger(lv) && lv >= 1 && lv <= 999,
+      "level " + JSON.stringify(junk) + " should have been clamped, got " + lv);
+    a.say({ t: "bye" });
+  }
+});
+
+test("a level given on join is kept too", () => {
+  const a = fake("A", 5), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B", 1);
+  b.say({ t: "join", code, lv: 31 });        // the client restates it as it joins
+  assert.strictEqual(a.last("room").players.find(x => x.name === "B").lv, 31);
 });
 
 test("seats are NOT renumbered mid-match", () => {

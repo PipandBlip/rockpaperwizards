@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=24">
+  <link rel="stylesheet" href="src/style.css?v=27">
 </head>
 <body>
 
@@ -21,7 +21,6 @@
 
 <div class="shell">
   <header class="crest">
-    <h1>Rock, Paper, Wizards</h1>
     <button class="sound" id="bgmBtn" aria-pressed="true">&#9834; Music on</button>
   </header>
   <audio id="bgm" loop preload="auto" src="assets/audio/arcane-clash.mp3"></audio>
@@ -51,7 +50,7 @@
   <div class="rails" id="rails"></div>
   <div class="roundlabel" id="roundLabel">Round 1</div>
 
-  <div class="stage">
+  <div class="stage" id="stage">
     <canvas id="game" width="960" height="620" aria-label="Wizard duel arena"></canvas>
     <div class="curtain" id="curtain">
       <h2 id="curtainTitle">Rock, Paper, Wizards</h2>
@@ -243,8 +242,8 @@
   </details>
 </div>
 
-  <script src="src/account.js?v=24"></script>
-  <script src="src/game.js?v=24"></script>
-  <script src="src/net.js?v=24"></script>
+  <script src="src/account.js?v=27"></script>
+  <script src="src/game.js?v=27"></script>
+  <script src="src/net.js?v=27"></script>
 </body>
 </html>

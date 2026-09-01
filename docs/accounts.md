@@ -56,6 +56,28 @@ What is in place keeps it from being *effortless*: one paid result every 12
 seconds, 420 experience per result, 7000 per day. Honest play never touches
 any of them. Worth revisiting if profiles ever gate something competitive.
 
+## The page layout
+
+`fitStage()` in `src/game.js` caps the arena by height as well as width. The
+canvas is 960x620 and scales to its box, so the box was free to grow taller
+than the window and push the health plates and the spell book off screen. It
+measures — rather than assumes — everything else in the shell (the music row,
+the plates, the round counter, the spell book, the gaps, the body padding),
+subtracts it from the window height, and sets the arena's `max-width` so its
+height lands in what is left. It runs on every resize and whenever the plates
+are rebuilt, since six of them can wrap onto a second row.
+
+Two things it depends on, both easy to break:
+
+* **The health plates and the round counter fade, they do not hide.** Their
+  space is reserved on the menu too, so the arena is the same size before and
+  during a duel. Switching either back to `hidden` makes the layout jump when a
+  match starts — and on a 1280x800 window that jump pushed the spell book off
+  the bottom.
+* **Anything new added to `.shell` is measured automatically**, except a
+  `<details>`, which is skipped on purpose so the how-to-play manual can sit
+  below the fold.
+
 ## Why the sign-in page is shaped the way it is
 
 A brand-new domain that suddenly grows a password field is exactly the profile
@@ -127,6 +149,62 @@ undo by accident:
   `justify-content:center`. Centring a flex row that overflows pushes its
   leading items past the scroll origin where they can never be reached, which
   is exactly what happens on a phone.
+
+## The cape
+
+Every wizard trails a cloak, drawn by `drawCape()` in `src/game.js`. It carries
+a row of diamonds down its spine: one plain mark to begin with, then one more
+in that jewel's own colour for every cloak jewel earned, so rank is legible at
+a glance across the arena. The cloth is longer at higher rank too — 39px at
+rank one, 59px with all thirteen. Past six marks they go two abreast; thirteen
+in single file merges into a stripe.
+
+Where the rank comes from: the signed-in player reads their own profile, a bot
+wears its tier (Apprentice one, Adept two, Archmage three), and everyone else
+reads `seatLevels`, filled from the roster the relay sends.
+
+### How a rank crosses the wire
+
+**Only a level travels — never the colours.** Cloak jewels are earned strictly
+in level order, so one integer lets every client rebuild the identical row of
+stones from the shared `GEMS` table. It rides in three places that already
+exist: `hello` when you connect, `create`/`join`/`quick` when you enter a room,
+and one `lv` field per player in `roster()`, which is what `room` and `start`
+already carry.
+
+**Nothing touches the per-frame input stream.** That stream is 60 messages a
+second per player and is the only traffic that could cost anyone a frame; it is
+untouched. A roster message grows by one small integer per player — at most six
+— and is sent on join, leave, ready and start. A player with a full cloak costs
+exactly as much bandwidth as a brand new one. A test asserts this directly:
+zero `in` messages carry a level.
+
+`rankFor(level)` is memoised, because six capes at sixty frames a second would
+otherwise rebuild the same twelve-row table 360 times a second.
+
+**A client can claim any level.** It is cosmetic — nothing in the match reads
+it — so the prize for lying is a prettier cloak. The relay still clamps it to an
+integer in 1..999 (`cleanLevel`), because "banana" arriving in someone else's
+rendering code is a crash, not a cheat. An older client that sends no level is
+simply level one.
+
+`updateCapes()` is a spring-to-rest verlet chain — each node is pulled towards
+where it would hang if the wizard stood still (straight out behind, with a
+travelling sine running down the length), its own inertia drags it, and a
+distance constraint stops the cloth stretching. So turning or dashing whips it
+out sideways and standing still leaves it breathing.
+
+**It is view-only and must stay that way.** It never touches the seeded RNG,
+never reads back into the simulation, and appears nowhere in `RPW.hash()` —
+two clients can disagree about the exact ripple of a cape without disagreeing
+about the match. It is stepped from real elapsed time in `pump()`, not from the
+fixed simulation step, so it stays smooth whatever the frame rate. Anything
+here that started reading `rand()` instead of real time would desync a
+multiplayer match.
+
+`RPW.capeOf(seat)` returns the cloth as offsets plus each node's distance off
+the straight line behind the wizard — that is what lets a test assert it
+actually sways (3.4px at rest, 7.8px moving) rather than trailing rigidly.
 
 ## What is not built yet
 

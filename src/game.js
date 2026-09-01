@@ -1992,12 +1992,252 @@ function drawBeam(w){
   ctx.restore();
 }
 
+/* ------------------------------------------------------- the cape
+   A rank worn on your back. Every wizard trails a short cloak with a row of
+   diamonds down its spine: one to begin with, and one more for every cloak
+   jewel earned (the same ladder as GEMS in src/account.js), so a wizard who
+   has been at it a while is visibly heavier dressed. The cloth is longer at
+   higher rank too.
+
+   VIEW ONLY. Nothing here touches the seeded RNG, reads back into the
+   simulation, or appears in RPW.hash() — two clients can disagree about the
+   exact ripple of a cape without disagreeing about the match. It is stepped
+   from real elapsed time in pump(), not from the fixed simulation step, so it
+   stays smooth whatever the frame rate.
+
+   The motion is a spring-to-rest verlet chain: each node is pulled towards
+   where it would hang if the wizard stood still — straight out behind, with a
+   travelling sine running down the length — while its own inertia drags it,
+   and a distance constraint stops the cloth stretching. Turning or dashing
+   therefore whips it out sideways, and standing still leaves it breathing. */
+
+const CAPE_NODES = 8;
+const CAPE_SEG_MIN = 5.6, CAPE_SEG_MAX = 8.4;   // per-segment length, low rank to high
+const CAPE_MAX_MARKS = 13;                      // one plain mark plus twelve jewels
+
+/* How many marks a wizard has earned, and in what colours.
+
+   Only a LEVEL crosses the wire (see currentLevel() in src/net.js) — never the
+   colours. Cloak jewels are earned strictly in level order, so every client
+   rebuilds the identical row of stones from the shared GEMS table. One small
+   integer, carried in the roster that already flows on join, leave and start;
+   nothing here rides the per-frame input stream, so no cape can cost anybody a
+   frame however many jewels are on it.
+
+   Ranks are per-level, not per-wizard, so this is memoised: six capes at sixty
+   frames a second would otherwise rebuild the same twelve-row table 360 times a
+   second for nothing. */
+const rankCache = new Map();
+function rankFor(level){
+  const lv = Math.max(1, Math.min(999, Math.floor(Number(level)) || 1));
+  let r = rankCache.get(lv);
+  if (!r){
+    const acct = ACCT();
+    const earned = (acct && acct.track) ? acct.track(lv).rows.filter(x => x.earned) : [];
+    r = { n: 1 + earned.length, gems: earned.map(x => x.from) };
+    rankCache.set(lv, r);
+  }
+  return r;
+}
+let myRank = { n: 1, gems: [] };
+function refreshMarks(profile){
+  rankCache.clear();
+  myRank = profile ? rankFor(profile.level) : { n: 1, gems: [] };
+}
+function capeMarks(w){
+  if (w === you) return myRank;                                        // your own profile
+  if (w.D) return { n: 1 + Math.max(0, DIFF.indexOf(w.D)), gems: [] }; // a bot wears its tier
+  return rankFor(seatLevels && seatLevels[w.seat]);                    // another player, from the roster
+}
+function capeSeg(marks){
+  const k = Math.min(1, (marks - 1) / (CAPE_MAX_MARKS - 1));
+  return CAPE_SEG_MIN + (CAPE_SEG_MAX - CAPE_SEG_MIN) * k;
+}
+function makeCape(w, seg){
+  const dx = Math.cos(w.facing), dy = Math.sin(w.facing), n = [];
+  for (let i = 0; i < CAPE_NODES; i++){
+    const x = w.x - dx * (3 + i * seg), y = w.y - dy * (3 + i * seg);
+    n.push({ x, y, px: x, py: y });
+  }
+  return n;
+}
+function updateCapes(dt){
+  if (!(dt > 0)) return;
+  const t = (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
+  const drag = Math.pow(0.86, dt * 60);        // how much of last frame's motion carries
+  const pull = 1 - Math.pow(0.84, dt * 60);    // how hard it is drawn back to rest
+  for (const w of wizards){
+    const seg = capeSeg(capeMarks(w).n);
+    if (!w.cape || w.cape.length !== CAPE_NODES) w.cape = makeCape(w, seg);
+    const c = w.cape;
+    const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
+    // pinned at the shoulders, a little behind centre
+    const ax = w.x - dx * 3, ay = w.y - dy * 3;
+    c[0].px = c[0].x; c[0].py = c[0].y;
+    c[0].x = ax; c[0].y = ay;
+
+    // moving fast lifts the cloth and makes it snap harder
+    const speed = Math.min(1, Math.hypot(w.vx || 0, w.vy || 0) / 190);
+    const phase = w.seat * 1.7;                // so six wizards do not ripple in step
+
+    for (let i = 1; i < c.length; i++){
+      const p = c[i], prev = c[i - 1], k = i / (c.length - 1);
+      const vx = (p.x - p.px) * drag, vy = (p.y - p.py) * drag;
+      p.px = p.x; p.py = p.y;
+
+      // where it wants to hang: behind, with a wave running down the cloth
+      const sway = Math.sin(t * 2.4 - i * 0.62 + phase) * (1.1 + k * 5.2) * (0.55 + speed * 0.75);
+      const rx = ax - dx * (i * seg) - dy * sway;
+      const ry = ay - dy * (i * seg) + dx * sway;
+
+      p.x += vx + (rx - p.x) * pull;
+      p.y += vy + (ry - p.y) * pull;
+
+      // the cloth does not stretch
+      let sx = p.x - prev.x, sy = p.y - prev.y;
+      const d = Math.hypot(sx, sy) || 1, f = (d - seg) / d;
+      p.x -= sx * f; p.y -= sy * f;
+    }
+  }
+}
+
+// Drawn in the wizard's translated (but unrotated) space, so the cloth keeps
+// its own world-space shape instead of turning rigidly with the hat.
+function drawCape(w){
+  const c = w.cape;
+  if (!c || c.length < 3) return;
+  const { n: marks, gems } = capeMarks(w);
+  const hem  = w.friendly ? "#1b2947" : "#331a24";   // deep, at the hem
+  const back = w.friendly ? "#415c97" : "#7a4353";   // lit, at the shoulders
+
+  // Spine and edges, in coordinates relative to the wizard. The outline is
+  // traced as curves rather than as the raw eight-point polyline — straight
+  // segments made it read as a folded paper wedge instead of cloth.
+  const P = c.map(p => ({ x: p.x - w.x, y: p.y - w.y }));
+  const last = P.length - 1;
+
+  // half-width of the cloth at each node, narrow at the collar and flaring to
+  // the hem. A cloak seen from above is WIDER than the wizard wearing it.
+  const halfAt = i => {
+    const k = i / last;
+    return (4.0 + k * 16.5) * (1 - Math.pow(k, 10) * 0.14);
+  };
+  // unit vector along the spine at a node
+  const dirAt = i => {
+    const a = P[Math.max(0, i - 1)], b = P[Math.min(last, i + 1)];
+    let ux = b.x - a.x, uy = b.y - a.y;
+    const d = Math.hypot(ux, uy) || 1;
+    return { x: ux / d, y: uy / d };
+  };
+  // both edges at a given fraction of the full width
+  const edges = scale => {
+    const L = [], R = [];
+    for (let i = 0; i <= last; i++){
+      const u = dirAt(i), h = halfAt(i) * scale;
+      L.push({ x: P[i].x - u.y * h, y: P[i].y + u.x * h });
+      R.push({ x: P[i].x + u.y * h, y: P[i].y - u.x * h });
+    }
+    const u = dirAt(last), h = halfAt(last) * scale;
+    return { L, R, bulge: { x: P[last].x + u.x * h * 1.15, y: P[last].y + u.y * h * 1.15 } };
+  };
+
+  // a smooth run through a list of points, midpoint-to-midpoint
+  const runThrough = pts => {
+    for (let i = 1; i < pts.length - 1; i++){
+      const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+  };
+  const trace = (scale = 1) => {
+    const e = edges(scale);
+    ctx.beginPath();
+    ctx.moveTo(e.L[0].x, e.L[0].y);
+    runThrough(e.L);
+    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);   // round hem
+    const rev = e.R.slice().reverse();
+    runThrough(rev);
+    ctx.closePath();
+  };
+  // just the hem, for the braid: up one edge's last stretch, round the bottom,
+  // back down the other — an open curve, not the whole silhouette
+  const traceHem = scale => {
+    const e = edges(scale), from = Math.max(1, last - 3);
+    ctx.beginPath();
+    ctx.moveTo(e.L[from].x, e.L[from].y);
+    runThrough(e.L.slice(from));
+    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);
+    runThrough(e.R.slice(from).reverse());
+  };
+
+  ctx.save();
+  // the shadow it throws on the floor
+  ctx.globalAlpha = .32; ctx.fillStyle = "#04050b";
+  ctx.save(); ctx.translate(1.6, 2.6); trace(); ctx.fill(); ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // Lit at the shoulders, deep at the hem — a gradient down the spine, not a
+  // flat fill. Flat, the cloak sank into the floor at this size.
+  const tail = P[last];
+  const grad = ctx.createLinearGradient(P[0].x, P[0].y, tail.x, tail.y);
+  grad.addColorStop(0, back);
+  grad.addColorStop(1, hem);
+  trace();
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.globalAlpha = .75; ctx.strokeStyle = w.tint; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // two gold braids following the hem
+  ctx.strokeStyle = "#e8cfa0"; ctx.lineCap = "round";
+  ctx.globalAlpha = .85; ctx.lineWidth = 1.5; traceHem(0.9); ctx.stroke();
+  ctx.globalAlpha = .55; ctx.lineWidth = 0.9; traceHem(0.78); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // The marks down the spine: one plain to begin with, then one per cloak
+  // jewel earned, in that jewel's own colour. Past six they go two abreast —
+  // thirteen in single file on a fifty-pixel cloak merges into a stripe.
+  const n = Math.min(marks, CAPE_MAX_MARKS);
+  const perRow = n > 6 ? 2 : 1;
+  const rows = Math.ceil(n / perRow);
+  for (let m = 0; m < n; m++){
+    const row = (m / perRow) | 0, col = m % perRow;
+    const alone = (row === rows - 1) && (n - row * perRow) === 1;
+    const f = rows === 1 ? 0.46 : 0.24 + (row / (rows - 1)) * 0.64;
+    const at = f * (P.length - 1);
+    const i0 = Math.min(P.length - 2, at | 0), fr = at - i0;
+    const a = P[i0], b = P[i0 + 1];
+    let ux = b.x - a.x, uy = b.y - a.y;
+    const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
+    // across the cloth, spread scaled to how wide it is at this point
+    const spread = (perRow === 1 || alone) ? 0 : (col === 0 ? -1 : 1) * (2.6 + f * 3.6);
+    const x = a.x + (b.x - a.x) * fr - uy * spread;
+    const y = a.y + (b.y - a.y) * fr + ux * spread;
+    const size = 2.4 + f * 1.9;
+    const paint = m === 0 ? "#eef2ff" : (gems[m - 1] || "#eef2ff");
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(uy, ux));
+    ctx.beginPath();
+    ctx.moveTo(size, 0); ctx.lineTo(0, size); ctx.lineTo(-size, 0); ctx.lineTo(0, -size);
+    ctx.closePath();
+    ctx.fillStyle = paint; ctx.globalAlpha = .95;
+    ctx.shadowColor = paint; ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.globalAlpha = .8; ctx.shadowBlur = 0;
+    ctx.strokeStyle = "#0a0d18"; ctx.lineWidth = .7; ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawWizard(w){
   const a = w.facing;
   const tint = w.tint;
   const robe = w.friendly ? "#1b2b40" : "#3a1f2a";
   ctx.save();
   ctx.translate(w.x, w.y);
+
+  drawCape(w);          // behind and beneath the wizard, before anything else
 
   // counter bonus: a gold corona that fades as the three seconds run out
   if (w.surge > 0){
@@ -2234,8 +2474,19 @@ function buildRails(){
     const mpB = mk("i", null, mk("div", "meter mp", d));
     return { w, d, nm, hpTxt, hpB, mpB, pips };
   });
+  scheduleFit();   // six plates wrap to two rows; the arena has to give that room back
+}
+// A match is on screen from the countdown through to the last blow; anywhere
+// else — the menus, the results — the plates are just clutter, so they fade.
+const LIVE_PHASES = { count:1, fight:1, paused:1, tally:1 };
+function syncRailsLive(){
+  const on = !!LIVE_PHASES[phase];
+  if (railsBox && railsBox.classList) railsBox.classList.toggle("live", on);
+  const rl = el("roundLabel");
+  if (rl && rl.classList) rl.classList.toggle("live", on);
 }
 function syncHUD(){
+  syncRailsLive();
   if (railList.length !== wizards.length || railList.some((r, i) => r.w !== wizards[i])) buildRails();
   for (const r of railList){
     const w = r.w;
@@ -2456,6 +2707,9 @@ let roomTotal = 4, roomHumans = 1;
 // necessarily seat 0 — the host's seat. Everything that means "this keyboard"
 // keys off localSeat, and seatNames carries the roster the server sent.
 let localSeat = 0, seatNames = null;
+// Per-seat player level, sent once in the roster and used for nothing but
+// drawing that player's cape. Never read by the simulation.
+let seatLevels = null;
 
 // Host match settings, applied identically on every client from the start
 // message. The relay sanitises them server-side too, so the lockstep sim can
@@ -2760,7 +3014,7 @@ function newMatch(seed){
   el("pausePanel").hidden = true;
   // the menus hide these; a match puts them back
   const st = el("stats"); if (st) st.hidden = true;
-  const rl = el("roundLabel"); if (rl) rl.hidden = false;
+  const rl = el("roundLabel"); if (rl) rl.hidden = false;   // fades in via .live
 }
 function renderStats(){
   const box = el("stats");
@@ -2874,11 +3128,44 @@ function fitCurtain(){
   curtainInner.style.transform = "scale(" + k + ")";
   curtainInner.style.height = (need * k) + "px";                 // so the parent stops overflowing too
 }
+/* Cap the arena by HEIGHT as well as width.
+   The canvas is 960x620 and scales to its box, so the box was free to grow
+   taller than the window and push the health plates and the spell book off
+   screen. Rather than guess a constant for the surrounding furniture, measure
+   it: everything in the shell except the arena itself and the manual (which is
+   meant to sit below the fold), plus the gaps between them and the body's own
+   padding. Whatever is left is the tallest the arena may be, and its width
+   follows from that. */
+const STAGE_RATIO = 960 / 620;
+function fitStage(){
+  const stage = el("stage");
+  if (!stage || !stage.parentNode || !stage.style || typeof getComputedStyle !== "function") return;
+  const shell = stage.parentNode;
+  if (!shell.children || !window.innerHeight) return;
+
+  const gap = parseFloat(getComputedStyle(shell).rowGap) || 0;
+  const body = getComputedStyle(document.body);
+  let used = (parseFloat(body.paddingTop) || 0) + (parseFloat(body.paddingBottom) || 0);
+  let inFlow = 0;
+  for (const kid of shell.children){
+    // audio elements and anything hidden take no room
+    if (getComputedStyle(kid).display === "none") continue;
+    if (kid.tagName === "DETAILS") continue;          // the manual lives below the fold
+    inFlow++;
+    if (kid !== stage) used += kid.getBoundingClientRect().height;
+  }
+  used += gap * Math.max(0, inFlow - 1);
+
+  const room = window.innerHeight - used;
+  // never collapse to nothing on a very short window — scrolling beats a sliver
+  stage.style.maxWidth = Math.max(360, Math.round(room * STAGE_RATIO)) + "px";
+}
+
 let fitPending = false;
 function scheduleFit(){
   if (fitPending || !curtainInner) return;
   fitPending = true;
-  const run = () => { fitPending = false; fitCurtain(); };
+  const run = () => { fitPending = false; fitStage(); fitCurtain(); };
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
   else if (typeof setTimeout === "function") setTimeout(run, 0);
   else run();
@@ -2911,7 +3198,7 @@ function show(which){
   // anywhere clears them, and renderStats() puts the report back after a match ends
   const st = el("stats"); if (st) st.hidden = true;
   const rl = el("roundLabel");
-  if (rl) rl.hidden = (which === "host" || which === "join" || which === "home");
+  if (rl) rl.hidden = false;     // it fades instead of hiding, so its space stays reserved
   if (which === "solo"){ const w = el("whoami"); if (w) w.hidden = false; modeCopy(); return; }
   el("board").hidden = true;
   el("curtainTitle").textContent = COPY[which][0];
@@ -3058,8 +3345,13 @@ function renderRoster(box){
   for (let i = 0; i < roomTotal; i++){
     const p = (n.players || []).find(x => x.seat === i);
     const row = mk("div", p ? (i === n.seat ? "me" : null) : "empty", box);
-    mk("span", null, row).textContent =
-      p ? (p.name + (p.host ? " (host)" : "")) : "empty — a bot takes this seat";
+    const who = mk("span", null, row);
+    who.textContent = p ? (p.name + (p.host ? " (host)" : "")) : "empty — a bot takes this seat";
+    // rank, so you can see who you are up against before the wands come out
+    if (p && p.lv > 1){
+      const lv = mk("em", "lv", row);
+      lv.textContent = "Lv " + p.lv;
+    }
     const tag = mk("i", p && p.ready ? "on" : null, row);
     tag.textContent = p ? (p.ready ? "ready" : "waiting") : "";
   }
@@ -3204,6 +3496,7 @@ function renderWho(profile){
     card.hidden = true;
     guest.hidden = false;
   }
+  refreshMarks(profile);            // the cape wears the same jewels
   renderPass(profile);
   readName();                       // seats and the relay use this name
   scheduleFit();
@@ -3443,7 +3736,7 @@ function pump(now){
     steps++;
   }
   if (steps >= cap) acc = 0;
-  if (!bg){ draw(); syncHUD(); }
+  if (!bg){ updateCapes(real); draw(); syncHUD(); }
 }
 function frame(now){
   pump(now);
@@ -3506,11 +3799,28 @@ window.RPW = {
     roomHumans = opts.humans || 1;
     localSeat = opts.seat != null ? opts.seat : 0;
     seatNames = opts.names || null;
+    seatLevels = opts.levels || null;
     matchCfg = sanitizeMatchCfg(opts.opts || null);
     if (opts.name) playerName = opts.name;
     newMatch(opts.seed);
   },
   seats: () => seats.map(x => ({ name: x.name, human: x.human })),
+  // test hook: the cape's cloth for a seat, as offsets from the wizard, plus
+  // how far each node sits off the straight line behind them — which is the
+  // only way to assert that it actually sways rather than trailing rigidly
+  capeOf(seat){
+    const w = wizards.find(x => x.seat === seat);
+    if (!w || !w.cape) return null;
+    const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
+    return {
+      marks: capeMarks(w).n,
+      nodes: w.cape.map(p => {
+        const ox = p.x - w.x, oy = p.y - w.y;
+        return { x: ox, y: oy, lateral: ox * -dy + oy * dx };   // + is one side, - the other
+      }),
+      segs: w.cape.slice(1).map((p, i) => Math.hypot(p.x - w.cape[i].x, p.y - w.cape[i].y))
+    };
+  },
   // test hook: land a finishing blow on a seat, so a rig can reach the end of
   // a round (and of a match) without playing one out in real time
   smite(seat){

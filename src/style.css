@@ -25,30 +25,21 @@
     color:var(--chalk);
     font-family:var(--mono);
     min-height:100vh;
-    padding:20px 16px 44px;
+    padding:10px 14px 18px;
     display:flex;
     justify-content:center;
   }
-  .shell{width:100%;max-width:1000px;display:flex;flex-direction:column;gap:16px}
+  .shell{width:100%;max-width:1000px;display:flex;flex-direction:column;gap:10px}
 
-  header.crest{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
-  .crest h1{
-    font-family:var(--display);
-    font-weight:900;
-    font-size:clamp(28px,5.4vw,50px);
-    letter-spacing:.06em;
-    margin:0;
-    text-transform:uppercase;
-    text-wrap:balance;
-    background:linear-gradient(100deg,var(--spark),var(--rive) 42%,var(--beam) 78%,var(--hex));
-    -webkit-background-clip:text;
-    background-clip:text;
-    color:transparent;
-    filter:drop-shadow(0 0 22px rgba(169,124,255,.35));
-  }
-  .crest p{margin:0;color:var(--muted);font-size:12px;letter-spacing:.22em;text-transform:uppercase}
+  /* No masthead: the game window shows the name itself, so this is only the
+     music toggle, parked on one short right-aligned row. */
+  header.crest{display:flex;justify-content:flex-end;align-items:center;min-height:0}
 
-  .rails{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+  /* The health plates belong to a match, not to a menu. They keep their space
+     either way so the arena does not resize the moment a duel begins. */
+  .rails{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;
+    opacity:0;pointer-events:none;transition:opacity .55s ease}
+  .rails.live{opacity:1;pointer-events:auto}
   .rails .plate{flex:1 1 150px}
   .plate{
     background:linear-gradient(180deg,rgba(23,19,38,.9),rgba(13,10,24,.9));
@@ -82,9 +73,15 @@
   .plate .wins{display:flex;gap:4px}
   .plate .wins i{width:7px;height:7px;transform:rotate(45deg);border:1px solid var(--edge);background:#0a0714}
   .plate .wins i.on{background:var(--tint,var(--chalk));border-color:var(--tint,var(--chalk))}
-  .roundlabel{font-size:10px;letter-spacing:.24em;color:var(--muted);text-align:center;text-transform:uppercase;margin-top:6px}
+  /* Like the plates: it fades rather than disappearing, so its space is
+     reserved on the menu too and the arena is exactly the same size before and
+     during a duel. Hiding it outright pushed the spell book off a short screen
+     the moment a match began. */
+  .roundlabel{font-size:10px;letter-spacing:.24em;color:var(--muted);text-align:center;
+    text-transform:uppercase;margin-top:2px;opacity:0;transition:opacity .55s ease}
+  .roundlabel.live{opacity:1}
 
-  .stage{position:relative;border:1px solid var(--edge);border-radius:4px;overflow:hidden;background:var(--pit);box-shadow:0 30px 80px -40px #000, inset 0 0 90px rgba(0,0,0,.8)}
+  .stage{position:relative;margin-inline:auto;width:100%;border:1px solid var(--edge);border-radius:4px;overflow:hidden;background:var(--pit);box-shadow:0 30px 80px -40px #000, inset 0 0 90px rgba(0,0,0,.8)}
   canvas{display:block;width:100%;height:auto;touch-action:none}
 
   .curtain{
@@ -313,6 +310,8 @@
     padding:7px 10px;width:150px;text-align:center;padding-left:calc(10px + .3em)}
   .codefield input:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
   /* who has actually turned up */
+  .roster em.lv{font-style:normal;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+    color:var(--spark);border:1px solid var(--edge);border-radius:2px;padding:0 4px;margin-left:6px}
   .roster{display:flex;flex-direction:column;gap:3px;width:100%}
   .roster:empty{display:none}
   .roster div{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;

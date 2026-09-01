@@ -99,7 +99,9 @@ class Room {
   }
 
   roster() {
-    return this.players.map(p => ({ seat: p.seat, name: p.name, ready: p.ready, host: p.seat === 0 }));
+    return this.players.map(p => ({
+      seat: p.seat, name: p.name, lv: p.lv || 1, ready: p.ready, host: p.seat === 0
+    }));
   }
 
   sync() {
@@ -172,17 +174,28 @@ class Player {
 function cleanName(n) {
   return String(n == null ? "" : n).replace(/[^\w \-'.]/g, "").trim().slice(0, 14) || "Wizard";
 }
+// A player's level, purely so the others can draw their cape with the right
+// jewels on it. Nothing in the match depends on it, so a client claiming a
+// level it has not earned wins nothing but a prettier cloak — but it is still
+// clamped to a sane integer here, because "banana" reaching another client's
+// rendering code is how you crash somebody else's game.
+function cleanLevel(v) {
+  const n = Math.floor(Number(v));
+  return (n >= 1 && n <= 999) ? n : 1;
+}
 
 function handle(p, msg) {
   switch (msg.t) {
     case "hello":
       p.name = cleanName(msg.name);
+      p.lv = cleanLevel(msg.lv);
       p.send({ t: "hello", name: p.name });
       return;
 
     case "create": {
       if (p.room) p.room.remove(p);
       p.name = cleanName(msg.name || p.name);
+      if (msg.lv != null) p.lv = cleanLevel(msg.lv);
       const room = new Room({
         total: msg.total,
         difficulty: msg.difficulty,
@@ -200,6 +213,7 @@ function handle(p, msg) {
       if (!room.openSeats) return p.fail("that room is full");
       if (p.room) p.room.remove(p);
       p.name = cleanName(msg.name || p.name);
+      if (msg.lv != null) p.lv = cleanLevel(msg.lv);
       room.add(p);
       room.sync();
       return;
@@ -208,6 +222,7 @@ function handle(p, msg) {
     case "quick": {
       if (p.room) p.room.remove(p);
       p.name = cleanName(msg.name || p.name);
+      if (msg.lv != null) p.lv = cleanLevel(msg.lv);
       let room = null;
       for (const r of rooms.values()) {
         if (r.isPublic && r.state === "lobby" && r.openSeats > 0) { room = r; break; }

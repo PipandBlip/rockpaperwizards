@@ -63,7 +63,7 @@
         net.ws = ws;
         ws.onopen = () => {
           net.state = "lobby";
-          send({ t: "hello", name: currentName() });
+          send({ t: "hello", name: currentName(), lv: currentLevel() });
           emit();
           resolve(net);
         };
@@ -92,6 +92,18 @@
     // Whoever you are signed in as; "Guest" when you are not signed in at all.
     const n = (window.RPWA && window.RPWA.name) || "Guest";
     return String(n).trim().slice(0, 14) || "Guest";
+  }
+
+  // Your level, so everyone else can draw your cape with the right jewels on it.
+  // One small integer, sent once when you say hello and once more when you make
+  // or join a room — never in the per-frame input stream, which is the only
+  // traffic that could cost anybody a frame. The colours are not sent: cloak
+  // jewels are earned strictly in level order, so a level is enough for every
+  // client to rebuild the same row of stones from the shared GEMS table.
+  function currentLevel() {
+    const p = window.RPWA && window.RPWA.profile;
+    const lv = p && p.level;
+    return (typeof lv === "number" && lv > 0) ? Math.min(999, Math.round(lv)) : 1;
   }
 
   function receive(msg) {
@@ -212,8 +224,11 @@
     // driven by two real browsers.
     for (let f = 0; f <= DELAY; f++) frameRow(f).fill(0);
 
-    const names = [];
-    for (const p of net.players) if (p.seat >= 0) names[p.seat] = p.name;
+    const names = [], levels = [];
+    for (const p of net.players) if (p.seat >= 0){
+      names[p.seat] = p.name;
+      levels[p.seat] = p.lv;          // may be undefined; the cape falls back to 1
+    }
 
     RPW.NET.active = true;
     if (RPW.pumpSync) RPW.pumpSync();
@@ -224,6 +239,7 @@
       humans: net.players.length,
       seat: net.seat < 0 ? 0 : net.seat,
       names,
+      levels,
       difficulty: msg.difficulty,
       opts: msg.opts || null,
       name: currentName()
@@ -290,9 +306,9 @@
     net,
     DELAY,
     connect,
-    create: opts => send({ t: "create", name: currentName(), total: (opts && opts.total) || 4, difficulty: (opts && opts.difficulty) || 0, isPublic: !(opts && opts.private), opts: opts && opts.opts }),
-    join: code => send({ t: "join", name: currentName(), code: String(code || "").toUpperCase() }),
-    quick: opts => send({ t: "quick", name: currentName(), total: (opts && opts.total) || 4 }),
+    create: opts => send({ t: "create", name: currentName(), lv: currentLevel(), total: (opts && opts.total) || 4, difficulty: (opts && opts.difficulty) || 0, isPublic: !(opts && opts.private), opts: opts && opts.opts }),
+    join: code => send({ t: "join", name: currentName(), lv: currentLevel(), code: String(code || "").toUpperCase() }),
+    quick: opts => send({ t: "quick", name: currentName(), lv: currentLevel(), total: (opts && opts.total) || 4 }),
     config: opts => send({ t: "config", ...opts }),
     ready: v => send({ t: "ready", v: v !== false }),
     start: () => send({ t: "start" }),

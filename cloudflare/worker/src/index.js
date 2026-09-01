@@ -39,6 +39,15 @@ const STALL_MS = 6000;
 const STALL_LAG = 2;   // frames behind the room's furthest sender
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
 
+// A player's level, purely so the others can draw their cape with the right
+// jewels on it. Nothing in the match depends on it, so a client claiming a
+// level it has not earned wins nothing but a prettier cloak — but it is still
+// clamped to a sane integer here, because "banana" reaching another client's
+// rendering code is how you crash somebody else's game.
+function cleanLevel(v) {
+  const n = Math.floor(Number(v));
+  return (n >= 1 && n <= 999) ? n : 1;
+}
 function cleanName(n) {
   return String(n == null ? "" : n).replace(/[^\w \-'.]/g, "").trim().slice(0, 14) || "Wizard";
 }
@@ -233,7 +242,8 @@ export class RPWRelay extends DurableObject {
     return room.playerIds.map(pid => {
       const p = this.byId.get(pid);
       const seat = p ? p.seat : -1;
-      return { seat, name: p ? p.name : "?", ready: p ? p.ready : false, host: seat === 0 };
+      return { seat, name: p ? p.name : "?", lv: (p && p.lv) || 1,
+               ready: p ? p.ready : false, host: seat === 0 };
     });
   }
 
@@ -290,6 +300,7 @@ export class RPWRelay extends DurableObject {
     switch (msg.t) {
       case "hello":
         p.name = cleanName(msg.name);
+        p.lv = cleanLevel(msg.lv);
         dirty = true;
         this.sendToId(p.id, { t: "hello", name: p.name });
         break;
@@ -297,6 +308,7 @@ export class RPWRelay extends DurableObject {
       case "create": {
         if (p.roomCode) this.removeFromRoom(p);
         p.name = cleanName(msg.name || p.name);
+        if (msg.lv != null) p.lv = cleanLevel(msg.lv);
         const room = this.createRoom({
           total: msg.total,
           difficulty: msg.difficulty,
@@ -316,6 +328,7 @@ export class RPWRelay extends DurableObject {
         if (!(room.total - room.playerIds.length)) return this.failTo(p, "that room is full");
         if (p.roomCode) this.removeFromRoom(p);
         p.name = cleanName(msg.name || p.name);
+        if (msg.lv != null) p.lv = cleanLevel(msg.lv);
         this.addToRoom(room, p);
         this.sync(room);
         dirty = true;
@@ -325,6 +338,7 @@ export class RPWRelay extends DurableObject {
       case "quick": {
         if (p.roomCode) this.removeFromRoom(p);
         p.name = cleanName(msg.name || p.name);
+        if (msg.lv != null) p.lv = cleanLevel(msg.lv);
         let room = null;
         for (const r of this.rooms.values()) {
           if (r.isPublic && r.state === "lobby" && r.playerIds.length < r.total) { room = r; break; }
