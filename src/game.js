@@ -2672,7 +2672,6 @@ function respawnWizard(w){
 
 /* --------------------------------------------------- high scores */
 const HS_KEY = "rpw.escalation.scores";
-const NAME_KEY = "rpw.name";
 function loadScores(){
   try { const v = JSON.parse(localStorage.getItem(HS_KEY)); return Array.isArray(v) ? v : []; }
   catch (e) { return []; }
@@ -2712,15 +2711,18 @@ function escGameOver(){
   const entry = { s: final, k: kills, w: Math.max(1, waveNo), d: Date.now(), n: playerName };
   saveScore(entry);
   msg = { text: "Fallen", sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
+  const banked = bankRun(final, Math.max(1, waveNo), kills);
   setTimeout(() => {
     show("solo");   // first, because it rewrites the copy — then say what happened
     renderStats();
     el("curtainTitle").textContent = playerName + " held out to wave " + Math.max(1, waveNo);
-    el("curtainText").textContent = final.toLocaleString() + " points · " + kills +
+    const report = final.toLocaleString() + " points · " + kills +
       (kills === 1 ? " wizard" : " wizards") + " put down · " + Math.round(survT) + " seconds standing.";
+    el("curtainText").textContent = report;
     el("goBtn").textContent = "Run it again";
     renderBoard(entry);
     el("curtain").hidden = false;
+    banked.then(out => showEarned(out, report));
   }, 1600);
 }
 
@@ -2740,10 +2742,8 @@ function newRound(){
       : { text: `Round ${roundNo}`, sub: "Wands up.", t: 1.4, color: "#a97cff" };
 }
 function readName(){
-  const inp = el("nameInput");
-  const v = (inp && inp.value ? inp.value : "").trim().slice(0, 14);
-  playerName = v || "Wizard";
-  try { localStorage.setItem(NAME_KEY, playerName); } catch (e) {}
+  // The name box is gone: you play as your signed-in wizard, or as Guest.
+  playerName = (window.RPWA && window.RPWA.name) || "Guest";
 }
 function newMatch(seed){
   readName();
@@ -2801,6 +2801,9 @@ function endRound(win){
   if (matchCfg.mode === "lives" || (win && win.wins >= matchCfg.roundsToWin)){
     phase = "over"; phaseT = 1.2;
     msg = { text: mine ? "Victory" : win.name + " wins", sub: null, t: 1.2, color: win.tint };
+    // Ask for the experience now, not when the curtain appears — the answer is
+    // then usually already in hand by the time there is somewhere to show it.
+    const banked = bankMatch(mine, you ? you.wins : 0);
     setTimeout(() => {
       // a networked match drops you back at the multiplayer door, not the bot list
       const networked = NET.active;
@@ -2809,14 +2812,12 @@ function endRound(win){
       if (networked) el("mpNote").hidden = true;   // not a menu hint on a results screen
       renderStats();
       el("curtainTitle").textContent = mine ? "You take the match" : win.name + " takes the match";
-      el("curtainText").textContent = mine
-        ? (matchCfg.mode === "lives"
-            ? "Last one standing. Pick a harder rival, or fill the room with more of them."
-            : (matchCfg.roundsToWin > 2 ? matchCfg.roundsToWin + " rounds to your name. Pick a harder rival, or fill the room with more of them."
-                                       : "Two rounds to your name. Pick a harder rival, or fill the room with more of them."))
-        : "Read the incoming weight before you answer it — and remember a good counter pays you back in mana.";
+      // The line under the title is the match's payout, or nothing at all.
+      el("curtainText").textContent = "";
+      el("curtainText").hidden = true;
       if (!networked) el("goBtn").textContent = "Play again";
       el("curtain").hidden = false;
+      banked.then(out => showEarned(out));
     }, 1400);
   } else {
     roundNo++;
@@ -2883,7 +2884,7 @@ if (typeof window !== "undefined" && window.addEventListener) window.addEventLis
 // button routes through show(); nothing else touches a panel's hidden flag.
 const PANEL = {
   home: el("homePanel"), solo: el("soloPanel"), mp: el("mpPanel"),
-  host: el("hostPanel"), join: el("joinPanel")
+  host: el("hostPanel"), join: el("joinPanel"), auth: el("authPanel")
 };
 const COPY = {
   home: ["Pick your fight",
@@ -2891,7 +2892,8 @@ const COPY = {
   mp:   ["Multiplayer",
          "Host a duel and you get a four-letter code to hand out. Join one and you paste the code you were given. Bots fill any seat nobody takes."],
   host: ["Hosting", "Send the code. Empty seats become bots."],
-  join: ["Join a duel", "Four letters, from whoever is hosting."]
+  join: ["Join a duel", "Four letters, from whoever is hosting."],
+  auth: ["Your wizard", "Sign in and your wizard keeps its level, its experience and — before long — what it is wearing."]
 };
 let panel = "home";
 function show(which){
@@ -2904,12 +2906,13 @@ function show(which){
   const st = el("stats"); if (st) st.hidden = true;
   const rl = el("roundLabel");
   if (rl) rl.hidden = (which === "host" || which === "join" || which === "home");
-  if (which === "solo"){ modeCopy(); return; }
+  if (which === "solo"){ const w = el("whoami"); if (w) w.hidden = false; modeCopy(); return; }
   el("board").hidden = true;
   el("curtainTitle").textContent = COPY[which][0];
   el("curtainText").textContent = COPY[which][1];
   // lobby panels carry their own controls; keep the banner overhead small
-  if (which === "host" || which === "join"){
+  const who = el("whoami"); if (who) who.hidden = (which === "auth");
+  if (which === "host" || which === "join" || which === "auth"){
     el("curtainTitle").style.fontSize = "clamp(18px,3vw,26px)";
     el("curtainText").hidden = true;
   } else {
@@ -3162,22 +3165,147 @@ el("soloBack").addEventListener("click", () => show("home"));
 el("mpBack").addEventListener("click", () => show("home"));
 el("hostBack").addEventListener("click", () => { leaveRoom(); show("mp"); });
 el("joinBack").addEventListener("click", () => { leaveRoom(); show("mp"); });
+/* ------------------------------------------------- the signed-in wizard
+   src/account.js owns the session and the profile; everything here is the
+   menu's side of it — the character strip, the sign-in form, and banking a
+   finished match. All of it degrades to a guest if there is no account
+   server to reach (the single-file build, a file:// page, an outage), so
+   the game never depends on being signed in. */
+
+const ACCT = () => window.RPWA || null;
+
+function renderWho(profile){
+  const card = el("whoCard"), guest = el("whoGuest");
+  if (!card || !guest) return;
+  if (profile){
+    guest.hidden = true;
+    card.hidden = false;
+    el("whoName").textContent = profile.name;
+    el("whoLevel").textContent = "Lv " + profile.level;
+    el("whoXp").textContent = profile.into + " / " + profile.need;
+    el("whoRec").textContent = profile.wins + "W \u00b7 " + profile.losses + "L";
+    const pct = profile.need ? (profile.into / profile.need) * 100 : 0;
+    el("whoFill").style.width = Math.max(profile.into > 0 ? 3 : 0, Math.round(pct)) + "%";
+  } else {
+    card.hidden = true;
+    guest.hidden = false;
+  }
+  readName();                       // seats and the relay use this name
+  scheduleFit();
+}
+
+let authMode = "in";                // "in" to sign in, "up" to create
+let authFrom = "home";              // where Back and a finished sign-in return to
+
+function authNote(text, kind){
+  const n = el("authNote");
+  if (!n) return;
+  n.textContent = text;
+  n.className = "note" + (kind ? " " + kind : "");
+}
+function setAuthMode(m){
+  authMode = m;
+  const up = m === "up";
+  el("authTitle").textContent = up ? "Create a wizard" : "Sign in";
+  el("authGo").textContent = up ? "Create wizard" : "Sign in";
+  el("authSwap").textContent = up ? "Already have a wizard? Sign in" : "New here? Create a wizard";
+  el("authPass").setAttribute("autocomplete", up ? "new-password" : "current-password");
+  authNote(up ? "Three characters or more, and a password of at least eight."
+              : "Your wizard keeps its level and experience wherever you sign in.");
+}
+function openAuth(){
+  authFrom = (panel === "auth") ? authFrom : panel;
+  setAuthMode("in");
+  el("authPass").value = "";
+  show("auth");
+}
+async function authSubmit(){
+  const acct = ACCT();
+  if (!acct) return;
+  const name = (el("authName").value || "").trim();
+  const pass = el("authPass").value || "";
+  el("authGo").disabled = true;
+  authNote(authMode === "up" ? "Creating your wizard\u2026" : "Signing you in\u2026");
+  const res = authMode === "up" ? await acct.register(name, pass) : await acct.signIn(name, pass);
+  el("authGo").disabled = false;
+  if (!res || !res.ok){
+    authNote((res && res.error) || "Something went wrong.", "bad");
+    return;
+  }
+  el("authPass").value = "";
+  show(authFrom === "auth" ? "home" : authFrom);
+}
+
+el("signInBtn").addEventListener("click", openAuth);
+el("signOutBtn").addEventListener("click", () => { if (ACCT()) ACCT().signOut(); });
+el("authBack").addEventListener("click", () => show(authFrom === "auth" ? "home" : authFrom));
+el("authSwap").addEventListener("click", () => setAuthMode(authMode === "up" ? "in" : "up"));
+el("authForm").addEventListener("submit", e => { e.preventDefault(); authSubmit(); });
+
+/* ---- banking a finished match --------------------------------------- */
+
+// Who you just fought, in the shape the server prices: a person is worth
+// more than a bot, and a harder bot is worth more than an easy one.
+function rivalsFought(){
+  const meSeat = (mode === "match") ? localSeat : 0;
+  return seats
+    .filter((s, i) => i !== meSeat)
+    .map(s => s.human ? { human: true } : { human: false, level: difficulty })
+    .slice(0, 5);
+}
+// Fired the moment the match ends so the answer is usually already back by
+// the time the curtain is drawn 1.4s later.
+function bankMatch(won, roundsWon){
+  const acct = ACCT();
+  if (!acct || !acct.signedIn) return Promise.resolve(null);
+  return acct.report({ mode: "duel", won: !!won, roundsWon: roundsWon | 0, opponents: rivalsFought() });
+}
+function bankRun(score, waves, kills){
+  const acct = ACCT();
+  if (!acct || !acct.signedIn) return Promise.resolve(null);
+  return acct.report({ mode: "escalation", score: score | 0, waves: waves | 0, kills: kills | 0 });
+}
+// Say what the match was worth. Guests get the one line that tells them why
+// they got nothing; signed-in wizards get the number and where it left them.
+function showEarned(out, prefix){
+  const txt = el("curtainText");
+  if (!txt) return;
+  let line = "";
+  if (!out){
+    const acct = ACCT();
+    if (!acct || !acct.signedIn) line = "Sign in and duels like that one earn experience.";
+  } else if (out.gained > 0){
+    const p = out.profile;
+    line = (out.leveled > 0 ? "Level " + p.level + ". " : "") +
+           "+" + out.gained + " experience \u00b7 " + p.into + " / " + p.need + " to level " + (p.level + 1) + ".";
+    if (out.leveled > 0){
+      const card = el("whoCard");
+      if (card && card.classList){
+        card.classList.remove("rankup");
+        void card.offsetWidth;
+        card.classList.add("rankup");
+      }
+    }
+  }
+  if (!line){ txt.hidden = true; return; }
+  txt.textContent = (prefix ? prefix + " " : "") + line;
+  txt.hidden = false;
+  scheduleFit();
+}
+
 el("resumeBtn").addEventListener("click", () => { if (phase === "paused") togglePause(); });
 el("menuBtn").addEventListener("click", toMenu);
-try {
-  const savedName = localStorage.getItem(NAME_KEY);
-  if (savedName) el("nameInput").value = savedName;
-} catch (e) {}
-el("nameInput").addEventListener("keydown", e => {
-  if (e.key !== "Enter") return;
-  e.preventDefault();
-  e.target.blur();
-  const primary = { solo:"goBtn", host:"startRoom", join:"joinGo", mp:"hostBtn", home:"soloBtn" }[panel];
-  if (primary) el(primary).click();
-});
 el("codeInput").addEventListener("keydown", e => {
   if (e.key === "Enter"){ e.preventDefault(); el("joinGo").click(); }
 });
+// Draw the character strip as a guest straight away, then turn any stored
+// session back into a profile. Nothing waits on the network.
+if (window.RPWA){
+  window.RPWA.onChange(renderWho);
+  window.RPWA.resume();
+} else {
+  renderWho(null);
+}
 show("home");
 
 /* ---------------------------------------------------------- loop */
@@ -3298,10 +3426,16 @@ window.RPW = {
     localSeat = opts.seat != null ? opts.seat : 0;
     seatNames = opts.names || null;
     matchCfg = sanitizeMatchCfg(opts.opts || null);
-    if (opts.name) { const inp = el("nameInput"); if (inp) inp.value = opts.name; }
+    if (opts.name) playerName = opts.name;
     newMatch(opts.seed);
   },
   seats: () => seats.map(x => ({ name: x.name, human: x.human })),
+  // test hook: land a finishing blow on a seat, so a rig can reach the end of
+  // a round (and of a match) without playing one out in real time
+  smite(seat){
+    const w = wizards.find(x => x.seat === seat);
+    if (w && w.hp > 0) strike(w, 9999, w.x, w.y, "spark", false);
+  },
   matchCfg: () => ({ ...matchCfg }),
   phase: () => phase,
   // a cheap checksum of everything the simulation owns, for determinism tests

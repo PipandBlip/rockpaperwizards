@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=19">
+  <link rel="stylesheet" href="src/style.css?v=20">
 </head>
 <body>
 
@@ -52,7 +52,23 @@
     <div class="curtain" id="curtain">
       <h2 id="curtainTitle">Choose your rival</h2>
       <p id="curtainText">Your wand tracks the enemy on its own. Your job is timing: read what is coming, and answer it with something heavy enough to stop it.</p>
-      <label class="namefield"><span>Name</span><input id="nameInput" maxlength="14" placeholder="Wizard" autocomplete="off" spellcheck="false"></label>
+      <!-- who you are playing as. Signed out it is a single line and a
+           button; signed in it is the character strip — level, experience
+           bar and record. Names come from here now, not a text box. -->
+      <div class="whoami" id="whoami">
+        <div class="who-guest" id="whoGuest">
+          <span>Playing as <b>Guest</b></span>
+          <button id="signInBtn" type="button">Sign in</button>
+        </div>
+        <div class="who-card" id="whoCard" hidden>
+          <b class="who-name" id="whoName">Wizard</b>
+          <span class="who-lv" id="whoLevel">Lv 1</span>
+          <span class="xpbar" id="whoBar"><i id="whoFill"></i></span>
+          <span class="who-xp" id="whoXp">0 / 120</span>
+          <span class="who-rec" id="whoRec">0W &middot; 0L</span>
+          <button id="signOutBtn" type="button">Sign out</button>
+        </div>
+      </div>
 
       <!-- landing: two doors, nothing else -->
       <div class="panel" id="homePanel">
@@ -127,6 +143,23 @@
         <div class="roster" id="joinRoster"></div>
         <p class="note" id="joinNote">Paste the code the host sent you.</p>
         <button class="back" id="joinBack">Back</button>
+      </div>
+
+      <!-- signing in: one form, two jobs -->
+      <div class="panel room" id="authPanel" hidden>
+        <h4 id="authTitle">Sign in</h4>
+        <form id="authForm" autocomplete="on">
+          <label class="field"><span>Wizard name</span>
+            <input id="authName" maxlength="14" autocomplete="username" spellcheck="false" placeholder="Merlin"></label>
+          <label class="field"><span>Password</span>
+            <input id="authPass" type="password" maxlength="200" autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"></label>
+          <p class="note" id="authNote">Your wizard keeps its level and experience wherever you sign in.</p>
+          <div class="room-actions">
+            <button class="go" id="authGo" type="submit">Sign in</button>
+            <button class="back" id="authBack" type="button">Back</button>
+          </div>
+        </form>
+        <button class="linky" id="authSwap" type="button">New here? Create a wizard</button>
       </div>
 
       <!-- the two post-match panels sit side by side so the end screen fits
@@ -231,6 +264,7 @@
           <div>
             <h4>Odds and ends</h4>
             <p>Rive throws one missile at a tap and five at full charge. A beam costs 18 mana to ignite, 31 a second to hold, and leaves the wand scorched for a moment after you let go.</p>
+            <p>Signing in is optional — guests play everything. Sign in and your wizard keeps its level and earns experience from every duel, with a person worth more than a bot.</p>
             <p><kbd>P</kbd> pause · <kbd>R</kbd> restart. First to two rounds takes the duel.</p>
           </div>
         </div>
@@ -241,7 +275,8 @@
 </div>
 
   <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
-  <script src="src/game.js?v=19"></script>
-  <script src="src/net.js?v=19"></script>
+  <script src="src/account.js?v=20"></script>
+  <script src="src/game.js?v=20"></script>
+  <script src="src/net.js?v=20"></script>
 </body>
 </html>

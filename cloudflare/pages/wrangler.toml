@@ -20,3 +20,9 @@ compatibility_date = "2026-08-08"
 name = "RPW_RELAY"
 class_name = "RPWRelay"
 script_name = "rockpaperwizards-relay"
+
+# Accounts and character profiles, served from ./functions/api/[[route]].js
+[[durable_objects.bindings]]
+name = "RPW_ACCOUNT"
+class_name = "RPWAccount"
+script_name = "rockpaperwizards-relay"

@@ -20,6 +20,16 @@ compatibility_date = "2026-08-08"
 name = "RPW_RELAY"
 class_name = "RPWRelay"
 
+# One object per player account, addressed by name. Lives in the same worker
+# as the relay purely so there is one thing to deploy.
+[[durable_objects.bindings]]
+name = "RPW_ACCOUNT"
+class_name = "RPWAccount"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RPWRelay"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RPWAccount"]

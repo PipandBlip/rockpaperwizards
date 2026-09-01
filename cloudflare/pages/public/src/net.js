@@ -89,8 +89,9 @@
   }
 
   function currentName() {
-    const inp = document.getElementById("nameInput");
-    return (inp && inp.value ? inp.value : "Wizard").trim().slice(0, 14) || "Wizard";
+    // Whoever you are signed in as; "Guest" when you are not signed in at all.
+    const n = (window.RPWA && window.RPWA.name) || "Guest";
+    return String(n).trim().slice(0, 14) || "Guest";
   }
 
   function receive(msg) {

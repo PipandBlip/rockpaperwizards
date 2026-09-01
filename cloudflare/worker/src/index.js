@@ -23,6 +23,7 @@
 // Protocol: JSON objects with a "t" field — see docs/multiplayer.md.
 
 import { DurableObject } from "cloudflare:workers";
+import { handle as handleAccount } from "./accounts.js";
 
 const MAX_SEATS = 6;
 const ROOM_IDLE_MS = 10 * 60 * 1000;
@@ -442,6 +443,44 @@ export class RPWRelay extends DurableObject {
         break;
     }
     if (dirty) await this._persist();
+  }
+}
+
+/* ==================================================================
+   RPWAccount — one Durable Object per player account.
+
+   Addressed by idFromName("u:" + lowercased name), which is what makes a
+   name unique: there is no index to maintain and two simultaneous
+   registrations of the same name are serialised by the object itself.
+
+   All the actual logic lives in accounts.js, which knows nothing about
+   Cloudflare — this class only adapts ctx.storage to the little async
+   key/value shape that module expects, so the same code path is what
+   server/test-accounts.js exercises in Node.
+   ================================================================== */
+export class RPWAccount extends DurableObject {
+  constructor(ctx, env){
+    super(ctx, env);
+    this.store = {
+      get: k => ctx.storage.get(k),
+      put: (k, v) => ctx.storage.put(k, v),
+      delete: k => ctx.storage.delete(k),
+      keys: async prefix => [...(await ctx.storage.list({ prefix })).keys()]
+    };
+  }
+
+  async fetch(request){
+    const path = new URL(request.url).pathname.replace(/^\/+/, "");
+    let body = {};
+    try { body = await request.json(); } catch (e) {}
+    // One account object serves one player, so blockConcurrencyWhile is not
+    // needed for throughput — but register/login both read then write, and
+    // the object is single-threaded per request anyway.
+    const out = await handleAccount(this.store, path, body, Date.now());
+    return new Response(JSON.stringify(out.body), {
+      status: out.status,
+      headers: { "content-type": "application/json" }
+    });
   }
 }
 
