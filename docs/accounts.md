@@ -211,9 +211,32 @@ band across the shoulders. The garment itself also grows: longer and a little
 wider with rank. So a beginner and an Archmage are told apart across the arena
 without reading a name.
 
-Where the rank comes from: the signed-in player reads their own profile, a bot
-wears its tier (Apprentice none, Adept one, Archmage two), and everyone else
-reads `seatLevels`, filled from the roster the relay sends.
+Where the rank comes from: the signed-in player reads their own profile,
+everyone else reads `seatLevels` from the roster the relay sends, and **a bot
+wears a rank like anybody else**.
+
+### Bots wear a rank, not a special case
+
+`BOT_LEVEL = [1, 16, 33]` gives each tier a level and sends it through
+`rankFor()` exactly as a player's level goes, so a bot's cloak is a cloak
+somebody could actually be wearing — same stones, same colours, same braid, same
+size. You should be able to look at a wizard across the arena and know what you
+are facing.
+
+| tier | level | stones | reads as |
+|---|---|---|---|
+| Apprentice | 1 | 0 | the plain cloth a new player starts in |
+| Adept | 16 | 6 | halfway up, one braid |
+| Archmage | 33 | 10 | two braids and a shoulder band |
+| a finished player | 40 | 12 | still out-dresses the Archmage |
+
+Archmage deliberately stops two stones short. It should be a cloak to want, not
+a ceiling somebody has already been handed.
+
+**Levels, not gem counts** — that keeps the `GEMS` table the single source of
+truth, so retuning the ladder moves the bots with it and nothing here needs
+touching. (Bots previously carried a bare count and no colours at all, so their
+stones drew as placeholder white.)
 
 ### How it moves, and why it cannot knot
 

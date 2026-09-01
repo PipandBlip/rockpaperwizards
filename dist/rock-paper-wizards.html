@@ -3012,10 +3012,30 @@ function refreshMarks(profile){
   rankCache.clear();
   myRank = profile ? rankFor(profile.level) : { n: 0, gems: [] };
 }
+/* Bots wear a RANK, not a special case.
+
+   Each tier is given a level and sent through rankFor() exactly like a player,
+   so a bot's cloak is a cloak somebody could actually be wearing — same stones,
+   same colours, same braid, same size. That is the whole point: you should be
+   able to look at a wizard across the arena and know what you are facing, and
+   an Archmage's cloak should be a thing to want.
+
+   Apprentice sits at level 1 — the plain cloth a new player starts in, so a
+   beginner sees themselves in it. Adept is halfway up the ladder at six stones.
+   Archmage carries ten of the twelve: clearly formidable, and still two short
+   of a finished cloak, so there is somewhere left to climb.
+
+   Levels, not gem counts, because then the GEMS table stays the single source
+   of truth — retune the ladder and the bots follow it without being touched. */
+const BOT_LEVEL = [1, 16, 33];      // Apprentice, Adept, Archmage
+
 // A wizard starting out wears plain cloth. Everything on it is earned.
 function capeMarks(w){
   if (w === you) return myRank;                                        // your own profile
-  if (w.D) return { n: Math.max(0, DIFF.indexOf(w.D)), gems: [] };     // a bot wears its tier
+  if (w.D){
+    const tier = Math.max(0, DIFF.indexOf(w.D));
+    return rankFor(BOT_LEVEL[tier] || 1);                              // a bot wears its tier
+  }
   return rankFor(seatLevels && seatLevels[w.seat]);                    // another player, from the roster
 }
 function capeSeg(gems){
