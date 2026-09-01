@@ -1,0 +1,25 @@
+# Response headers for the Pages site.
+#
+# The Content-Security-Policy is the point of this file. The page carries a
+# password field, and a login page is judged partly on how tightly it is
+# locked down: no inline scripts, nothing loaded from anywhere unexpected,
+# and — the one that matters most for a login — form-action 'self', which
+# means the browser itself will refuse to post these credentials anywhere
+# but this origin. Keeping it strict is also just correct.
+#
+# Whenever a new external source is added (a font host, an analytics script,
+# a CDN), it has to be listed here or the browser blocks it silently.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; media-src 'self'; connect-src 'self' wss://rockpaperwizards.blipgaming.ca; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+
+# Never let an account response sit in a cache.
+/api/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex

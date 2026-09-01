@@ -47,6 +47,11 @@ html = html.replace(
   "<script>\n" + read("src/net.js") + "\n</script>"
 );
 
+// the favicon, so the single-file build has one too
+html = html.replace(/<link rel="icon" href="favicon\.svg"[^>]*>/,
+  '<link rel="icon" href="data:image/svg+xml;base64,' +
+  fs.readFileSync(path.join(root, "favicon.svg")).toString("base64") + '" type="image/svg+xml">');
+
 // the how-to-play pictures, where they exist — a slot whose file is missing
 // keeps its dashed placeholder, exactly as it does on the site
 let pics = 0;

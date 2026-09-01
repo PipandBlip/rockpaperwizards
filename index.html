@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rock, Paper, Wizards</title>
   <meta name="description" content="A top-down wizard duel where every spell has a weight.">
+  <!-- the multiplayer relay, read by src/game.js. A meta tag rather than an
+       inline <script> so the whole page can run under a strict CSP. -->
+  <meta name="rpw-relay" content="wss://rockpaperwizards.blipgaming.ca/ws">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=22">
+  <link rel="stylesheet" href="src/style.css?v=23">
 </head>
 <body>
 
@@ -148,11 +152,13 @@
       <!-- signing in: one form, two jobs -->
       <div class="panel room" id="authPanel" hidden>
         <h4 id="authTitle">Sign in</h4>
-        <form id="authForm" autocomplete="on">
-          <label class="field"><span>Wizard name</span>
-            <input id="authName" maxlength="14" autocomplete="username" spellcheck="false" placeholder="Merlin"></label>
-          <label class="field"><span>Password</span>
-            <input id="authPass" type="password" maxlength="200" autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"></label>
+        <form id="authForm" method="post" action="/api/login" autocomplete="on">
+          <label class="field" for="authName"><span>Wizard name</span></label>
+          <input class="fieldbox" id="authName" name="username" type="text" maxlength="14"
+                 autocomplete="username" spellcheck="false" autocapitalize="off" placeholder="Merlin">
+          <label class="field" for="authPass"><span>Password</span></label>
+          <input class="fieldbox" id="authPass" name="password" type="password" maxlength="200"
+                 autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
           <p class="note" id="authNote">Your wizard keeps its level and experience wherever you sign in.</p>
           <div class="room-actions">
             <button class="go" id="authGo" type="submit">Sign in</button>
@@ -194,8 +200,7 @@
               <b>Move, dash, and let the wand aim</b>
               <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move, <kbd>Shift</kbd> to dash. Your wizard will auto target enemies, but you can press <kbd>Tab</kbd> to cycle targets in multiplayer modes.</p>
             </div>
-            <figure class="shot"><img src="assets/help/move.png" alt="Moving and aiming" loading="lazy"
-                 onerror="this.closest('.shot').classList.add('empty')">
+            <figure class="shot"><img src="assets/help/move.png" alt="Moving and aiming" loading="lazy">
               <figcaption>Moving and aiming<span>assets/help/move.png</span></figcaption></figure>
           </li>
           <li>
@@ -203,8 +208,7 @@
               <b>Cast spells, tap or charge</b>
               <p>Cast spells with <kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd>. Tap it to cast a quick spell, or hold the spell to increase its power.</p>
             </div>
-            <figure class="shot"><img src="assets/help/cast.png" alt="Charging a spell" loading="lazy"
-                 onerror="this.closest('.shot').classList.add('empty')">
+            <figure class="shot"><img src="assets/help/cast.png" alt="Charging a spell" loading="lazy">
               <figcaption>Charging a spell<span>assets/help/cast.png</span></figcaption></figure>
           </li>
           <li>
@@ -219,8 +223,7 @@
                 <li><kbd>K</kbd> <em>Grasp</em> — hold to carry objects as a shield, or throw as a weapon.</li>
               </ul>
             </div>
-            <figure class="shot"><img src="assets/help/spells.png" alt="Two beams colliding" loading="lazy"
-                 onerror="this.closest('.shot').classList.add('empty')">
+            <figure class="shot"><img src="assets/help/spells.png" alt="Two beams colliding" loading="lazy">
               <figcaption>Two beams colliding<span>assets/help/spells.png</span></figcaption></figure>
           </li>
         </ol>
@@ -230,9 +233,8 @@
   </details>
 </div>
 
-  <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
-  <script src="src/account.js?v=22"></script>
-  <script src="src/game.js?v=22"></script>
-  <script src="src/net.js?v=22"></script>
+  <script src="src/account.js?v=23"></script>
+  <script src="src/game.js?v=23"></script>
+  <script src="src/net.js?v=23"></script>
 </body>
 </html>

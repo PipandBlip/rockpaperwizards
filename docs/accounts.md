@@ -56,6 +56,33 @@ What is in place keeps it from being *effortless*: one paid result every 12
 seconds, 420 experience per result, 7000 per day. Honest play never touches
 any of them. Worth revisiting if profiles ever gate something competitive.
 
+## Why the sign-in page is shaped the way it is
+
+A brand-new domain that suddenly grows a password field is exactly the profile
+phishing heuristics are tuned for, and Dashlane flagged blipgaming.ca on sight.
+Most of what decides that is domain reputation, which no amount of code fixes —
+but the page should not be adding to the suspicion, so:
+
+* **No inline JavaScript anywhere.** The relay URL is a `<meta name="rpw-relay">`
+  read by `src/game.js`, and the how-to-play picture slots bind their fallback
+  in script rather than with `onerror=`. That is what lets `_headers` serve
+  `script-src 'self'` with no `'unsafe-inline'`.
+* **`form-action 'self'`** in the CSP — the browser itself refuses to post these
+  credentials anywhere but this origin.
+* **An ordinary login form**: `method="post"`, a real same-origin `action`,
+  `name="username"` / `name="password"`, correct `autocomplete` values, and
+  `<label for>` tied to each input. A password field with no name and no form
+  action is a scraper pattern; this is not one.
+* A favicon, a page title and a description, so the site does not look
+  half-finished to a scanner.
+
+**If you add an inline `<script>` or an `onclick=` to index.html it will work
+locally and break silently on the live site** — the CSP blocks it. Put it in a
+`.js` file instead.
+
+Neither of these is a guarantee. If the warning persists, report it as a false
+positive to Dashlane; that is the only thing that moves a reputation score.
+
 ## Deploying
 
 The worker gained a **second Durable Object class**, so it needs its migration

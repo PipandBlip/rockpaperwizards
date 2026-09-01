@@ -178,12 +178,16 @@
   }
 
   /* the sign-in form */
-  .field{display:flex;align-items:center;gap:10px;width:100%;font-size:10px;
-    letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
-  .field span{flex:0 0 96px;text-align:right}
-  .field input{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:13px;letter-spacing:.06em;
-    color:var(--chalk);background:#0f0c1c;border:1px solid var(--edge);border-radius:2px;padding:7px 10px}
-  .field input:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
+  /* the sign-in form: label above its box, the way every other login form on
+     the web is laid out. Ordinary shapes matter here — a password field in an
+     unusual arrangement is one of the things phishing heuristics count. */
+  .field{display:block;width:100%;margin:0 0 5px;text-align:left;font-size:10px;
+    letter-spacing:.2em;text-transform:uppercase;color:var(--muted);cursor:pointer}
+  .fieldbox{display:block;width:100%;box-sizing:border-box;margin:0 0 11px;
+    font-family:var(--mono);font-size:13px;letter-spacing:.06em;color:var(--chalk);
+    background:#0f0c1c;border:1px solid var(--edge);border-radius:2px;padding:8px 10px}
+  .fieldbox:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
+  #authForm .note{text-align:left;margin:0 0 12px}
   #authForm{width:100%}
   .linky{background:none;border:0;padding:4px 0 0;cursor:pointer;color:var(--rive);
     font-family:var(--display);font-size:11px;letter-spacing:.06em;text-decoration:underline;
@@ -326,9 +330,9 @@
   .manual-body{display:block}
   .guide{margin:0 0 18px}
   .guide h3{margin-bottom:10px}
-  .steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;
+  .steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;align-items:start;
     grid-template-columns:repeat(auto-fit,minmax(280px,1fr));counter-reset:step}
-  .steps>li{display:flex;flex-direction:column;gap:9px;counter-increment:step;
+  .steps>li{display:flex;flex-direction:column;gap:10px;counter-increment:step;
     border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
   .steps .step-txt b{display:block;font-family:var(--display);font-size:13.5px;
     letter-spacing:.03em;color:var(--chalk);margin-bottom:4px;font-weight:600}
@@ -339,7 +343,7 @@
   .manual-body p{margin:0 0 6px}
   .manual-body p:last-child{margin-bottom:0}
   .keys{font-size:13px;color:var(--muted)}
-  .steps>li .shot{margin-top:auto}
+  .steps>li .shot{order:-1}
   .spells{list-style:none;margin:6px 0 0;padding:0}
   .spells li{margin:4px 0 0;padding-left:0;color:#c8bfe0;font-family:var(--prose);font-size:14px;line-height:1.5}
   .spells li kbd{min-width:18px;text-align:center}

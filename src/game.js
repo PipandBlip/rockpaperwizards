@@ -3003,7 +3003,15 @@ function hostNote(){
 // The game is static files; the relay that carries invite codes and input is a
 // separate service. Point this at it. Setting window.RPW_RELAY before src/net.js
 // loads overrides it, which is how local development talks to ws://localhost:8787.
-const RELAY = (typeof window !== "undefined" && window.RPW_RELAY) || "";
+// Read from a <meta> tag rather than an inline <script>, so the site can be
+// served under a strict Content-Security-Policy with no inline scripts at all
+// — a page carrying a password field is judged partly on exactly that.
+const RELAY = (function(){
+  if (typeof window === "undefined") return "";
+  if (window.RPW_RELAY) return window.RPW_RELAY;            // local dev override
+  const meta = document.querySelector && document.querySelector('meta[name="rpw-relay"]');
+  return (meta && meta.getAttribute("content")) || "";
+})();
 function hasNet(){ return !!(window.RPWNet && RELAY); }
 function inRoom(){ return !!(window.RPWNet && window.RPWNet.net.room); }
 function ensureConnected(){
@@ -3295,6 +3303,16 @@ function showEarned(out, prefix){
 
 el("resumeBtn").addEventListener("click", () => { if (phase === "paused") togglePause(); });
 el("menuBtn").addEventListener("click", toMenu);
+// The how-to-play picture slots fall back to a labelled placeholder when the
+// file is not there yet. Bound here rather than with an inline onerror= — the
+// page is served with a script-src that allows no inline JavaScript.
+if (document.querySelectorAll){
+  for (const img of document.querySelectorAll(".shot img")){
+    const mark = () => { const fig = img.closest(".shot"); if (fig) fig.classList.add("empty"); };
+    if (img.complete && img.naturalWidth === 0) mark();
+    img.addEventListener("error", mark);
+  }
+}
 el("codeInput").addEventListener("keydown", e => {
   if (e.key === "Enter"){ e.preventDefault(); el("joinGo").click(); }
 });
