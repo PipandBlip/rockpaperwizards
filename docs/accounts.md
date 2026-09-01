@@ -202,70 +202,54 @@ undo by accident:
 
 ## The cape
 
-Every wizard trails a cloak, drawn by `drawCape()` in `src/game.js`. It carries
-a row of diamonds down its spine: one plain mark to begin with, then one more
-in that jewel's own colour for every cloak jewel earned, so rank is legible at
-a glance across the arena. The cloth is longer at higher rank too — 39px at
-rank one, 59px with all thirteen. Past six marks they go two abreast; thirteen
-in single file merges into a stripe.
+Every wizard trails a cloak, drawn by `drawCape()` in `src/game.js`.
+
+**A wizard starting out wears plain cloth.** No braid, no stones — everything on
+the cape is earned. Each cloak jewel adds one diamond in its own colour; the
+first jewel brings a gold hem braid, the fourth a second braid, the eighth a
+band across the shoulders. The garment itself also grows: longer and a little
+wider with rank. So a beginner and an Archmage are told apart across the arena
+without reading a name.
 
 Where the rank comes from: the signed-in player reads their own profile, a bot
-wears its tier (Apprentice one, Adept two, Archmage three), and everyone else
+wears its tier (Apprentice none, Adept one, Archmage two), and everyone else
 reads `seatLevels`, filled from the roster the relay sends.
 
-### How a rank crosses the wire
+### How it moves, and why it cannot knot
 
-**Only a level travels — never the colours.** Cloak jewels are earned strictly
-in level order, so one integer lets every client rebuild the identical row of
-stones from the shared `GEMS` table. It rides in three places that already
-exist: `hello` when you connect, `create`/`join`/`quick` when you enter a room,
-and one `lv` field per player in `roster()`, which is what `room` and `start`
-already carry.
+**The state is one ANGLE per segment.** Not positions, not particles — angles.
+That choice is what makes it well behaved:
 
-**Nothing touches the per-frame input stream.** That stream is 60 messages a
-second per player and is the only traffic that could cost anyone a frame; it is
-untouched. A roster message grows by one small integer per player — at most six
-— and is sent on join, leave, ready and start. A player with a full cloak costs
-exactly as much bandwidth as a brand new one. A test asserts this directly:
-zero `in` messages carry a level.
+* A segment is exactly `seg` long by construction, so the cloth can never
+  stretch. There is nothing for a solver to fight over, and no iteration count
+  to tune.
+* The angle each segment may differ from the one ahead of it is **clamped**, at
+  `min(0.26 rad, seg / halfWidth)`. Cloth folds through itself exactly when the
+  spine turns tighter than the cloth is wide — so that turn is simply not
+  allowed. Self-intersection becomes arithmetically impossible rather than
+  merely unlikely.
 
-`rankFor(level)` is memoised, because six capes at sixty frames a second would
-otherwise rebuild the same twelve-row table 360 times a second.
+Each angle eases toward the one ahead of it with a little inertia, which is what
+makes the cape lag and then sweep round when the wizard turns. A slow travelling
+wave rides down the length so it is never quite still — and the wave is applied
+to the *target angle*, never to the point positions, because a wave applied to
+points can kink the curve while a wave applied to a target cannot. When the
+wizard is moving the rest direction leans into the direction of travel, so the
+cloak trails the path rather than the facing.
 
-**A client can claim any level.** It is cosmetic — nothing in the match reads
-it — so the prize for lying is a prettier cloak. The relay still clamps it to an
-integer in 1..999 (`cleanLevel`), because "banana" arriving in someone else's
-rendering code is a crash, not a cheat. An older client that sends no level is
-simply level one.
+The two hems are **derived** from the spine, never simulated.
 
-### How it moves
+An earlier version simulated the spine and both hems as three chains of free
+particles stitched together. It moved beautifully right up until it didn't: free
+hems can swing past one another, and once they cross, the outline folds through
+itself and the cloth turns inside out. No amount of damping fixes that, because
+nothing in that model forbids it. If you are tempted back toward free edges,
+that is the failure to expect.
 
-`updateCapes()` simulates **three** verlet chains — the spine and both hems —
-stitched to one another by distance constraints (along each chain, across the
-cloth, and one diagonal per side to stop it folding through itself).
-
-The first version ran a single chain and derived the outline from it at a fixed
-width. That is what made it move like a signboard on a stick: the silhouette
-could only ever be the same rigid fan, lagging slightly. Letting the edges be
-their own particles is what makes it read as cloth — they swing wide on a turn,
-the hem curls, and the two sides stop mirroring each other.
-
-The rest pose is barely enforced. Only the spine is drawn back towards hanging
-straight behind, and that pull falls off as `(1-k)²` to almost nothing by the
-hem, so the far end is governed by inertia and the stitching alone. A slow wind
-field sampled from **world position** — not from each node's index — keeps it
-alive when nobody is moving, and makes neighbouring capes ripple in sympathy
-like one breeze crossing the arena.
-
-Two things that took a second pass to get right:
-
-* **Four constraint passes, with the spine re-satisfied at the end of each.**
-  The cross and diagonal stitches pull against the spine; with a single pass per
-  link its segments varied by a third of their own length while the cape
-  whipped about.
-* **The hem braid is clipped to the cloth.** Free hems can fold across one
-  another, and an unclipped braid then draws a stray gold line out across the
-  cloak.
+`RPW.capeOf(seat)` returns the spine, both hems, the segment lengths and **the
+turn taken at each joint** — that last one is what lets a test assert the cap is
+holding. The suite thrashes a cape through every direction with dashes and
+checks that neither hem ever crosses itself.
 
 ### What it costs
 

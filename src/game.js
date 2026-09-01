@@ -2108,17 +2108,44 @@ function drawBeam(w){
    therefore whips it out sideways, and standing still leaves it breathing. */
 
 const CAPE_NODES = 8;
-const CAPE_SEG_MIN = 5.6, CAPE_SEG_MAX = 8.4;   // per-segment length, low rank to high
-const CAPE_MAX_MARKS = 13;                      // one plain mark plus twelve jewels
+const CAPE_SEG_MIN = 5.0, CAPE_SEG_MAX = 6.8;   // per-segment length, low rank to high
+const CAPE_GEMS_MAX = 12;                       // the whole cloak-jewel ladder
 
-// Half the cloth's width at node i: narrow at the collar, flaring to the hem.
-// A cloak seen from above is WIDER than the wizard wearing it.
-function capeHalf(i, last){
+/* The cape bends by a bounded amount per segment and no more. This is the
+   single rule that keeps it from tying itself in knots.
+
+   An earlier version simulated the two hems as free particles. It moved
+   beautifully right up until it didn't: free hems can swing past one another,
+   and once they cross, the outline folds through itself and the cloth turns
+   inside out. No amount of damping fixes that, because nothing in the model
+   forbids it.
+
+   Now there is only ONE chain — the spine — and the hems are derived from it.
+   The cloth folds when the spine turns tighter than it is wide, so the turn is
+   simply not allowed to get that tight: cap it below seg/halfWidth radians and
+   a self-intersection is arithmetically impossible. What is left is a smooth
+   curve that trails, which is what a cape does. */
+const CAPE_MAX_TURN = 0.26;                     // radians per segment, ~15 degrees
+
+/* Half the cloth's width at node i.
+
+   It starts at the SHOULDERS, not at a point. Tapering the collar down to a few
+   pixels made the thing read as a bowtie — two triangles pinched together
+   behind the wizard — rather than as a cloak hanging off them. A real cloak is
+   already shoulder-wide where it fastens and only flares from there.
+
+   `wide` scales the whole thing gently with rank, so a beginner's cloak is a
+   plainer, smaller garment as well as an unadorned one. */
+function capeHalf(i, last, wide){
   const k = i / last;
-  return (4.0 + k * 16.5) * (1 - Math.pow(k, 10) * 0.14);
+  const w = (8.6 + k * 10.4) * (1 - Math.pow(k, 10) * 0.16);
+  return w * (wide == null ? 1 : wide);
+}
+function capeWide(gems){
+  return 0.84 + 0.16 * Math.min(1, gems / CAPE_GEMS_MAX);
 }
 
-/* How many marks a wizard has earned, and in what colours.
+/* How many cloak jewels a wizard has earned, and in what colours.
 
    Only a LEVEL crosses the wire (see currentLevel() in src/net.js) — never the
    colours. Cloak jewels are earned strictly in level order, so every client
@@ -2137,155 +2164,115 @@ function rankFor(level){
   if (!r){
     const acct = ACCT();
     const earned = (acct && acct.track) ? acct.track(lv).rows.filter(x => x.earned) : [];
-    r = { n: 1 + earned.length, gems: earned.map(x => x.from) };
+    r = { n: earned.length, gems: earned.map(x => x.from) };
     rankCache.set(lv, r);
   }
   return r;
 }
-let myRank = { n: 1, gems: [] };
+let myRank = { n: 0, gems: [] };
 function refreshMarks(profile){
   rankCache.clear();
-  myRank = profile ? rankFor(profile.level) : { n: 1, gems: [] };
+  myRank = profile ? rankFor(profile.level) : { n: 0, gems: [] };
 }
+// A wizard starting out wears plain cloth. Everything on it is earned.
 function capeMarks(w){
   if (w === you) return myRank;                                        // your own profile
-  if (w.D) return { n: 1 + Math.max(0, DIFF.indexOf(w.D)), gems: [] }; // a bot wears its tier
+  if (w.D) return { n: Math.max(0, DIFF.indexOf(w.D)), gems: [] };     // a bot wears its tier
   return rankFor(seatLevels && seatLevels[w.seat]);                    // another player, from the roster
 }
-function capeSeg(marks){
-  const k = Math.min(1, (marks - 1) / (CAPE_MAX_MARKS - 1));
+function capeSeg(gems){
+  const k = Math.min(1, gems / CAPE_GEMS_MAX);
   return CAPE_SEG_MIN + (CAPE_SEG_MAX - CAPE_SEG_MIN) * k;
 }
 
-/* THREE chains, not one: the spine and both hems are each simulated, and they
-   are stitched to one another by distance constraints.
+/* The cloth itself: one angle per segment, and that is the whole state.
 
-   The first version ran a single chain and derived the outline from it at a
-   fixed width, which is why it moved like a signboard on a stick — the
-   silhouette could only ever be the same rigid fan, lagging a little. Letting
-   the edges be their own particles is what makes it read as cloth: they swing
-   wide on a turn, the hem curls, and the two sides stop mirroring each other.
+   Storing ANGLES rather than positions is what makes this well behaved. A
+   segment is exactly `seg` long by construction, so the cloth can never
+   stretch; and the angle each segment is allowed to differ from the one before
+   it is clamped, so the curve can never kink or double back. There is nothing
+   left for a solver to fight over.
 
-   The rest pose is barely enforced. Only the spine is drawn back towards
-   hanging straight behind, and even then the pull falls to almost nothing by
-   the hem, so the far end is governed by inertia and the stitching alone. A
-   slow wind field — sampled from world position, so neighbouring capes ripple
-   together like one breeze crossing the arena — keeps it alive when nobody is
-   moving. */
+   Each angle eases towards the one ahead of it with a little inertia, which is
+   what makes the cape lag and then whip round when the wizard turns, and a slow
+   travelling wave rides down the length so it is never quite still.
+
+   VIEW ONLY. No seeded RNG, nothing read back by the simulation, absent from
+   RPW.hash(); stepped from real elapsed time in pump(), not the fixed
+   simulation step. */
 function makeCape(w, seg){
-  const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
-  const px = -dy, py = dx;                       // across the shoulders
-  const last = CAPE_NODES - 1;
-  const node = (x, y) => ({ x, y, px: x, py: y });
-  const c = { seg, s: [], l: [], r: [], w: [], dl: [], dr: [] };
-  for (let i = 0; i < CAPE_NODES; i++){
-    const bx = w.x - dx * (3 + i * seg), by = w.y - dy * (3 + i * seg);
-    const h = capeHalf(i, last);
-    c.w.push(h);
-    c.s.push(node(bx, by));
-    c.l.push(node(bx + px * h, by + py * h));
-    c.r.push(node(bx - px * h, by - py * h));
-    // rest length along each hem, which is slightly longer than the spine
-    // because the cloth widens as it goes
-    if (i > 0){
-      const dw = c.w[i] - c.w[i - 1];
-      c.dl.push(Math.hypot(seg, dw));
-      c.dr.push(Math.hypot(seg, dw));
-    }
-  }
+  const back = w.facing + Math.PI;
+  const c = { seg, a: [], va: [], p: [] };
+  for (let i = 0; i < CAPE_NODES - 1; i++){ c.a.push(back); c.va.push(0); }
+  layCape(c, w.x - Math.cos(w.facing) * 3, w.y - Math.sin(w.facing) * 3);
   return c;
 }
-
-// One smooth, slowly-turning field. Sampled from world position rather than
-// from each node's index, so two wizards standing near each other ripple in
-// sympathy instead of each running its own private metronome.
-function capeWind(x, y, t){
-  return {
-    x: Math.sin(x * 0.031 + t * 1.35) + Math.cos(y * 0.047 - t * 0.9),
-    y: Math.cos(x * 0.043 - t * 1.05) + Math.sin(y * 0.029 + t * 1.6)
-  };
+// walk the angles out into points
+function layCape(c, ax, ay){
+  c.p.length = 0;
+  let x = ax, y = ay;
+  c.p.push({ x, y });
+  for (let i = 0; i < c.a.length; i++){
+    x += Math.cos(c.a[i]) * c.seg;
+    y += Math.sin(c.a[i]) * c.seg;
+    c.p.push({ x, y });
+  }
 }
-
+// shortest signed way round from a to b
+function angleTo(a, b){
+  let d = (b - a) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
 function updateCapes(dt){
   if (!(dt > 0)) return;
-  const step = Math.min(dt, 1 / 30);                 // one slow frame must not explode the cloth
+  const step = Math.min(dt, 1 / 30);
   const t = (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
-  const drag = Math.pow(0.90, step * 60);            // cloth keeps its motion longer than a stick does
   const last = CAPE_NODES - 1;
 
   for (const w of wizards){
-    const seg = capeSeg(capeMarks(w).n);
-    const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
-    const px = -dy, py = dx;
-    const ax = w.x - dx * 3, ay = w.y - dy * 3;      // pinned at the shoulders
+    const gemCount = capeMarks(w).n;
+    const seg = capeSeg(gemCount), wide = capeWide(gemCount);
+    const ax = w.x - Math.cos(w.facing) * 3, ay = w.y - Math.sin(w.facing) * 3;
 
     let c = w.cape;
-    // rebuild on a rank change, a fresh round, or any teleport — otherwise the
-    // cloth whips across the whole arena to catch up
-    if (!c || c.s.length !== CAPE_NODES || c.seg !== seg ||
-        Math.hypot(c.s[0].x - ax, c.s[0].y - ay) > 70){
-      c = w.cape = makeCape(w, seg);
+    if (!c || c.seg !== seg || c.a.length !== CAPE_NODES - 1) c = w.cape = makeCape(w, seg);
+
+    // Which way the cloth hangs when nothing is happening: straight out behind.
+    // If the wizard is moving, it trails the direction of travel instead — that
+    // is the difference between a cape and a weather vane.
+    const sp = Math.hypot(w.vx || 0, w.vy || 0);
+    let hang = w.facing + Math.PI;
+    if (sp > 12){
+      const drift = Math.atan2(-(w.vy || 0), -(w.vx || 0));
+      hang += angleTo(hang, drift) * Math.min(1, sp / 150) * 0.85;
     }
 
-    const speed = Math.min(1.6, Math.hypot(w.vx || 0, w.vy || 0) / 150);
-    const gust = (22 + speed * 34) * step;
+    const phase = w.seat * 1.7;
+    const gust = Math.min(1, sp / 170);
+    // how hard each segment is pulled into line with the one ahead of it, and
+    // how much of last frame's swing it keeps
+    const stiff = 26, damp = Math.pow(0.86, step * 60);
 
-    // ---- integrate every particle
-    for (const chain of [c.s, c.l, c.r]){
-      for (let i = 1; i < chain.length; i++){
-        const p = chain[i], k = i / last;
-        const vx = (p.x - p.px) * drag, vy = (p.y - p.py) * drag;
-        p.px = p.x; p.py = p.y;
-        const g = capeWind(p.x, p.y, t);
-        // the hem catches far more of the wind than the collar does
-        p.x += vx + g.x * gust * k;
-        p.y += vy + g.y * gust * k;
-      }
+    for (let i = 0; i < c.a.length; i++){
+      const k = i / Math.max(1, c.a.length - 1);
+      // the wave lives in the TARGET, never in the positions — a wave applied
+      // to points can kink the curve, a wave applied to a target cannot
+      const wave = Math.sin(t * 2.1 - i * 0.62 + phase) * (0.05 + 0.10 * k) * (0.5 + gust);
+      const lead = i === 0 ? hang : c.a[i - 1];
+      const want = lead + wave;
+
+      c.va[i] = (c.va[i] + angleTo(c.a[i], want) * stiff * step) * damp;
+      c.a[i] += c.va[i] * step;
+
+      // and the rule that makes folding impossible
+      const rel = angleTo(lead, c.a[i]);
+      const cap = Math.min(CAPE_MAX_TURN, seg / capeHalf(i + 1, last, wide));
+      if (rel > cap){ c.a[i] = lead + cap; c.va[i] *= 0.4; }
+      else if (rel < -cap){ c.a[i] = lead - cap; c.va[i] *= 0.4; }
     }
-
-    // ---- the spine remembers, faintly, that it would like to hang straight
-    //      back. Strong at the collar, all but gone by the hem.
-    for (let i = 1; i < CAPE_NODES; i++){
-      const k = i / last;
-      const hold = (1 - k) * (1 - k) * 0.34;
-      if (hold <= 0.001) continue;
-      const rx = ax - dx * (i * seg), ry = ay - dy * (i * seg);
-      c.s[i].x += (rx - c.s[i].x) * hold;
-      c.s[i].y += (ry - c.s[i].y) * hold;
-    }
-
-    // ---- pin the collar
-    c.s[0].x = ax; c.s[0].y = ay;
-    c.l[0].x = ax + px * c.w[0]; c.l[0].y = ay + py * c.w[0];
-    c.r[0].x = ax - px * c.w[0]; c.r[0].y = ay - py * c.w[0];
-
-    // ---- and stitch it all together. Several passes, because one pass leaves
-    //      the far end visibly stretchy.
-    const link = (a, b, want, aPinned) => {
-      let ux = b.x - a.x, uy = b.y - a.y;
-      const d = Math.hypot(ux, uy) || 1, f = (d - want) / d;
-      if (aPinned){ b.x -= ux * f; b.y -= uy * f; }
-      else { const h = f * 0.5; a.x += ux * h; a.y += uy * h; b.x -= ux * h; b.y -= uy * h; }
-    };
-    // Four passes, and the spine is re-satisfied at the end of each one. The
-    // cross and diagonal stitches pull against it, and with a single pass per
-    // link the spine ended up visibly stretchy — segments varying by a third
-    // of their own length while the cape whipped about.
-    for (let pass = 0; pass < 4; pass++){
-      for (let i = 1; i < CAPE_NODES; i++){
-        const pin = i === 1;                       // node 0 of every chain is fixed
-        link(c.s[i - 1], c.s[i], seg, pin);        // along the spine
-        link(c.l[i - 1], c.l[i], c.dl[i - 1], pin);// along each hem
-        link(c.r[i - 1], c.r[i], c.dr[i - 1], pin);
-        link(c.s[i], c.l[i], c.w[i], false);       // across the cloth
-        link(c.s[i], c.r[i], c.w[i], false);
-        // one diagonal each side keeps it from folding through itself
-        const diag = Math.hypot(seg, c.w[i]);
-        link(c.s[i - 1], c.l[i], diag, pin);
-        link(c.s[i - 1], c.r[i], diag, pin);
-      }
-      for (let i = 1; i < CAPE_NODES; i++) link(c.s[i - 1], c.s[i], seg, i === 1);
-    }
+    layCape(c, ax, ay);
   }
 }
 
@@ -2293,16 +2280,34 @@ function updateCapes(dt){
 // its own world-space shape instead of turning rigidly with the hat.
 function drawCape(w){
   const c = w.cape;
-  if (!c || !c.s || c.s.length < 3) return;
-  const { n: marks, gems } = capeMarks(w);
+  if (!c || !c.p || c.p.length < 3) return;
+  const { n: gemCount, gems } = capeMarks(w);
   const hem  = w.friendly ? "#1b2947" : "#331a24";   // deep, at the hem
   const back = w.friendly ? "#415c97" : "#7a4353";   // lit, at the shoulders
 
-  const rel = p => ({ x: p.x - w.x, y: p.y - w.y });
-  const P = c.s.map(rel), L = c.l.map(rel), R = c.r.map(rel);
+  const P = c.p.map(p => ({ x: p.x - w.x, y: p.y - w.y }));
   const last = P.length - 1;
 
-  // a smooth run through a list of points, midpoint to midpoint
+  // The hems are DERIVED from the spine, never simulated. Because the spine's
+  // curvature is capped below seg/width, offsetting it can never produce an
+  // edge that crosses itself.
+  const dirAt = i => {
+    const a = P[Math.max(0, i - 1)], b = P[Math.min(last, i + 1)];
+    let ux = b.x - a.x, uy = b.y - a.y;
+    const d = Math.hypot(ux, uy) || 1;
+    return { x: ux / d, y: uy / d };
+  };
+  const wide = capeWide(gemCount);
+  const edges = f => {
+    const L = [], R = [];
+    for (let i = 0; i <= last; i++){
+      const u = dirAt(i), h = capeHalf(i, last, wide) * f;
+      L.push({ x: P[i].x - u.y * h, y: P[i].y + u.x * h });
+      R.push({ x: P[i].x + u.y * h, y: P[i].y - u.x * h });
+    }
+    const u = dirAt(last), h = capeHalf(last, last, wide) * f;
+    return { L, R, bulge: { x: P[last].x + u.x * h * 0.9, y: P[last].y + u.y * h * 0.9 } };
+  };
   const runThrough = pts => {
     for (let i = 1; i < pts.length - 1; i++){
       const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
@@ -2310,47 +2315,29 @@ function drawCape(w){
     }
     ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
   };
-  // the edges at some fraction of the way out from the spine, so the braid
-  // follows the cloth the simulation actually produced
-  const inset = f => ({
-    L: P.map((s, i) => ({ x: s.x + (L[i].x - s.x) * f, y: s.y + (L[i].y - s.y) * f })),
-    R: P.map((s, i) => ({ x: s.x + (R[i].x - s.x) * f, y: s.y + (R[i].y - s.y) * f }))
-  });
-  // where the hem bulges past the last row of nodes
-  const bulgeOf = e => {
-    const mid = { x: (e.L[last].x + e.R[last].x) / 2, y: (e.L[last].y + e.R[last].y) / 2 };
-    let ux = mid.x - P[last - 1].x, uy = mid.y - P[last - 1].y;
-    const d = Math.hypot(ux, uy) || 1;
-    const wide = Math.hypot(e.L[last].x - e.R[last].x, e.L[last].y - e.R[last].y) * 0.5;
-    return { x: mid.x + (ux / d) * wide * 0.85, y: mid.y + (uy / d) * wide * 0.85 };
-  };
   const trace = (f = 1) => {
-    const e = inset(f), b = bulgeOf(e);
+    const e = edges(f);
     ctx.beginPath();
     ctx.moveTo(e.L[0].x, e.L[0].y);
     runThrough(e.L);
-    ctx.quadraticCurveTo(b.x, b.y, e.R[last].x, e.R[last].y);
+    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);
     runThrough(e.R.slice().reverse());
     ctx.closePath();
   };
-  // just the hem, for the braid: an open curve round the bottom
   const traceHem = f => {
-    const e = inset(f), b = bulgeOf(e), from = Math.max(1, last - 2);
+    const e = edges(f), from = Math.max(1, last - 3);
     ctx.beginPath();
     ctx.moveTo(e.L[from].x, e.L[from].y);
     runThrough(e.L.slice(from));
-    ctx.quadraticCurveTo(b.x, b.y, e.R[last].x, e.R[last].y);
+    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);
     runThrough(e.R.slice(from).reverse());
   };
 
   ctx.save();
-  // the shadow it throws on the floor
   ctx.globalAlpha = .32; ctx.fillStyle = "#04050b";
   ctx.save(); ctx.translate(1.6, 2.6); trace(); ctx.fill(); ctx.restore();
   ctx.globalAlpha = 1;
 
-  // Lit at the shoulders, deep at the hem — a gradient down the spine, not a
-  // flat fill. Flat, the cloak sank into the floor at this size.
   const tail = P[last];
   const grad = ctx.createLinearGradient(P[0].x, P[0].y, tail.x, tail.y);
   grad.addColorStop(0, back);
@@ -2360,55 +2347,64 @@ function drawCape(w){
   ctx.globalAlpha = .75; ctx.strokeStyle = w.tint; ctx.lineWidth = 1.2; ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // A fold running down the cloth, shaded from where the spine actually sits
-  // between its two hems. It is what sells the cloak as having a near side and
-  // a far side rather than being one flat cut-out.
+  // a soft fold down the middle, so it has a near side and a far side
   ctx.save(); trace(); ctx.clip();
-  ctx.globalAlpha = .3; ctx.strokeStyle = "#05070f"; ctx.lineWidth = 5;
+  ctx.globalAlpha = .26; ctx.strokeStyle = "#05070f"; ctx.lineWidth = 5;
   ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y); runThrough(P); ctx.stroke();
   ctx.restore();
   ctx.globalAlpha = 1;
 
-  // Two gold braids following the hem, clipped to the cloth. Now that the two
-  // hems are free particles they can fold across one another, and an unclipped
-  // braid then draws a stray line out across the cloak.
-  ctx.save(); trace(); ctx.clip();
-  ctx.strokeStyle = "#e8cfa0"; ctx.lineCap = "round";
-  ctx.globalAlpha = .85; ctx.lineWidth = 1.5; traceHem(0.9); ctx.stroke();
-  ctx.globalAlpha = .55; ctx.lineWidth = 0.9; traceHem(0.78); ctx.stroke();
-  ctx.restore();
-  ctx.globalAlpha = 1;
-
-  // The marks down the spine: one plain to begin with, then one per cloak
-  // jewel earned, in that jewel's own colour. Past six they go two abreast —
-  // thirteen in single file on a fifty-pixel cloak merges into a stripe.
-  const n = Math.min(marks, CAPE_MAX_MARKS);
-  const perRow = n > 6 ? 2 : 1;
-  const rows = Math.ceil(n / perRow);
-  for (let m = 0; m < n; m++){
-    const row = (m / perRow) | 0, col = m % perRow;
-    const alone = (row === rows - 1) && (n - row * perRow) === 1;
-    const f = rows === 1 ? 0.46 : 0.24 + (row / (rows - 1)) * 0.64;
-    const at = f * (P.length - 1);
-    const i0 = Math.min(P.length - 2, at | 0), fr = at - i0;
-    const a = P[i0], b = P[i0 + 1];
-    let ux = b.x - a.x, uy = b.y - a.y;
-    const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
-    // Across the cloth — and towards the hem the simulation actually produced,
-    // not a fixed offset from the spine, so the jewels ride the fabric as it
-    // billows instead of floating in formation above it.
-    const bx = a.x + (b.x - a.x) * fr, by = a.y + (b.y - a.y) * fr;
-    let x = bx, y = by;
-    if (perRow > 1 && !alone){
-      const side = col === 0 ? L : R;
-      const ex = side[i0].x + (side[i0 + 1].x - side[i0].x) * fr;
-      const ey = side[i0].y + (side[i0 + 1].y - side[i0].y) * fr;
-      x = bx + (ex - bx) * 0.32;
-      y = by + (ey - by) * 0.32;
+  /* Everything below is EARNED. A wizard starting out wears plain cloth: no
+     braid, no stones. The trim arrives with the first jewel, doubles once a few
+     are in, and gains a collar band late on, so rank reads at a glance even
+     from across the arena. */
+  if (gemCount > 0){
+    ctx.save(); trace(); ctx.clip();
+    ctx.strokeStyle = "#e8cfa0"; ctx.lineCap = "round";
+    ctx.globalAlpha = .8; ctx.lineWidth = 1.4; traceHem(0.9); ctx.stroke();
+    if (gemCount >= 4){
+      ctx.globalAlpha = .55; ctx.lineWidth = 0.9; traceHem(0.78); ctx.stroke();
     }
-    const size = 2.4 + f * 1.9;
-    const paint = m === 0 ? "#eef2ff" : (gems[m - 1] || "#eef2ff");
-    blitSprite(jewelSprite(paint, size), x, y, 1, Math.atan2(uy, ux));
+    if (gemCount >= 8){
+      // a band across the shoulders
+      const e = edges(1);
+      ctx.globalAlpha = .7; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(e.L[1].x, e.L[1].y);
+      ctx.quadraticCurveTo(P[1].x, P[1].y, e.R[1].x, e.R[1].y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // one stone per jewel earned, in that jewel's own colour, riding the cloth
+  const n = Math.min(gemCount, CAPE_GEMS_MAX);
+  if (n > 0){
+    const perRow = n > 6 ? 2 : 1;
+    const rows = Math.ceil(n / perRow);
+    const E = edges(1);
+    for (let m = 0; m < n; m++){
+      const row = (m / perRow) | 0, col = m % perRow;
+      const alone = (row === rows - 1) && (n - row * perRow) === 1;
+      const f = rows === 1 ? 0.5 : 0.28 + (row / (rows - 1)) * 0.58;
+      const at = f * last;
+      const i0 = Math.min(last - 1, at | 0), fr = at - i0;
+      const a = P[i0], b = P[i0 + 1];
+      let ux = b.x - a.x, uy = b.y - a.y;
+      const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
+      const bx = a.x + (b.x - a.x) * fr, by = a.y + (b.y - a.y) * fr;
+      let x = bx, y = by;
+      if (perRow > 1 && !alone){
+        const side = col === 0 ? E.L : E.R;
+        const ex = side[i0].x + (side[i0 + 1].x - side[i0].x) * fr;
+        const ey = side[i0].y + (side[i0 + 1].y - side[i0].y) * fr;
+        x = bx + (ex - bx) * 0.34;
+        y = by + (ey - by) * 0.34;
+      }
+      const size = 2.2 + f * 1.7;
+      blitSprite(jewelSprite(gems[m] || "#eef2ff", size), x, y, 1, Math.atan2(uy, ux));
+    }
   }
   ctx.restore();
 }
@@ -3987,28 +3983,42 @@ window.RPW = {
     newMatch(opts.seed);
   },
   seats: () => seats.map(x => ({ name: x.name, human: x.human })),
-  // test hook: the cape's cloth for a seat, as offsets from the wizard. The
-  // spine's distance off the straight line behind them says whether it sways;
-  // the two hems say whether it behaves like cloth rather than a signboard —
-  // if they always mirror each other, it is still rigid.
+  // test hook: the cape's cloth for a seat. The spine, the two derived hems,
+  // and the turn taken at each joint — that last one is what a test needs to
+  // assert the cloth cannot fold through itself.
   capeOf(seat){
     const w = wizards.find(x => x.seat === seat);
-    if (!w || !w.cape) return null;
+    if (!w || !w.cape || !w.cape.p) return null;
+    const c = w.cape, P = c.p, last = P.length - 1;
     const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
     const rel = p => {
       const ox = p.x - w.x, oy = p.y - w.y;
       return { x: ox, y: oy, lateral: ox * -dy + oy * dx };
     };
-    const c = w.cape;
+    const dirAt = i => {
+      const a = P[Math.max(0, i - 1)], b = P[Math.min(last, i + 1)];
+      let ux = b.x - a.x, uy = b.y - a.y;
+      const d = Math.hypot(ux, uy) || 1;
+      return { x: ux / d, y: uy / d };
+    };
+    const L = [], R = [];
+    for (let i = 0; i <= last; i++){
+      const u = dirAt(i), h = capeHalf(i, last, capeWide(capeMarks(w).n));
+      L.push(rel({ x: P[i].x - u.y * h, y: P[i].y + u.x * h }));
+      R.push(rel({ x: P[i].x + u.y * h, y: P[i].y - u.x * h }));
+    }
     return {
-      marks: capeMarks(w).n,
-      nodes: c.s.map(rel),
-      left: c.l.map(rel),
-      right: c.r.map(rel),
-      segs: c.s.slice(1).map((p, i) => Math.hypot(p.x - c.s[i].x, p.y - c.s[i].y)),
-      // how wide the cloth is at each row right now, versus how wide it rests
-      widths: c.s.map((p, i) => Math.hypot(c.l[i].x - c.r[i].x, c.l[i].y - c.r[i].y)),
-      restWidths: c.w.map(h => h * 2)
+      gems: capeMarks(w).n,
+      nodes: P.map(rel), left: L, right: R,
+      segs: P.slice(1).map((p, i) => Math.hypot(p.x - P[i].x, p.y - P[i].y)),
+      // the bend at each joint, in radians
+      turns: c.a.slice(1).map((a, i) => {
+        let d = (a - c.a[i]) % TAU;
+        if (d > Math.PI) d -= TAU;
+        if (d < -Math.PI) d += TAU;
+        return d;
+      }),
+      widths: P.map((p, i) => capeHalf(i, last, capeWide(capeMarks(w).n)) * 2)
     };
   },
   // test hook: land a finishing blow on a seat, so a rig can reach the end of
