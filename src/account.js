@@ -48,19 +48,25 @@
      where `earned` comes from. Ids are permanent; renaming one is fine,
      renumbering one is not. */
 
+  /* `shape` is the cut of the stone, and the ladder is ordered by how elaborate
+     it is: a plain bar to begin with, ending in an eight-pointed sigil. Both
+     the cape and the menu's jewel track draw from this one field, so the row of
+     shapes somebody is climbing towards is the row they will actually wear.
+     Shapes are drawn by jewelPath() in src/game.js — adding one here means
+     adding a case there. */
   const GEMS = [
-    { id: "quartz",   at: 2,  name: "Chipped Quartz", from: "#cfd6ea", to: "#8e9bbf" },
-    { id: "pearl",    at: 4,  name: "River Pearl",    from: "#f2f6ff", to: "#a9c4d8" },
-    { id: "amber",    at: 6,  name: "Amber Ember",    from: "#ffcf7a", to: "#c9701f" },
-    { id: "jade",     at: 9,  name: "Verdant Jade",   from: "#8ef0c0", to: "#1d8f6a" },
-    { id: "sapphire", at: 12, name: "Cobalt Heart",   from: "#8fd0ff", to: "#1f4fd8" },
-    { id: "garnet",   at: 15, name: "Crimson Garnet", from: "#ff9aa8", to: "#a5122c" },
-    { id: "amethyst", at: 18, name: "Deep Amethyst",  from: "#d7b0ff", to: "#6a2fd0" },
-    { id: "moonstone",at: 22, name: "Moonstone",      from: "#eaf2ff", to: "#6f7fb5" },
-    { id: "emberglass",at:26, name: "Emberglass",     from: "#ffb36b", to: "#8e1f5e" },
-    { id: "opal",     at: 30, name: "Starlit Opal",   from: "#b7ffe8", to: "#7b6cff" },
-    { id: "voidstone",at: 35, name: "Voidstone",      from: "#7a6cff", to: "#120a2c" },
-    { id: "archmage", at: 40, name: "Archmage's Heart", from: "#7cf2ff", to: "#a97cff" }
+    { id: "quartz",   at: 2,  name: "Chipped Quartz",   shape: "bar",      from: "#cfd6ea", to: "#8e9bbf" },
+    { id: "pearl",    at: 4,  name: "River Pearl",      shape: "dot",      from: "#f2f6ff", to: "#a9c4d8" },
+    { id: "amber",    at: 6,  name: "Amber Ember",      shape: "square",   from: "#ffcf7a", to: "#c9701f" },
+    { id: "jade",     at: 9,  name: "Verdant Jade",     shape: "pentagon", from: "#8ef0c0", to: "#1d8f6a" },
+    { id: "sapphire", at: 12, name: "Cobalt Heart",     shape: "triangle", from: "#8fd0ff", to: "#1f4fd8" },
+    { id: "garnet",   at: 15, name: "Crimson Garnet",   shape: "crescent", from: "#ff9aa8", to: "#a5122c" },
+    { id: "amethyst", at: 18, name: "Deep Amethyst",    shape: "hex",      from: "#d7b0ff", to: "#6a2fd0" },
+    { id: "moonstone",at: 22, name: "Moonstone",        shape: "ring",     from: "#eaf2ff", to: "#6f7fb5" },
+    { id: "emberglass",at:26, name: "Emberglass",       shape: "spark",    from: "#ffb36b", to: "#8e1f5e" },
+    { id: "opal",     at: 30, name: "Starlit Opal",     shape: "star",     from: "#b7ffe8", to: "#7b6cff" },
+    { id: "voidstone",at: 35, name: "Voidstone",        shape: "halo",     from: "#7a6cff", to: "#120a2c" },
+    { id: "archmage", at: 40, name: "Archmage's Heart", shape: "sigil",    from: "#7cf2ff", to: "#a97cff" }
   ];
 
   // The track as the menu draws it: every tier, whether it is earned, and

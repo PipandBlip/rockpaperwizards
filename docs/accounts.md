@@ -205,7 +205,7 @@ undo by accident:
 Every wizard trails a cloak, drawn by `drawCape()` in `src/game.js`.
 
 **A wizard starting out wears plain cloth.** No braid, no stones — everything on
-the cape is earned. Each cloak jewel adds one diamond in its own colour; the
+the cape is earned. Each cloak jewel adds one stone in its own colour; the
 first jewel brings a gold hem braid, the fourth a second braid, the eighth a
 band across the shoulders. The garment itself also grows: longer and a little
 wider with rank. So a beginner and an Archmage are told apart across the arena
@@ -237,6 +237,29 @@ a ceiling somebody has already been handed.
 truth, so retuning the ladder moves the bots with it and nothing here needs
 touching. (Bots previously carried a bare count and no colours at all, so their
 stones drew as placeholder white.)
+
+### The cut of a stone
+
+Every entry in `GEMS` names a `shape`, and the ladder is ordered by how
+elaborate the cut is — a plain bar at level two, an eight-pointed sigil at
+forty:
+
+    bar · dot · square · pentagon · triangle · crescent
+    hex · ring · spark · star · halo · sigil
+
+`jewelPath()` in `src/game.js` traces them and `paintJewel()` paints them. **The
+same function draws a stone on a cape and in the menu's jewel track**, so the
+row of cuts somebody is climbing towards is exactly the row they end up
+wearing — the ladder is a picture of the reward, not a decorative stand-in.
+(The track tiles are little canvases for that reason; they used to be one
+CSS-clipped pentagon repeated twelve times.)
+
+Adding a shape to `GEMS` means adding a case to `jewelPath` — that is the only
+coupling, and a shape with no case falls back to a diamond.
+
+A caution for anyone testing this: a shape's *glow* is much bigger than the
+shape, so comparing tile images at a low alpha threshold compares haloes and
+reports different cuts as identical. Threshold on solid pixels.
 
 ### How it moves, and why it cannot knot
 

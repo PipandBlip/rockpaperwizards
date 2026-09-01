@@ -1906,22 +1906,88 @@ function glowSprite(color, radius, blur, glowColor){
   }
   return cv;
 }
+/* The cut of a stone.
+
+   Each entry in the GEMS ladder (src/account.js) names a shape, and the ladder
+   is ordered so the cuts get more elaborate as you climb: a plain bar at level
+   two, an eight-pointed sigil at forty. The same function draws them on a cape
+   and in the menu's jewel track, so what somebody is climbing towards is
+   exactly what they will end up wearing.
+
+   Traced around the origin at radius `s`. A shape that reads as an outline
+   rather than a solid — the ring — says so by returning "stroke". */
+function poly(g, n, r, rot){
+  g.beginPath();
+  for (let i = 0; i < n; i++){
+    const a = rot + i * TAU / n;
+    g[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath();
+}
+function starPath(g, points, outer, inner, rot){
+  g.beginPath();
+  for (let i = 0; i < points * 2; i++){
+    const r = i % 2 ? inner : outer;
+    const a = rot + i * Math.PI / points;
+    g[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath();
+}
+function jewelPath(g, s, shape){
+  switch (shape){
+    case "bar":      g.beginPath(); g.rect(-s * 1.35, -s * 0.42, s * 2.7, s * 0.84); return "fill";
+    case "dot":      g.beginPath(); g.arc(0, 0, s * 0.86, 0, TAU); return "fill";
+    case "square":   g.beginPath(); g.rect(-s * 0.78, -s * 0.78, s * 1.56, s * 1.56); return "fill";
+    case "pentagon": poly(g, 5, s * 0.98, -Math.PI / 2); return "fill";
+    case "triangle": poly(g, 3, s * 1.05, 0); return "fill";
+    // a bite taken out of a disc — the one silhouette here that is unmistakable
+    // at four pixels across
+    case "crescent": g.beginPath();
+                     g.arc(0, 0, s * 0.95, Math.PI * 0.42, -Math.PI * 0.42);
+                     g.arc(s * 0.62, 0, s * 0.78, -Math.PI * 0.58, Math.PI * 0.58, true);
+                     g.closePath(); return "fill";
+    case "hex":      poly(g, 6, s * 0.95, 0); return "fill";
+    case "ring":     g.beginPath(); g.arc(0, 0, s * 0.72, 0, TAU); return "stroke";
+    case "spark":    starPath(g, 4, s * 1.15, s * 0.34, 0); return "fill";
+    case "star":     starPath(g, 6, s * 1.1, s * 0.46, 0); return "fill";
+    case "halo":     g.beginPath(); g.arc(0, 0, s * 0.5, 0, TAU); return "fill+ring";
+    case "sigil":    starPath(g, 8, s * 1.2, s * 0.44, 0); return "fill+dot";
+    default:         poly(g, 6, s * 0.95, 0); return "fill";
+  }
+}
+// Paint one jewel at the origin. Used for the cape sprites and, at a larger
+// size, for the tiles in the menu's jewel track.
+function paintJewel(g, size, color, shape){
+  const how = jewelPath(g, size, shape);
+  g.shadowColor = color; g.shadowBlur = Math.max(4, size * 1.6);
+  if (how === "stroke"){
+    g.strokeStyle = color; g.lineWidth = Math.max(1, size * 0.42);
+    g.lineCap = "round"; g.globalAlpha = .95; g.stroke();
+    return;
+  }
+  g.fillStyle = color; g.globalAlpha = .95; g.fill();
+  g.shadowBlur = 0;
+  g.globalAlpha = .8; g.strokeStyle = "#0a0d18"; g.lineWidth = Math.max(.6, size * 0.18);
+  g.stroke();
+  if (how === "fill+ring"){                       // a stone held inside a ring
+    g.globalAlpha = .9; g.strokeStyle = color;
+    g.lineWidth = Math.max(.7, size * 0.2);
+    g.shadowColor = color; g.shadowBlur = size;
+    g.beginPath(); g.arc(0, 0, size * 1.12, 0, TAU); g.stroke();
+  } else if (how === "fill+dot"){                 // a bright heart to the sigil
+    g.globalAlpha = 1; g.fillStyle = "#ffffff"; g.shadowBlur = 0;
+    g.beginPath(); g.arc(0, 0, size * 0.26, 0, TAU); g.fill();
+  }
+}
 // one cloak jewel, glow and outline baked in; blitted rotated to the cloth
-function jewelSprite(color, size){
+function jewelSprite(color, size, shape){
   const sz = Math.max(1, Math.round(size * 2) / 2);
-  const key = color + "|" + sz;
+  const key = color + "|" + sz + "|" + shape;
   let cv = jewelCache.get(key);
   if (!cv){
-    cv = makeSprite(Math.ceil((sz + 7) * 2), (g, c) => {
+    cv = makeSprite(Math.ceil((sz * 1.6 + 8) * 2), (g, c) => {
       g.translate(c, c);
-      g.beginPath();
-      g.moveTo(sz, 0); g.lineTo(0, sz); g.lineTo(-sz, 0); g.lineTo(0, -sz);
-      g.closePath();
-      g.fillStyle = color; g.globalAlpha = .95;
-      g.shadowColor = color; g.shadowBlur = 6;
-      g.fill();
-      g.globalAlpha = .8; g.shadowBlur = 0;
-      g.strokeStyle = "#0a0d18"; g.lineWidth = .7; g.stroke();
+      paintJewel(g, sz, color, shape);
     });
     jewelCache.set(key, cv);
   }
@@ -2089,11 +2155,11 @@ function drawBeam(w){
 }
 
 /* ------------------------------------------------------- the cape
-   A rank worn on your back. Every wizard trails a short cloak with a row of
-   diamonds down its spine: one to begin with, and one more for every cloak
-   jewel earned (the same ladder as GEMS in src/account.js), so a wizard who
-   has been at it a while is visibly heavier dressed. The cloth is longer at
-   higher rank too.
+   A rank worn on your back. A wizard starting out trails plain cloth; every
+   cloak jewel earned (the same ladder as GEMS in src/account.js) adds one
+   stone in its own colour and its own cut, so a wizard who has been at it a
+   while is visibly heavier dressed. The cloth is longer and wider at higher
+   rank too.
 
    VIEW ONLY. Nothing here touches the seeded RNG, reads back into the
    simulation, or appears in RPW.hash() — two clients can disagree about the
@@ -2164,7 +2230,7 @@ function rankFor(level){
   if (!r){
     const acct = ACCT();
     const earned = (acct && acct.track) ? acct.track(lv).rows.filter(x => x.earned) : [];
-    r = { n: earned.length, gems: earned.map(x => x.from) };
+    r = { n: earned.length, gems: earned.map(x => ({ c: x.from, s: x.shape })) };
     rankCache.set(lv, r);
   }
   return r;
@@ -2407,7 +2473,7 @@ function drawCape(w){
     for (let m = 0; m < n; m++){
       const row = (m / perRow) | 0, col = m % perRow;
       const alone = (row === rows - 1) && (n - row * perRow) === 1;
-      const f = rows === 1 ? 0.5 : 0.28 + (row / (rows - 1)) * 0.58;
+      const f = rows === 1 ? 0.5 : 0.22 + (row / (rows - 1)) * 0.70;
       const at = f * last;
       const i0 = Math.min(last - 1, at | 0), fr = at - i0;
       const a = P[i0], b = P[i0 + 1];
@@ -2422,8 +2488,9 @@ function drawCape(w){
         x = bx + (ex - bx) * 0.34;
         y = by + (ey - by) * 0.34;
       }
-      const size = 2.2 + f * 1.7;
-      blitSprite(jewelSprite(gems[m] || "#eef2ff", size), x, y, 1, Math.atan2(uy, ux));
+      const size = (2.6 + f * 1.9) * (rows > 4 ? 0.86 : 1);
+      const stone = gems[m] || { c: "#eef2ff", s: "dot" };
+      blitSprite(jewelSprite(stone.c, size, stone.s), x, y, 1, Math.atan2(uy, ux));
     }
   }
   ctx.restore();
@@ -3724,12 +3791,23 @@ function renderPass(profile){
     li.className = "tier" + (!profile ? "" : r.earned ? " earned" : r.next ? " next" : "");
     li.title = r.name + " — level " + r.at;
     li.style.setProperty("--g1", r.from);
-    li.style.setProperty("--g2", r.to);
 
     const lv = document.createElement("span");
     lv.className = "lv"; lv.textContent = "Lv " + r.at;
-    const jewel = document.createElement("span");
-    jewel.className = "jewel";
+    // The tile shows the stone's actual cut, drawn by the same code that puts
+    // it on a cape — so the ladder is a picture of what you will be wearing,
+    // not a decorative stand-in. CSS handles lit versus locked.
+    let jewel;
+    if (document.createElement){
+      jewel = document.createElement("canvas");
+      jewel.className = "jewel";
+      jewel.width = jewel.height = 30;
+      const g = jewel.getContext && jewel.getContext("2d");
+      if (g){ g.translate(15, 15); paintJewel(g, 8.5, r.from, r.shape); }
+    } else {
+      jewel = document.createElement("span");
+      jewel.className = "jewel";
+    }
     const nm = document.createElement("span");
     nm.className = "nm"; nm.textContent = r.name;
 

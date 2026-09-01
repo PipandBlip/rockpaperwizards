@@ -204,16 +204,14 @@
   .tier .lv{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:#5d5580}
   .tier .nm{font-family:var(--prose);font-size:9.5px;line-height:1.25;color:#5d5580;
     display:flex;align-items:center;flex:1 1 auto}
-  /* the jewel itself: a cut stone, dark until it is earned */
-  .tier .jewel{width:26px;height:26px;border-radius:4px;
-    background:linear-gradient(150deg,var(--g1),var(--g2));
-    clip-path:polygon(50% 0,100% 33%,82% 100%,18% 100%,0 33%);
-    filter:grayscale(1) brightness(.34);position:relative}
-  .tier .jewel::after{content:"";position:absolute;inset:14% 46% 52% 20%;border-radius:2px;
-    background:rgba(255,255,255,.5);transform:rotate(-18deg)}
+  /* The stone itself, drawn on a little canvas by paintJewel() in src/game.js
+     so the ladder shows each cut exactly as it appears on a cape. Dark until
+     it is earned. */
+  .tier .jewel{display:block;width:30px;height:30px;
+    filter:grayscale(1) brightness(.36)}
 
   .tier.earned{border-color:#3a3358;background:rgba(255,255,255,.03)}
-  .tier.earned .jewel{filter:none;box-shadow:0 0 12px -2px var(--g1)}
+  .tier.earned .jewel{filter:none}
   .tier.earned .lv{color:var(--spark)}
   .tier.earned .nm{color:var(--chalk)}
   .tier.next{border-color:var(--spark);box-shadow:0 0 16px -8px var(--spark)}
