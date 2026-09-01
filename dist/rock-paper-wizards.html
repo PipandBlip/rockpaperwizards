@@ -293,6 +293,51 @@
   .manual-body ul{margin:0;padding-left:17px}
   .manual-body li{margin-bottom:5px}
   .manual-body em{color:var(--spark);font-style:normal;font-family:var(--mono);font-size:12.5px}
+  /* The guide reads top to bottom: three steps, then the ideas, then the fine
+     print. Each picture slot shows the path to drop a file at until one exists. */
+  .manual-body{display:block}
+  .guide{margin:0 0 18px}
+  .guide h3{margin-bottom:10px}
+  .steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));counter-reset:step}
+  .steps>li{display:flex;flex-direction:column;gap:9px;counter-increment:step;
+    border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
+  .steps .step-txt b, .card-x b{display:block;font-family:var(--display);font-size:13.5px;
+    letter-spacing:.03em;color:var(--chalk);margin-bottom:4px;font-weight:600}
+  .steps .step-txt b::before{content:counter(step);display:inline-flex;align-items:center;
+    justify-content:center;width:19px;height:19px;margin-right:8px;border-radius:50%;
+    border:1px solid var(--spark);color:var(--spark);font-family:var(--mono);font-size:11px;
+    vertical-align:2px}
+  .manual-body p{margin:0 0 6px}
+  .manual-body p:last-child{margin-bottom:0}
+  .keys{font-size:13px;color:var(--muted)}
+  .steps>li .shot{margin-top:auto}
+  .cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .card-x{border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
+  .card-x .shot{margin-bottom:10px}
+  /* a picture slot: the image when there is one, a labelled space when there is not */
+  .shot{margin:0;border-radius:3px;overflow:hidden;border:1px solid var(--edge);background:#0a0714}
+  .shot img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+  .shot figcaption{display:none}
+  .shot.empty{border-style:dashed;border-color:#3a3358;background:
+    repeating-linear-gradient(45deg,rgba(255,255,255,.012) 0 8px,transparent 8px 16px),#0a0714}
+  .shot.empty img{display:none}
+  .shot.empty figcaption{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:5px;aspect-ratio:16/9;text-align:center;padding:8px;
+    font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#6b628c}
+  .shot.empty figcaption span{font-family:var(--mono);font-size:10px;letter-spacing:.02em;
+    text-transform:none;color:#4a4368}
+  details.more{border:1px solid var(--edge);border-radius:3px;background:rgba(0,0,0,.22)}
+  details.more>summary{cursor:pointer;list-style:none;padding:9px 12px;font-family:var(--display);
+    font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+  details.more>summary::-webkit-details-marker{display:none}
+  details.more>summary::before{content:"\25B8\00a0\00a0";color:var(--rive)}
+  details.more[open]>summary::before{content:"\25BE\00a0\00a0"}
+  details.more>summary:hover{color:var(--chalk)}
+  .more-body{padding:2px 13px 13px;display:grid;gap:14px;
+    grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+  .more-body h4{font-family:var(--display);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--chalk);margin:0 0 4px;font-weight:600}
   kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--edge);border-bottom-width:2px;border-radius:3px;padding:1px 5px;background:#15112a;color:var(--chalk)}
 
   @media (max-width:720px){
@@ -440,45 +485,95 @@
 
   <div class="book" id="book"></div>
 
+  <!-- How to play. Three steps to start, then the ideas that make it click, then
+       the fine print folded away. Each step has a picture slot: drop a PNG or GIF
+       at the path shown in the empty slot and it appears automatically. -->
   <details class="manual" open>
     <summary>How to play</summary>
     <div class="manual-body">
-      <div>
-        <h3>Controls</h3>
-        <ul>
-          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move — your wand aims itself</li>
-          <li><kbd>Tab</kbd> switch target · <kbd>Shift</kbd> dash, every 3 seconds</li>
-          <li><kbd>Y</kbd> Spark · <kbd>U</kbd> Rive · <kbd>I</kbd> Hexstone</li>
-          <li><kbd>H</kbd> Ward · <kbd>J</kbd> Beam · <kbd>K</kbd> Grasp</li>
-          <li>Hold a spell key to charge, release to cast — Rive throws one missile at a tap and five at full charge</li>
-          <li><kbd>P</kbd> pause · <kbd>R</kbd> restart · <kbd>M</kbd> mute</li>
-        </ul>
-      </div>
-      <div>
-        <h3>The one rule</h3>
-        <p>Every spell carries a <em>weight</em>. When two spells collide the heavier one wins and flies on, lighter by whatever it just ate. Holding a key adds weight.</p>
-        <p>That is the whole game: read what is coming, and answer it with something heavy enough.</p>
-        <p>A counter that actually stops something pays you back: mana on the spot, then three seconds of gold corona and doubled regeneration. Get out-weighed and you get nothing at all.</p>
-      </div>
-      <div>
-        <h3>Three exceptions</h3>
-        <ul>
-          <li><em>Beam</em> — an ultimate. 18 mana to ignite, a second to gather, 31 a second to hold, and a scorched wand for a moment after you let go. It eats everything it touches, Wards included — a wall in its path shatters and buys the wizard behind it nothing.</li>
-          <li><em>The orb</em> — when two beams meet, the sphere between them slides toward whoever has less mana. Let it reach you and it hurts far worse than the beam. Stop resisting and it rides the winner's beam onward and detonates on whatever it hits.</li>
-          <li><em>Ward</em> — light cover with a health bar, not a shield. Charging it decides how much it can take (20 up to 60), and it thins the whole time it stands, so a wall raised early is half gone by the time the shot arrives. It is rated for <em>Spark</em> and <em>Rive</em> only: it eats as much of one as it still holds, and the shot that empties it shatters it and spills the rest onto you. A Hexstone, a beam or a hurled crate is more than it was built for — those go straight through and take the wall with them. It guards the arc you are facing, and nothing behind you.</li>
-          <li><em>Grasp</em> — hold to lift furniture as a shield, release to throw it.</li>
-        </ul>
-      </div>
-      <div>
-        <h3>Modes</h3>
-        <p>Three tiers of rival — Apprentice is easy, Adept medium, Archmage hard — then <em>Escalation</em>: Apprentice, Adept, Archmage one at a time, then pairs working up the tiers, then threes. A wave only arrives once you have cleared the last one.</p>
-        <p><em>Multiplayer</em> puts up to six wizards in a free-for-all. Host a duel and you get a four-letter invite code; anyone who pastes it takes a seat. Whatever is still empty when you start is filled with bots at the level you picked.</p>
-      </div>
-      <div>
-        <h3>The room</h3>
-        <p>Stone and pillars never break. Everything wooden does — and a beam vaporises furniture in well under a second. Lattice screens stop bodies and beams but spells fly straight through the gaps, so they are a firing position, not a hiding place. Chairs and stools are not cover at all, they are ammunition.</p>
-        <p>First to two rounds takes the duel.</p>
-      </div>
+
+      <section class="guide">
+        <h3>Start here</h3>
+        <ol class="steps">
+          <li>
+            <div class="step-txt">
+              <b>Move, and let the wand aim</b>
+              <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move. Your wand points itself at whoever you are targeting — <kbd>Tab</kbd> switches target, <kbd>Shift</kbd> dashes every three seconds.</p>
+            </div>
+            <figure class="shot"><img src="assets/help/move.png" alt="Moving and aiming" loading="lazy"
+                 onerror="this.closest('.shot').classList.add('empty')">
+              <figcaption>Moving and aiming<span>assets/help/move.png</span></figcaption></figure>
+          </li>
+          <li>
+            <div class="step-txt">
+              <b>Tap to cast, hold to charge</b>
+              <p>Tap a spell key for a quick one; hold it to charge and release to let go. Charging costs more mana and buys more weight.</p>
+              <p class="keys"><kbd>Y</kbd> Spark · <kbd>U</kbd> Rive · <kbd>I</kbd> Hexstone · <kbd>H</kbd> Ward · <kbd>J</kbd> Beam · <kbd>K</kbd> Grasp</p>
+            </div>
+            <figure class="shot"><img src="assets/help/cast.png" alt="Charging a spell" loading="lazy"
+                 onerror="this.closest('.shot').classList.add('empty')">
+              <figcaption>Charging a spell<span>assets/help/cast.png</span></figcaption></figure>
+          </li>
+          <li>
+            <div class="step-txt">
+              <b>Answer with something heavier</b>
+              <p>Every spell carries a <em>weight</em>. When two collide the heavier one wins and flies on, lighter by whatever it just ate. That is the whole game — read what is coming and out-weigh it.</p>
+            </div>
+            <figure class="shot"><img src="assets/help/weight.png" alt="Two spells colliding" loading="lazy"
+                 onerror="this.closest('.shot').classList.add('empty')">
+              <figcaption>Two spells colliding<span>assets/help/weight.png</span></figcaption></figure>
+          </li>
+        </ol>
+      </section>
+
+      <section class="guide">
+        <h3>Then it clicks</h3>
+        <div class="cards">
+          <div class="card-x">
+            <figure class="shot"><img src="assets/help/counter.png" alt="A counter paying out" loading="lazy"
+                 onerror="this.closest('.shot').classList.add('empty')">
+              <figcaption>A counter paying out<span>assets/help/counter.png</span></figcaption></figure>
+            <b>Counters pay</b>
+            <p>Stop a spell and you get mana back on the spot, then three seconds of gold corona and doubled regeneration. Get out-weighed and you get nothing.</p>
+          </div>
+          <div class="card-x">
+            <figure class="shot"><img src="assets/help/ward.png" alt="A ward taking a hit" loading="lazy"
+                 onerror="this.closest('.shot').classList.add('empty')">
+              <figcaption>A ward taking a hit<span>assets/help/ward.png</span></figcaption></figure>
+            <b>Ward is cover, not a shield</b>
+            <p>It has a health bar set by how long you charged it, and it thins the whole time it stands. It stops <em>Spark</em> and <em>Rive</em> only — a Hexstone, a beam or a thrown crate goes straight through and takes it with them. It guards the way you face, and nothing behind you.</p>
+          </div>
+          <div class="card-x">
+            <figure class="shot"><img src="assets/help/beam.png" alt="Two beams and the orb" loading="lazy"
+                 onerror="this.closest('.shot').classList.add('empty')">
+              <figcaption>Two beams and the orb<span>assets/help/beam.png</span></figcaption></figure>
+            <b>The beam is the ultimate</b>
+            <p>Slow to light and expensive to hold, and it eats everything it touches. When two beams meet, the orb between them slides toward whoever has less mana — let it reach you and it hurts far worse than the beam.</p>
+          </div>
+        </div>
+      </section>
+
+      <details class="more">
+        <summary>The fine print</summary>
+        <div class="more-body">
+          <div>
+            <h4>The room</h4>
+            <p>Stone and pillars never break. Everything wooden does — and a beam vaporises furniture in well under a second. Lattice screens stop bodies and beams but spells fly straight through the gaps, so they are a firing position, not a hiding place. Chairs and stools are not cover at all, they are ammunition.</p>
+            <p><em>Grasp</em> holds furniture in front of you as a shield; release to throw it.</p>
+          </div>
+          <div>
+            <h4>Modes</h4>
+            <p>Three tiers of rival — Apprentice easy, Adept medium, Archmage hard — then <em>Escalation</em>: one at a time, then pairs working up the tiers, then threes. A wave only arrives once you have cleared the last.</p>
+            <p><em>Multiplayer</em> puts up to six wizards in a free-for-all. Host a duel for a four-letter invite code; anyone who pastes it takes a seat, and bots fill whatever is left.</p>
+          </div>
+          <div>
+            <h4>Odds and ends</h4>
+            <p>Rive throws one missile at a tap and five at full charge. A beam costs 18 mana to ignite, 31 a second to hold, and leaves the wand scorched for a moment after you let go.</p>
+            <p><kbd>P</kbd> pause · <kbd>R</kbd> restart. First to two rounds takes the duel.</p>
+          </div>
+        </div>
+      </details>
+
     </div>
   </details>
 </div>

@@ -282,6 +282,51 @@
   .manual-body ul{margin:0;padding-left:17px}
   .manual-body li{margin-bottom:5px}
   .manual-body em{color:var(--spark);font-style:normal;font-family:var(--mono);font-size:12.5px}
+  /* The guide reads top to bottom: three steps, then the ideas, then the fine
+     print. Each picture slot shows the path to drop a file at until one exists. */
+  .manual-body{display:block}
+  .guide{margin:0 0 18px}
+  .guide h3{margin-bottom:10px}
+  .steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));counter-reset:step}
+  .steps>li{display:flex;flex-direction:column;gap:9px;counter-increment:step;
+    border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
+  .steps .step-txt b, .card-x b{display:block;font-family:var(--display);font-size:13.5px;
+    letter-spacing:.03em;color:var(--chalk);margin-bottom:4px;font-weight:600}
+  .steps .step-txt b::before{content:counter(step);display:inline-flex;align-items:center;
+    justify-content:center;width:19px;height:19px;margin-right:8px;border-radius:50%;
+    border:1px solid var(--spark);color:var(--spark);font-family:var(--mono);font-size:11px;
+    vertical-align:2px}
+  .manual-body p{margin:0 0 6px}
+  .manual-body p:last-child{margin-bottom:0}
+  .keys{font-size:13px;color:var(--muted)}
+  .steps>li .shot{margin-top:auto}
+  .cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .card-x{border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
+  .card-x .shot{margin-bottom:10px}
+  /* a picture slot: the image when there is one, a labelled space when there is not */
+  .shot{margin:0;border-radius:3px;overflow:hidden;border:1px solid var(--edge);background:#0a0714}
+  .shot img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+  .shot figcaption{display:none}
+  .shot.empty{border-style:dashed;border-color:#3a3358;background:
+    repeating-linear-gradient(45deg,rgba(255,255,255,.012) 0 8px,transparent 8px 16px),#0a0714}
+  .shot.empty img{display:none}
+  .shot.empty figcaption{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:5px;aspect-ratio:16/9;text-align:center;padding:8px;
+    font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#6b628c}
+  .shot.empty figcaption span{font-family:var(--mono);font-size:10px;letter-spacing:.02em;
+    text-transform:none;color:#4a4368}
+  details.more{border:1px solid var(--edge);border-radius:3px;background:rgba(0,0,0,.22)}
+  details.more>summary{cursor:pointer;list-style:none;padding:9px 12px;font-family:var(--display);
+    font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+  details.more>summary::-webkit-details-marker{display:none}
+  details.more>summary::before{content:"\25B8\00a0\00a0";color:var(--rive)}
+  details.more[open]>summary::before{content:"\25BE\00a0\00a0"}
+  details.more>summary:hover{color:var(--chalk)}
+  .more-body{padding:2px 13px 13px;display:grid;gap:14px;
+    grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+  .more-body h4{font-family:var(--display);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--chalk);margin:0 0 4px;font-weight:600}
   kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--edge);border-bottom-width:2px;border-radius:3px;padding:1px 5px;background:#15112a;color:var(--chalk)}
 
   @media (max-width:720px){
