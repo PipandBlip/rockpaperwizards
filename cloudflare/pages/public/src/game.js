@@ -2190,7 +2190,7 @@ SPELLS.forEach((s, i) => {
     ? Array.from({length: s.weight + s.chargeW}, (_,k) => `<i class="${k < s.weight ? "" : "hollow"}"></i>`).join("")
     : s.id === "beam" ? `<i></i><i></i><i></i><i></i>` : `<i></i><i></i><i></i>`;
   c.innerHTML =
-    `<div style="display:flex;align-items:center;gap:6px"><span class="k">${s.key}</span><span class="n">${s.name}</span></div>
+    `<div class="ttl"><span class="k">${s.key}</span><span class="n">${s.name}</span></div>
      <div class="wt">${dots}</div>
      <div class="m"><span>${s.id === "beam" ? "31/s" : s.cost}</span><span>${
         s.id==="ward" ? "spark\u00b7rive" : s.id==="beam" ? "beam" : s.id==="grasp" ? "throw" : s.id==="rive" ? "1\u20135 shots" : "wt " + s.weight}</span></div>`;
@@ -2201,7 +2201,7 @@ const dashCard = document.createElement("div");
 dashCard.className = "card";
 dashCard.style.setProperty("--c", "#cfc8ff");
 dashCard.innerHTML =
-  '<div style="display:flex;align-items:center;gap:6px"><span class="k">\u21E7</span><span class="n">Dash</span></div>' +
+  '<div class="ttl"><span class="k">\u21E7</span><span class="n">Dash</span></div>' +
   '<div class="wt"><i></i><i class="hollow"></i><i class="hollow"></i></div>' +
   '<div class="m"><span>free</span><span>3s</span></div>';
 book.appendChild(dashCard);
@@ -2769,18 +2769,24 @@ function renderStats(){
   const best = rows[0];
   const rowsHTML = rows.map(w =>
     '<tr' + (w === best ? ' class="best"' : '') + '>' +
-      '<td class="who"><i style="--c:' + w.tint + '"></i>' + esc(w.name) + (w === you ? ' <em>you</em>' : '') + '</td>' +
+      '<td class="who"><i></i>' + esc(w.name) + (w === you ? ' <em>you</em>' : '') + '</td>' +
       '<td>' + w.kills + '</td>' +
       '<td>' + w.deaths + '</td>' +
       '<td>' + Math.round(w.dmg) + '</td>' +
       '<td>' + w.counters + '</td>' +
     '</tr>').join("");
+  // NOTE: each wizard's colour is painted below, through the CSSOM. It cannot
+  // ride along as a style="" attribute — the site's CSP refuses inline styles.
   box.innerHTML =
     '<table class="statline">' +
       '<caption>Match report</caption>' +
       '<thead><tr><th>Wizard</th><th>Kills</th><th>Deaths</th><th>Dmg dealt</th><th>Counters</th></tr></thead>' +
       '<tbody>' + rowsHTML + '</tbody>' +
     '</table>';
+  if (box.querySelectorAll){
+    const dots = box.querySelectorAll("td.who i");
+    rows.forEach((w, i) => { if (dots[i]) dots[i].style.setProperty("--c", w.tint); });
+  }
   box.hidden = false;
   scheduleFit();
 }
@@ -2887,8 +2893,8 @@ const PANEL = {
   host: el("hostPanel"), join: el("joinPanel"), auth: el("authPanel")
 };
 const COPY = {
-  home: ["Pick your fight",
-         "Every spell carries a weight — when two collide the heavier one wins and flies on, lighter by whatever it just ate. Take a bot apart on your own, or send someone a code and settle it properly."],
+  home: ["Rock, Paper, Wizards",
+         "Battle and level up your wizard, unlock new jewels to adorn your cloak, become the greatest Archmage."],
   mp:   ["Multiplayer",
          "Host a duel and you get a four-letter code to hand out. Join one and you paste the code you were given. Bots fill any seat nobody takes."],
   host: ["Hosting", "Send the code. Empty seats become bots."],
@@ -3198,8 +3204,65 @@ function renderWho(profile){
     card.hidden = true;
     guest.hidden = false;
   }
+  renderPass(profile);
   readName();                       // seats and the relay use this name
   scheduleFit();
+}
+
+/* The cloak track. Nothing is wearable yet — this is the ladder of what
+   levelling is FOR, drawn from the jewel table in src/account.js. A guest sees
+   the whole ladder locked, which is the honest answer to "what do I get".
+
+   Built with createElement rather than innerHTML because each tier carries its
+   stone's two colours as custom properties, and a style="" attribute is exactly
+   what the site's Content-Security-Policy refuses. Setting them through the
+   CSSOM is not an inline style and is allowed. */
+function renderPass(profile){
+  const box = el("pass"), list = el("passTrack"), note = el("passNext");
+  const acct = ACCT();
+  if (!box || !list || !note || !acct || !acct.track) return;
+  if (!document.createElement) return;          // headless rigs have no DOM
+
+  const t = acct.track(profile ? profile.level : 1);
+  const earned = profile ? t.rows.filter(r => r.earned).length : 0;
+
+  list.innerHTML = "";
+  let focus = null;
+  for (const r of t.rows){
+    const li = document.createElement("li");
+    li.className = "tier" + (!profile ? "" : r.earned ? " earned" : r.next ? " next" : "");
+    li.title = r.name + " — level " + r.at;
+    li.style.setProperty("--g1", r.from);
+    li.style.setProperty("--g2", r.to);
+
+    const lv = document.createElement("span");
+    lv.className = "lv"; lv.textContent = "Lv " + r.at;
+    const jewel = document.createElement("span");
+    jewel.className = "jewel";
+    const nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = r.name;
+
+    li.appendChild(lv); li.appendChild(jewel); li.appendChild(nm);
+    list.appendChild(li);
+    if (profile && (r.next || r.earned)) focus = li;   // ends on next, or the last earned
+  }
+
+  note.textContent = !profile
+    ? "Sign in to start earning"
+    : t.nextAt < 0
+      ? earned + " of " + t.rows.length + " — the cloak is complete"
+      : earned + " of " + t.rows.length + " · next at level " + t.nextAt;
+
+  // On a normal screen the whole ladder is visible and there is nothing to do.
+  // On something narrow it scrolls, and the tier being worked towards should be
+  // the thing in view — one slot in from the left, so the jewel just earned
+  // still shows beside it. offsetLeft is measured against the offsetParent, not
+  // the scroller, so both are taken relative to the first tile.
+  if (focus && list.scrollWidth > list.clientWidth + 1){
+    const first = list.firstChild;
+    const step = focus.offsetWidth + 6;                 // tile + the track's gap
+    list.scrollLeft = Math.max(0, (focus.offsetLeft - first.offsetLeft) - step);
+  }
 }
 
 let authMode = "in";                // "in" to sign in, "up" to create

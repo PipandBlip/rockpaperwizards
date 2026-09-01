@@ -193,6 +193,52 @@
   }
 
   /* the sign-in form */
+  /* ---------------------------------------------------- the cloak track
+     A battlepass strip under the landing buttons: what levelling up is for.
+     Earned tiers are lit, the next one is ringed, the rest sit dim. It scrolls
+     sideways rather than growing, so the curtain still fits the arena. */
+  .pass{width:100%;max-width:850px;margin:14px auto 0;text-align:left}
+  .pass[hidden]{display:none}
+  .pass-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 2px 7px}
+  .pass-head h4{margin:0;font-family:var(--display);font-size:11px;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--muted);font-weight:600}
+  .pass-head span{font-family:var(--mono);font-size:10.5px;color:#6b628c;white-space:nowrap}
+  /* All twelve fit side by side on a normal screen — a ladder you can see the
+     whole of. It only becomes a scroller on something narrow, and there the
+     fade at each edge says so. */
+  .pass-track{list-style:none;display:flex;gap:6px;margin:0;padding:2px 2px 8px;
+    width:fit-content;max-width:100%;margin-inline:auto;
+    overflow-x:auto;scroll-behavior:smooth;scrollbar-width:thin;
+    scrollbar-color:#2a2450 transparent;
+    -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 10px,#000 calc(100% - 10px),transparent 100%);
+    mask-image:linear-gradient(90deg,transparent 0,#000 10px,#000 calc(100% - 10px),transparent 100%)}
+  .pass-track::-webkit-scrollbar{height:5px}
+  .pass-track::-webkit-scrollbar-thumb{background:#2a2450;border-radius:3px}
+  .pass-track::-webkit-scrollbar-track{background:transparent}
+
+  .tier{flex:0 0 auto;width:54px;display:flex;flex-direction:column;align-items:center;gap:5px;
+    padding:8px 4px 7px;border:1px solid var(--edge);border-radius:3px;
+    background:rgba(10,7,18,.6);text-align:center}
+  .tier .lv{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:#5d5580}
+  .tier .nm{font-family:var(--prose);font-size:9.5px;line-height:1.25;color:#5d5580;
+    display:flex;align-items:center;flex:1 1 auto}
+  /* the jewel itself: a cut stone, dark until it is earned */
+  .tier .jewel{width:26px;height:26px;border-radius:4px;
+    background:linear-gradient(150deg,var(--g1),var(--g2));
+    clip-path:polygon(50% 0,100% 33%,82% 100%,18% 100%,0 33%);
+    filter:grayscale(1) brightness(.34);position:relative}
+  .tier .jewel::after{content:"";position:absolute;inset:14% 46% 52% 20%;border-radius:2px;
+    background:rgba(255,255,255,.5);transform:rotate(-18deg)}
+
+  .tier.earned{border-color:#3a3358;background:rgba(255,255,255,.03)}
+  .tier.earned .jewel{filter:none;box-shadow:0 0 12px -2px var(--g1)}
+  .tier.earned .lv{color:var(--spark)}
+  .tier.earned .nm{color:var(--chalk)}
+  .tier.next{border-color:var(--spark);box-shadow:0 0 16px -8px var(--spark)}
+  .tier.next .lv{color:var(--spark)}
+  .tier.next .nm{color:#a79dc8}
+  .tier.next .jewel{filter:grayscale(.7) brightness(.6)}
+
   /* the sign-in form: label above its box, the way every other login form on
      the web is laid out. Ordinary shapes matter here — a password field in an
      unusual arrangement is one of the things phishing heuristics count. */
@@ -316,6 +362,7 @@
     position:relative;border:1px solid var(--edge);border-radius:3px;background:#0f0c1c;
     padding:8px 8px 9px;display:flex;flex-direction:column;gap:5px;overflow:hidden;min-width:0;
   }
+  .card .ttl{display:flex;align-items:center;gap:6px}
   .card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--c);transform:scaleX(var(--chg,0));transform-origin:left;transition:transform .05s linear}
   .card.lit{border-color:var(--c);box-shadow:inset 0 0 26px -14px var(--c)}
   .card.broke{opacity:.36}
@@ -424,8 +471,8 @@
   <div class="stage">
     <canvas id="game" width="960" height="620" aria-label="Wizard duel arena"></canvas>
     <div class="curtain" id="curtain">
-      <h2 id="curtainTitle">Choose your rival</h2>
-      <p id="curtainText">Your wand tracks the enemy on its own. Your job is timing: read what is coming, and answer it with something heavy enough to stop it.</p>
+      <h2 id="curtainTitle">Rock, Paper, Wizards</h2>
+      <p id="curtainText">Battle and level up your wizard, unlock new jewels to adorn your cloak, become the greatest Archmage.</p>
       <!-- who you are playing as. Signed out it is a single line and a
            button; signed in it is the character strip — level, experience
            bar and record. Names come from here now, not a text box. -->
@@ -450,6 +497,16 @@
           <button class="go" id="soloBtn">Solo Duel</button>
           <button id="mpBtn">Multiplayer</button>
         </div>
+
+        <!-- the cloak track: what levelling up is for. Filled by renderPass()
+             in src/game.js from the jewel table in src/account.js. -->
+        <section class="pass" id="pass" aria-label="Cloak jewels">
+          <div class="pass-head">
+            <h4>Cloak jewels</h4>
+            <span id="passNext">Sign in to start earning</span>
+          </div>
+          <ol class="pass-track" id="passTrack"></ol>
+        </section>
       </div>
 
       <!-- solo: pick who you are up against -->
@@ -646,6 +703,44 @@
     return { level: level, into: rest, need: needFor(level) };
   }
 
+  /* ------------------------------------------------------------- the jewels
+     The cloak track. Display only for now — nothing is wearable yet and the
+     server grants nothing, so a tier is "earned" purely by having reached its
+     level. When the jewels become real, the server grants from this same list
+     into profile.cosmetics.unlocked and the only thing that changes here is
+     where `earned` comes from. Ids are permanent; renaming one is fine,
+     renumbering one is not. */
+
+  const GEMS = [
+    { id: "quartz",   at: 2,  name: "Chipped Quartz", from: "#cfd6ea", to: "#8e9bbf" },
+    { id: "pearl",    at: 4,  name: "River Pearl",    from: "#f2f6ff", to: "#a9c4d8" },
+    { id: "amber",    at: 6,  name: "Amber Ember",    from: "#ffcf7a", to: "#c9701f" },
+    { id: "jade",     at: 9,  name: "Verdant Jade",   from: "#8ef0c0", to: "#1d8f6a" },
+    { id: "sapphire", at: 12, name: "Cobalt Heart",   from: "#8fd0ff", to: "#1f4fd8" },
+    { id: "garnet",   at: 15, name: "Crimson Garnet", from: "#ff9aa8", to: "#a5122c" },
+    { id: "amethyst", at: 18, name: "Deep Amethyst",  from: "#d7b0ff", to: "#6a2fd0" },
+    { id: "moonstone",at: 22, name: "Moonstone",      from: "#eaf2ff", to: "#6f7fb5" },
+    { id: "emberglass",at:26, name: "Emberglass",     from: "#ffb36b", to: "#8e1f5e" },
+    { id: "opal",     at: 30, name: "Starlit Opal",   from: "#b7ffe8", to: "#7b6cff" },
+    { id: "voidstone",at: 35, name: "Voidstone",      from: "#7a6cff", to: "#120a2c" },
+    { id: "archmage", at: 40, name: "Archmage's Heart", from: "#7cf2ff", to: "#a97cff" }
+  ];
+
+  // The track as the menu draws it: every tier, whether it is earned, and
+  // which one is next.
+  function track(level){
+    const lv = Math.max(1, level | 0);
+    let nextAt = -1;
+    const rows = GEMS.map(g => {
+      const earned = lv >= g.at;
+      if (!earned && nextAt < 0) nextAt = g.at;
+      return { ...g, earned, next: false };
+    });
+    const next = rows.find(r => !r.earned);
+    if (next) next.next = true;
+    return { rows, nextAt, level: lv };
+  }
+
   /* ------------------------------------------------------------- plumbing */
 
   function emit(){ for (const fn of listeners) { try { fn(profile); } catch (e) {} } }
@@ -689,7 +784,7 @@
   /* ------------------------------------------------------------- the api */
 
   const A = {
-    needFor, levelFor,
+    needFor, levelFor, GEMS, track,
 
     get signedIn(){ return !!profile; },
     get profile(){ return profile; },
@@ -2935,7 +3030,7 @@ SPELLS.forEach((s, i) => {
     ? Array.from({length: s.weight + s.chargeW}, (_,k) => `<i class="${k < s.weight ? "" : "hollow"}"></i>`).join("")
     : s.id === "beam" ? `<i></i><i></i><i></i><i></i>` : `<i></i><i></i><i></i>`;
   c.innerHTML =
-    `<div style="display:flex;align-items:center;gap:6px"><span class="k">${s.key}</span><span class="n">${s.name}</span></div>
+    `<div class="ttl"><span class="k">${s.key}</span><span class="n">${s.name}</span></div>
      <div class="wt">${dots}</div>
      <div class="m"><span>${s.id === "beam" ? "31/s" : s.cost}</span><span>${
         s.id==="ward" ? "spark\u00b7rive" : s.id==="beam" ? "beam" : s.id==="grasp" ? "throw" : s.id==="rive" ? "1\u20135 shots" : "wt " + s.weight}</span></div>`;
@@ -2946,7 +3041,7 @@ const dashCard = document.createElement("div");
 dashCard.className = "card";
 dashCard.style.setProperty("--c", "#cfc8ff");
 dashCard.innerHTML =
-  '<div style="display:flex;align-items:center;gap:6px"><span class="k">\u21E7</span><span class="n">Dash</span></div>' +
+  '<div class="ttl"><span class="k">\u21E7</span><span class="n">Dash</span></div>' +
   '<div class="wt"><i></i><i class="hollow"></i><i class="hollow"></i></div>' +
   '<div class="m"><span>free</span><span>3s</span></div>';
 book.appendChild(dashCard);
@@ -3514,18 +3609,24 @@ function renderStats(){
   const best = rows[0];
   const rowsHTML = rows.map(w =>
     '<tr' + (w === best ? ' class="best"' : '') + '>' +
-      '<td class="who"><i style="--c:' + w.tint + '"></i>' + esc(w.name) + (w === you ? ' <em>you</em>' : '') + '</td>' +
+      '<td class="who"><i></i>' + esc(w.name) + (w === you ? ' <em>you</em>' : '') + '</td>' +
       '<td>' + w.kills + '</td>' +
       '<td>' + w.deaths + '</td>' +
       '<td>' + Math.round(w.dmg) + '</td>' +
       '<td>' + w.counters + '</td>' +
     '</tr>').join("");
+  // NOTE: each wizard's colour is painted below, through the CSSOM. It cannot
+  // ride along as a style="" attribute — the site's CSP refuses inline styles.
   box.innerHTML =
     '<table class="statline">' +
       '<caption>Match report</caption>' +
       '<thead><tr><th>Wizard</th><th>Kills</th><th>Deaths</th><th>Dmg dealt</th><th>Counters</th></tr></thead>' +
       '<tbody>' + rowsHTML + '</tbody>' +
     '</table>';
+  if (box.querySelectorAll){
+    const dots = box.querySelectorAll("td.who i");
+    rows.forEach((w, i) => { if (dots[i]) dots[i].style.setProperty("--c", w.tint); });
+  }
   box.hidden = false;
   scheduleFit();
 }
@@ -3632,8 +3733,8 @@ const PANEL = {
   host: el("hostPanel"), join: el("joinPanel"), auth: el("authPanel")
 };
 const COPY = {
-  home: ["Pick your fight",
-         "Every spell carries a weight — when two collide the heavier one wins and flies on, lighter by whatever it just ate. Take a bot apart on your own, or send someone a code and settle it properly."],
+  home: ["Rock, Paper, Wizards",
+         "Battle and level up your wizard, unlock new jewels to adorn your cloak, become the greatest Archmage."],
   mp:   ["Multiplayer",
          "Host a duel and you get a four-letter code to hand out. Join one and you paste the code you were given. Bots fill any seat nobody takes."],
   host: ["Hosting", "Send the code. Empty seats become bots."],
@@ -3943,8 +4044,65 @@ function renderWho(profile){
     card.hidden = true;
     guest.hidden = false;
   }
+  renderPass(profile);
   readName();                       // seats and the relay use this name
   scheduleFit();
+}
+
+/* The cloak track. Nothing is wearable yet — this is the ladder of what
+   levelling is FOR, drawn from the jewel table in src/account.js. A guest sees
+   the whole ladder locked, which is the honest answer to "what do I get".
+
+   Built with createElement rather than innerHTML because each tier carries its
+   stone's two colours as custom properties, and a style="" attribute is exactly
+   what the site's Content-Security-Policy refuses. Setting them through the
+   CSSOM is not an inline style and is allowed. */
+function renderPass(profile){
+  const box = el("pass"), list = el("passTrack"), note = el("passNext");
+  const acct = ACCT();
+  if (!box || !list || !note || !acct || !acct.track) return;
+  if (!document.createElement) return;          // headless rigs have no DOM
+
+  const t = acct.track(profile ? profile.level : 1);
+  const earned = profile ? t.rows.filter(r => r.earned).length : 0;
+
+  list.innerHTML = "";
+  let focus = null;
+  for (const r of t.rows){
+    const li = document.createElement("li");
+    li.className = "tier" + (!profile ? "" : r.earned ? " earned" : r.next ? " next" : "");
+    li.title = r.name + " — level " + r.at;
+    li.style.setProperty("--g1", r.from);
+    li.style.setProperty("--g2", r.to);
+
+    const lv = document.createElement("span");
+    lv.className = "lv"; lv.textContent = "Lv " + r.at;
+    const jewel = document.createElement("span");
+    jewel.className = "jewel";
+    const nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = r.name;
+
+    li.appendChild(lv); li.appendChild(jewel); li.appendChild(nm);
+    list.appendChild(li);
+    if (profile && (r.next || r.earned)) focus = li;   // ends on next, or the last earned
+  }
+
+  note.textContent = !profile
+    ? "Sign in to start earning"
+    : t.nextAt < 0
+      ? earned + " of " + t.rows.length + " — the cloak is complete"
+      : earned + " of " + t.rows.length + " · next at level " + t.nextAt;
+
+  // On a normal screen the whole ladder is visible and there is nothing to do.
+  // On something narrow it scrolls, and the tier being worked towards should be
+  // the thing in view — one slot in from the left, so the jewel just earned
+  // still shows beside it. offsetLeft is measured against the offsetParent, not
+  // the scroller, so both are taken relative to the first tile.
+  if (focus && list.scrollWidth > list.clientWidth + 1){
+    const first = list.firstChild;
+    const step = focus.offsetWidth + 6;                 // tile + the track's gap
+    list.scrollLeft = Math.max(0, (focus.offsetLeft - first.offsetLeft) - step);
+  }
 }
 
 let authMode = "in";                // "in" to sign in, "up" to create

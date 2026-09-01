@@ -40,6 +40,44 @@
     return { level: level, into: rest, need: needFor(level) };
   }
 
+  /* ------------------------------------------------------------- the jewels
+     The cloak track. Display only for now — nothing is wearable yet and the
+     server grants nothing, so a tier is "earned" purely by having reached its
+     level. When the jewels become real, the server grants from this same list
+     into profile.cosmetics.unlocked and the only thing that changes here is
+     where `earned` comes from. Ids are permanent; renaming one is fine,
+     renumbering one is not. */
+
+  const GEMS = [
+    { id: "quartz",   at: 2,  name: "Chipped Quartz", from: "#cfd6ea", to: "#8e9bbf" },
+    { id: "pearl",    at: 4,  name: "River Pearl",    from: "#f2f6ff", to: "#a9c4d8" },
+    { id: "amber",    at: 6,  name: "Amber Ember",    from: "#ffcf7a", to: "#c9701f" },
+    { id: "jade",     at: 9,  name: "Verdant Jade",   from: "#8ef0c0", to: "#1d8f6a" },
+    { id: "sapphire", at: 12, name: "Cobalt Heart",   from: "#8fd0ff", to: "#1f4fd8" },
+    { id: "garnet",   at: 15, name: "Crimson Garnet", from: "#ff9aa8", to: "#a5122c" },
+    { id: "amethyst", at: 18, name: "Deep Amethyst",  from: "#d7b0ff", to: "#6a2fd0" },
+    { id: "moonstone",at: 22, name: "Moonstone",      from: "#eaf2ff", to: "#6f7fb5" },
+    { id: "emberglass",at:26, name: "Emberglass",     from: "#ffb36b", to: "#8e1f5e" },
+    { id: "opal",     at: 30, name: "Starlit Opal",   from: "#b7ffe8", to: "#7b6cff" },
+    { id: "voidstone",at: 35, name: "Voidstone",      from: "#7a6cff", to: "#120a2c" },
+    { id: "archmage", at: 40, name: "Archmage's Heart", from: "#7cf2ff", to: "#a97cff" }
+  ];
+
+  // The track as the menu draws it: every tier, whether it is earned, and
+  // which one is next.
+  function track(level){
+    const lv = Math.max(1, level | 0);
+    let nextAt = -1;
+    const rows = GEMS.map(g => {
+      const earned = lv >= g.at;
+      if (!earned && nextAt < 0) nextAt = g.at;
+      return { ...g, earned, next: false };
+    });
+    const next = rows.find(r => !r.earned);
+    if (next) next.next = true;
+    return { rows, nextAt, level: lv };
+  }
+
   /* ------------------------------------------------------------- plumbing */
 
   function emit(){ for (const fn of listeners) { try { fn(profile); } catch (e) {} } }
@@ -83,7 +121,7 @@
   /* ------------------------------------------------------------- the api */
 
   const A = {
-    needFor, levelFor,
+    needFor, levelFor, GEMS, track,
 
     get signedIn(){ return !!profile; },
     get profile(){ return profile; },

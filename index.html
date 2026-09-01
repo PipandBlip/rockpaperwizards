@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=23">
+  <link rel="stylesheet" href="src/style.css?v=24">
 </head>
 <body>
 
@@ -54,8 +54,8 @@
   <div class="stage">
     <canvas id="game" width="960" height="620" aria-label="Wizard duel arena"></canvas>
     <div class="curtain" id="curtain">
-      <h2 id="curtainTitle">Choose your rival</h2>
-      <p id="curtainText">Your wand tracks the enemy on its own. Your job is timing: read what is coming, and answer it with something heavy enough to stop it.</p>
+      <h2 id="curtainTitle">Rock, Paper, Wizards</h2>
+      <p id="curtainText">Battle and level up your wizard, unlock new jewels to adorn your cloak, become the greatest Archmage.</p>
       <!-- who you are playing as. Signed out it is a single line and a
            button; signed in it is the character strip — level, experience
            bar and record. Names come from here now, not a text box. -->
@@ -80,6 +80,16 @@
           <button class="go" id="soloBtn">Solo Duel</button>
           <button id="mpBtn">Multiplayer</button>
         </div>
+
+        <!-- the cloak track: what levelling up is for. Filled by renderPass()
+             in src/game.js from the jewel table in src/account.js. -->
+        <section class="pass" id="pass" aria-label="Cloak jewels">
+          <div class="pass-head">
+            <h4>Cloak jewels</h4>
+            <span id="passNext">Sign in to start earning</span>
+          </div>
+          <ol class="pass-track" id="passTrack"></ol>
+        </section>
       </div>
 
       <!-- solo: pick who you are up against -->
@@ -233,8 +243,8 @@
   </details>
 </div>
 
-  <script src="src/account.js?v=23"></script>
-  <script src="src/game.js?v=23"></script>
-  <script src="src/net.js?v=23"></script>
+  <script src="src/account.js?v=24"></script>
+  <script src="src/game.js?v=24"></script>
+  <script src="src/net.js?v=24"></script>
 </body>
 </html>

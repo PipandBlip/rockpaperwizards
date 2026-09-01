@@ -101,11 +101,38 @@ Until step 2 is done, `/api/*` returns an error and the game quietly runs
 guest-only — which is also exactly what happens on the single-file `dist/`
 build, where there is no server at all.
 
+## Cloak jewels
+
+`GEMS` in `src/account.js` is the reward ladder — twelve stones between level 2
+and level 40, each with an id, the level it lands at, a name and its two
+colours. `track(level)` turns it into what the menu draws: every tier, which are
+earned, which is next.
+
+**It is display only right now.** A tier counts as earned purely by having
+reached its level; the server grants nothing and nothing is wearable. That is
+deliberate — the ladder is there so levelling has a visible point, without
+committing to an item system yet.
+
+When the jewels become real, the server grants ids from this same list into
+`profile.cosmetics.unlocked` and the only change here is that `earned` reads
+that array instead of comparing levels. **Ids are permanent**: renaming a stone
+is free, renumbering one would move somebody's jewel.
+
+Two things the track has to respect, both already handled and both easy to
+undo by accident:
+
+* Each tier's colours reach CSS as custom properties set through the CSSOM, not
+  as a `style=""` attribute — the CSP refuses inline styles (see below).
+* The strip is `width:fit-content; margin-inline:auto`, **not**
+  `justify-content:center`. Centring a flex row that overflows pushes its
+  leading items past the scroll origin where they can never be reached, which
+  is exactly what happens on a phone.
+
 ## What is not built yet
 
-Hats, capes and anything else wearable. The profile already carries
-`cosmetics: { unlocked: [], hat: null, cape: null }` so they can land without
-migrating a single existing profile.
+Hats, capes, and making the jewels actually appear on the wizard. The profile
+already carries `cosmetics: { unlocked: [], hat: null, cape: null }` so they can
+land without migrating a single existing profile.
 
 There is also no password reset — no email is collected. Ask before adding one;
 it changes what the account is.

@@ -178,6 +178,52 @@
   }
 
   /* the sign-in form */
+  /* ---------------------------------------------------- the cloak track
+     A battlepass strip under the landing buttons: what levelling up is for.
+     Earned tiers are lit, the next one is ringed, the rest sit dim. It scrolls
+     sideways rather than growing, so the curtain still fits the arena. */
+  .pass{width:100%;max-width:850px;margin:14px auto 0;text-align:left}
+  .pass[hidden]{display:none}
+  .pass-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 2px 7px}
+  .pass-head h4{margin:0;font-family:var(--display);font-size:11px;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--muted);font-weight:600}
+  .pass-head span{font-family:var(--mono);font-size:10.5px;color:#6b628c;white-space:nowrap}
+  /* All twelve fit side by side on a normal screen — a ladder you can see the
+     whole of. It only becomes a scroller on something narrow, and there the
+     fade at each edge says so. */
+  .pass-track{list-style:none;display:flex;gap:6px;margin:0;padding:2px 2px 8px;
+    width:fit-content;max-width:100%;margin-inline:auto;
+    overflow-x:auto;scroll-behavior:smooth;scrollbar-width:thin;
+    scrollbar-color:#2a2450 transparent;
+    -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 10px,#000 calc(100% - 10px),transparent 100%);
+    mask-image:linear-gradient(90deg,transparent 0,#000 10px,#000 calc(100% - 10px),transparent 100%)}
+  .pass-track::-webkit-scrollbar{height:5px}
+  .pass-track::-webkit-scrollbar-thumb{background:#2a2450;border-radius:3px}
+  .pass-track::-webkit-scrollbar-track{background:transparent}
+
+  .tier{flex:0 0 auto;width:54px;display:flex;flex-direction:column;align-items:center;gap:5px;
+    padding:8px 4px 7px;border:1px solid var(--edge);border-radius:3px;
+    background:rgba(10,7,18,.6);text-align:center}
+  .tier .lv{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:#5d5580}
+  .tier .nm{font-family:var(--prose);font-size:9.5px;line-height:1.25;color:#5d5580;
+    display:flex;align-items:center;flex:1 1 auto}
+  /* the jewel itself: a cut stone, dark until it is earned */
+  .tier .jewel{width:26px;height:26px;border-radius:4px;
+    background:linear-gradient(150deg,var(--g1),var(--g2));
+    clip-path:polygon(50% 0,100% 33%,82% 100%,18% 100%,0 33%);
+    filter:grayscale(1) brightness(.34);position:relative}
+  .tier .jewel::after{content:"";position:absolute;inset:14% 46% 52% 20%;border-radius:2px;
+    background:rgba(255,255,255,.5);transform:rotate(-18deg)}
+
+  .tier.earned{border-color:#3a3358;background:rgba(255,255,255,.03)}
+  .tier.earned .jewel{filter:none;box-shadow:0 0 12px -2px var(--g1)}
+  .tier.earned .lv{color:var(--spark)}
+  .tier.earned .nm{color:var(--chalk)}
+  .tier.next{border-color:var(--spark);box-shadow:0 0 16px -8px var(--spark)}
+  .tier.next .lv{color:var(--spark)}
+  .tier.next .nm{color:#a79dc8}
+  .tier.next .jewel{filter:grayscale(.7) brightness(.6)}
+
   /* the sign-in form: label above its box, the way every other login form on
      the web is laid out. Ordinary shapes matter here — a password field in an
      unusual arrangement is one of the things phishing heuristics count. */
@@ -301,6 +347,7 @@
     position:relative;border:1px solid var(--edge);border-radius:3px;background:#0f0c1c;
     padding:8px 8px 9px;display:flex;flex-direction:column;gap:5px;overflow:hidden;min-width:0;
   }
+  .card .ttl{display:flex;align-items:center;gap:6px}
   .card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--c);transform:scaleX(var(--chg,0));transform-origin:left;transition:transform .05s linear}
   .card.lit{border-color:var(--c);box-shadow:inset 0 0 26px -14px var(--c)}
   .card.broke{opacity:.36}
