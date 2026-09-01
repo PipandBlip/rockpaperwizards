@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=21">
+  <link rel="stylesheet" href="src/style.css?v=22">
 </head>
 <body>
 
@@ -180,8 +180,7 @@
 
   <div class="book" id="book"></div>
 
-  <!-- How to play. Three steps to start, then the ideas that make it click, then
-       the fine print folded away. Each step has a picture slot: drop a PNG or GIF
+  <!-- How to play. Three steps to start, with a picture slot on each: drop a PNG
        at the path shown in the empty slot and it appears automatically. -->
   <details class="manual" open>
     <summary>How to play</summary>
@@ -212,50 +211,28 @@
             <div class="step-txt">
               <b>Know your spells</b>
               <ul class="spells">
-                <li><kbd>Y</kbd> <em>Spark</em> — the fast one. Cheap, quick, your bread and butter.</li>
-                <li><kbd>U</kbd> <em>Rive</em> — one missile at a tap, five at full charge.</li>
-                <li><kbd>I</kbd> <em>Hexstone</em> — heavy. It smashes straight through a ward.</li>
-                <li><kbd>H</kbd> <em>Ward</em> — raise a wall. Charging it sets how much it can take.</li>
-                <li><kbd>J</kbd> <em>Beam</em> — the ultimate. Slow to light, expensive to hold, eats everything it touches.</li>
-                <li><kbd>K</kbd> <em>Grasp</em> — hold to lift furniture as a shield, release to throw it.</li>
+                <li><kbd>Y</kbd> <em>Spark</em> — fast and cheap spell.</li>
+                <li><kbd>U</kbd> <em>Rive</em> — one missile, or five when full charge.</li>
+                <li><kbd>I</kbd> <em>Hexstone</em> — plows through weaker spells and the Ward.</li>
+                <li><kbd>H</kbd> <em>Ward</em> — create a shield against weaker spells.</li>
+                <li><kbd>J</kbd> <em>Beam</em> — slow charge, but powerful beam. Can be resisted with counter beam.</li>
+                <li><kbd>K</kbd> <em>Grasp</em> — hold to carry objects as a shield, or throw as a weapon.</li>
               </ul>
             </div>
-            <figure class="shot"><img src="assets/help/weight.png" alt="Two spells colliding" loading="lazy"
+            <figure class="shot"><img src="assets/help/spells.png" alt="Two beams colliding" loading="lazy"
                  onerror="this.closest('.shot').classList.add('empty')">
-              <figcaption>Two spells colliding<span>assets/help/weight.png</span></figcaption></figure>
+              <figcaption>Two beams colliding<span>assets/help/spells.png</span></figcaption></figure>
           </li>
         </ol>
       </section>
-
-      <details class="more">
-        <summary>The fine print</summary>
-        <div class="more-body">
-          <div>
-            <h4>The room</h4>
-            <p>Stone and pillars never break. Everything wooden does — and a beam vaporises furniture in well under a second. Lattice screens stop bodies and beams but spells fly straight through the gaps, so they are a firing position, not a hiding place. Chairs and stools are not cover at all, they are ammunition.</p>
-            <p><em>Grasp</em> holds furniture in front of you as a shield; release to throw it.</p>
-          </div>
-          <div>
-            <h4>Modes</h4>
-            <p>Three tiers of rival — Apprentice easy, Adept medium, Archmage hard — then <em>Escalation</em>: one at a time, then pairs working up the tiers, then threes. A wave only arrives once you have cleared the last.</p>
-            <p><em>Multiplayer</em> puts up to six wizards in a free-for-all. Host a duel for a four-letter invite code; anyone who pastes it takes a seat, and bots fill whatever is left.</p>
-          </div>
-          <div>
-            <h4>Odds and ends</h4>
-            <p>Rive throws one missile at a tap and five at full charge. A beam costs 18 mana to ignite, 31 a second to hold, and leaves the wand scorched for a moment after you let go.</p>
-            <p>Signing in is optional — guests play everything. Sign in and your wizard keeps its level and earns experience from every duel, with a person worth more than a bot.</p>
-            <p><kbd>P</kbd> pause · <kbd>R</kbd> restart. First to two rounds takes the duel.</p>
-          </div>
-        </div>
-      </details>
 
     </div>
   </details>
 </div>
 
   <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
-  <script src="src/account.js?v=21"></script>
-  <script src="src/game.js?v=21"></script>
-  <script src="src/net.js?v=21"></script>
+  <script src="src/account.js?v=22"></script>
+  <script src="src/game.js?v=22"></script>
+  <script src="src/net.js?v=22"></script>
 </body>
 </html>

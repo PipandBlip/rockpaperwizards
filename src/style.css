@@ -355,17 +355,6 @@
     font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#6b628c}
   .shot.empty figcaption span{font-family:var(--mono);font-size:10px;letter-spacing:.02em;
     text-transform:none;color:#4a4368}
-  details.more{border:1px solid var(--edge);border-radius:3px;background:rgba(0,0,0,.22)}
-  details.more>summary{cursor:pointer;list-style:none;padding:9px 12px;font-family:var(--display);
-    font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
-  details.more>summary::-webkit-details-marker{display:none}
-  details.more>summary::before{content:"\25B8\00a0\00a0";color:var(--rive)}
-  details.more[open]>summary::before{content:"\25BE\00a0\00a0"}
-  details.more>summary:hover{color:var(--chalk)}
-  .more-body{padding:2px 13px 13px;display:grid;gap:14px;
-    grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
-  .more-body h4{font-family:var(--display);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
-    color:var(--chalk);margin:0 0 4px;font-weight:600}
   kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--edge);border-bottom-width:2px;border-radius:3px;padding:1px 5px;background:#15112a;color:var(--chalk)}
 
   @media (max-width:720px){
