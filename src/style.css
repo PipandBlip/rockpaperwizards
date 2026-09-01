@@ -330,7 +330,7 @@
     grid-template-columns:repeat(auto-fit,minmax(280px,1fr));counter-reset:step}
   .steps>li{display:flex;flex-direction:column;gap:9px;counter-increment:step;
     border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
-  .steps .step-txt b, .card-x b{display:block;font-family:var(--display);font-size:13.5px;
+  .steps .step-txt b{display:block;font-family:var(--display);font-size:13.5px;
     letter-spacing:.03em;color:var(--chalk);margin-bottom:4px;font-weight:600}
   .steps .step-txt b::before{content:counter(step);display:inline-flex;align-items:center;
     justify-content:center;width:19px;height:19px;margin-right:8px;border-radius:50%;
@@ -340,9 +340,9 @@
   .manual-body p:last-child{margin-bottom:0}
   .keys{font-size:13px;color:var(--muted)}
   .steps>li .shot{margin-top:auto}
-  .cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
-  .card-x{border:1px solid var(--edge);border-radius:3px;background:rgba(255,255,255,.018);padding:12px 13px}
-  .card-x .shot{margin-bottom:10px}
+  .spells{list-style:none;margin:6px 0 0;padding:0}
+  .spells li{margin:4px 0 0;padding-left:0;color:#c8bfe0;font-family:var(--prose);font-size:14px;line-height:1.5}
+  .spells li kbd{min-width:18px;text-align:center}
   /* a picture slot: the image when there is one, a labelled space when there is not */
   .shot{margin:0;border-radius:3px;overflow:hidden;border:1px solid var(--edge);background:#0a0714}
   .shot img{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#0a0714}

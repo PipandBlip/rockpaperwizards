@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=20">
+  <link rel="stylesheet" href="src/style.css?v=21">
 </head>
 <body>
 
@@ -192,8 +192,8 @@
         <ol class="steps">
           <li>
             <div class="step-txt">
-              <b>Move, and let the wand aim</b>
-              <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move. Your wand points itself at whoever you are targeting — <kbd>Tab</kbd> switches target, <kbd>Shift</kbd> dashes every three seconds.</p>
+              <b>Move, dash, and let the wand aim</b>
+              <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move, <kbd>Shift</kbd> to dash. Your wizard will auto target enemies, but you can press <kbd>Tab</kbd> to cycle targets in multiplayer modes.</p>
             </div>
             <figure class="shot"><img src="assets/help/move.png" alt="Moving and aiming" loading="lazy"
                  onerror="this.closest('.shot').classList.add('empty')">
@@ -201,9 +201,8 @@
           </li>
           <li>
             <div class="step-txt">
-              <b>Tap to cast, hold to charge</b>
-              <p>Tap a spell key for a quick one; hold it to charge and release to let go. Charging costs more mana and buys more weight.</p>
-              <p class="keys"><kbd>Y</kbd> Spark · <kbd>U</kbd> Rive · <kbd>I</kbd> Hexstone · <kbd>H</kbd> Ward · <kbd>J</kbd> Beam · <kbd>K</kbd> Grasp</p>
+              <b>Cast spells, tap or charge</b>
+              <p>Cast spells with <kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd>. Tap it to cast a quick spell, or hold the spell to increase its power.</p>
             </div>
             <figure class="shot"><img src="assets/help/cast.png" alt="Charging a spell" loading="lazy"
                  onerror="this.closest('.shot').classList.add('empty')">
@@ -211,41 +210,21 @@
           </li>
           <li>
             <div class="step-txt">
-              <b>Answer with something heavier</b>
-              <p>Every spell carries a <em>weight</em>. When two collide the heavier one wins and flies on, lighter by whatever it just ate. That is the whole game — read what is coming and out-weigh it.</p>
+              <b>Know your spells</b>
+              <ul class="spells">
+                <li><kbd>Y</kbd> <em>Spark</em> — the fast one. Cheap, quick, your bread and butter.</li>
+                <li><kbd>U</kbd> <em>Rive</em> — one missile at a tap, five at full charge.</li>
+                <li><kbd>I</kbd> <em>Hexstone</em> — heavy. It smashes straight through a ward.</li>
+                <li><kbd>H</kbd> <em>Ward</em> — raise a wall. Charging it sets how much it can take.</li>
+                <li><kbd>J</kbd> <em>Beam</em> — the ultimate. Slow to light, expensive to hold, eats everything it touches.</li>
+                <li><kbd>K</kbd> <em>Grasp</em> — hold to lift furniture as a shield, release to throw it.</li>
+              </ul>
             </div>
             <figure class="shot"><img src="assets/help/weight.png" alt="Two spells colliding" loading="lazy"
                  onerror="this.closest('.shot').classList.add('empty')">
               <figcaption>Two spells colliding<span>assets/help/weight.png</span></figcaption></figure>
           </li>
         </ol>
-      </section>
-
-      <section class="guide">
-        <h3>Then it clicks</h3>
-        <div class="cards">
-          <div class="card-x">
-            <figure class="shot"><img src="assets/help/counter.png" alt="A counter paying out" loading="lazy"
-                 onerror="this.closest('.shot').classList.add('empty')">
-              <figcaption>A counter paying out<span>assets/help/counter.png</span></figcaption></figure>
-            <b>Counters pay</b>
-            <p>Stop a spell and you get mana back on the spot, then three seconds of gold corona and doubled regeneration. Get out-weighed and you get nothing.</p>
-          </div>
-          <div class="card-x">
-            <figure class="shot"><img src="assets/help/ward.png" alt="A ward taking a hit" loading="lazy"
-                 onerror="this.closest('.shot').classList.add('empty')">
-              <figcaption>A ward taking a hit<span>assets/help/ward.png</span></figcaption></figure>
-            <b>Ward is cover, not a shield</b>
-            <p>It has a health bar set by how long you charged it, and it thins the whole time it stands. It stops <em>Spark</em> and <em>Rive</em> only — a Hexstone, a beam or a thrown crate goes straight through and takes it with them. It guards the way you face, and nothing behind you.</p>
-          </div>
-          <div class="card-x">
-            <figure class="shot"><img src="assets/help/beam.png" alt="Two beams and the orb" loading="lazy"
-                 onerror="this.closest('.shot').classList.add('empty')">
-              <figcaption>Two beams and the orb<span>assets/help/beam.png</span></figcaption></figure>
-            <b>The beam is the ultimate</b>
-            <p>Slow to light and expensive to hold, and it eats everything it touches. When two beams meet, the orb between them slides toward whoever has less mana — let it reach you and it hurts far worse than the beam.</p>
-          </div>
-        </div>
       </section>
 
       <details class="more">
@@ -275,8 +254,8 @@
 </div>
 
   <script>window.RPW_RELAY = "wss://rockpaperwizards.blipgaming.ca/ws";</script>
-  <script src="src/account.js?v=20"></script>
-  <script src="src/game.js?v=20"></script>
-  <script src="src/net.js?v=20"></script>
+  <script src="src/account.js?v=21"></script>
+  <script src="src/game.js?v=21"></script>
+  <script src="src/net.js?v=21"></script>
 </body>
 </html>
