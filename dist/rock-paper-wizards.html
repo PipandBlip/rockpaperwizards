@@ -885,14 +885,14 @@ const BIT = { up:1, down:2, left:4, right:8, spell:16, dash:1024, tab:2048 };
 function localMask(w){
   const C = w.pad;
   let m = 0;
-  if (keys[C.up]) m |= BIT.up;
-  if (keys[C.down]) m |= BIT.down;
-  if (keys[C.left]) m |= BIT.left;
-  if (keys[C.right]) m |= BIT.right;
+  if (keyDown(C.up)) m |= BIT.up;
+  if (keyDown(C.down)) m |= BIT.down;
+  if (keyDown(C.left)) m |= BIT.left;
+  if (keyDown(C.right)) m |= BIT.right;
   const km = w.seat === localSeat ? KEYMAP : KEYMAP2;
-  for (const k in km) if (keys[k]) m |= BIT.spell << km[k];
-  if (keys[C.dash]) m |= BIT.dash;
-  if (C.tab && keys.tab) m |= BIT.tab;
+  for (const k in km) if (keyDown(k)) m |= BIT.spell << km[k];
+  if (keyDown(C.dash)) m |= BIT.dash;
+  if (C.tab && keyDown("tab")) m |= BIT.tab;
   return m;
 }
 function applyMask(w, m){
@@ -915,6 +915,10 @@ function pumpInput(){
     if (phase !== "fight" || w.dead){ w.prevMask = 0; w.moveX = 0; w.moveY = 0; continue; }
     applyMask(w, NET.active ? NET.maskFor(w.seat) : localMask(w));
   }
+  // This step has now seen whatever was pressed since the last one. In a
+  // networked match the masks come off the wire instead, and the latch is
+  // cleared by RPW.localMask() when net.js samples the keyboard to send.
+  if (!NET.active) clearTaps();
 }
 
 /* ---------------------------------------------------------- helpers */
@@ -1260,8 +1264,25 @@ function bakeFloor(){
 }
 
 /* ---------------------------------------------------------- input */
+/* keys[] is what is physically down right now. tapped[] is what has been
+   pressed since the simulation last looked, and it is the difference between a
+   game that feels sharp and one that eats your inputs.
+
+   The simulation samples the keyboard once per fixed step, and steps only run
+   when a frame runs. A press and release that both land between two frames used
+   to be invisible: keys[k] went true and back to false with nothing sampling in
+   between, so the spell never cast and the step never happened. At sixty frames
+   a second that window is 16ms and you would rarely notice; in a busy six-wizard
+   fight the window is several times that, which is an ordinary quick tap.
+
+   So a press latches. The next step to run sees the key as held even if the
+   finger is already off it, and the latch is cleared once that step has taken
+   it — one press, one step, never dropped and never repeated. */
 const keys = {};
+const tapped = {};
 const held = {};   // spell index -> true while key down
+function keyDown(k){ return !!(keys[k] || tapped[k]); }
+function clearTaps(){ for (const k in tapped) if (tapped[k]) tapped[k] = false; }
 function typing(e){
   const t = e.target;
   return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
@@ -1273,8 +1294,9 @@ window.addEventListener("keydown", e => {
   if (k === "shift") keys[code === "ShiftRight" ? "shiftR" : "shiftL"] = true;
   if (["w","a","s","d","y","u","i","h","j","k","p","r","shift"," ",
        "1","2","3","4","5","6","tab","arrowup","arrowdown","arrowleft","arrowright"].includes(k)) e.preventDefault();
-  if (keys[k]) return;
+  if (keys[k]) return;              // an auto-repeat, not a new press
   keys[k] = true;
+  tapped[k] = true;                 // hold it for the simulation even if released first
   if (k === "p" && (phase === "fight" || phase === "paused")) togglePause();
   if (k === "r" && phase !== "menu") { resetOfflineCfg(); newMatch(); }
 });
@@ -1284,7 +1306,7 @@ window.addEventListener("keyup", e => {
   keys[k] = false;
   if (k === "shift") keys[(e.code || "") === "ShiftRight" ? "shiftR" : "shiftL"] = false;
 });
-window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; if (phase === "fight" && !NET.active) togglePause(); });
+window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; clearTaps(); if (phase === "fight" && !NET.active) togglePause(); });
 
 /* ---------------------------------------------------------- casting */
 function beginCharge(w, idx){
@@ -4111,6 +4133,7 @@ function newMatch(seed){
   matchSeed = (seed || ((Date.now() ^ (Math.random()*0xffffffff)) >>> 0)) >>> 0;
   startMusic();
   musicFor("battle");
+  clearTaps();    // nothing pressed before the wands are up carries into the match
   roundNo = 1;
   simFrame = 0;   // frame counter restarts once per match, not per round
   runScore = 0; kills = 0; survT = 0; waveNo = 0; waveLive = false; waveGap = 1.1;
@@ -4885,7 +4908,9 @@ requestAnimationFrame(frame);
 window.RPW = {
   NET, BIT, STEP,
   seedRng,
-  localMask: () => localMask(you),
+  // net.js samples this once per frame to send. Consuming the tap latch here is
+  // what stops a sub-frame press being sent twice — or not at all.
+  localMask: () => { const m = localMask(you); clearTaps(); return m; },
   // net.js calls this whenever a match starts or ends, so the hidden-tab pump
   // starts and stops with the match and not only on a visibility change
   pumpSync: () => syncPumpToVisibility(),
@@ -4923,6 +4948,14 @@ window.RPW = {
     newMatch(opts.seed);
   },
   seats: () => seats.map(x => ({ name: x.name, human: x.human })),
+  // test hook: where everyone is and what they are being told to do, so a rig
+  // can follow a keypress all the way through to the wizard actually moving
+  where: () => wizards.map(w => ({
+    seat: w.seat, human: w.human, dead: w.dead,
+    x: Math.round(w.x * 100) / 100, y: Math.round(w.y * 100) / 100,
+    mx: w.moveX || 0, my: w.moveY || 0,
+    mana: Math.round(w.mana * 10) / 10, charge: w.charge, beam: !!w.beamOn
+  })),
   // test hook: the cape's cloth for a seat. The spine, the two derived hems,
   // and the turn taken at each joint — that last one is what a test needs to
   // assert the cloth cannot fold through itself.

@@ -56,6 +56,37 @@ What is in place keeps it from being *effortless*: one paid result every 12
 seconds, 420 experience per result, 7000 per day. Honest play never touches
 any of them. Worth revisiting if profiles ever gate something competitive.
 
+## Input: why a press latches
+
+The simulation samples the keyboard **once per fixed step**, and steps only run
+when a frame runs. So a press and release that both landed between two frames
+were invisible: `keys[k]` went true and back to false with nothing sampling in
+between. The spell never cast; the movement step never happened.
+
+At sixty frames a second that window is 16ms and you would rarely catch it. In a
+busy six-wizard fight the window is several times that — an ordinary quick tap.
+It read as "sometimes my S doesn't move me down".
+
+`tapped[]` fixes it. A press latches; the next step to run sees the key as held
+even if the finger is already off it, and the latch is cleared once that step
+has taken it — **one press, one step, never dropped and never repeated**.
+
+Who clears it matters:
+
+* solo — `pumpInput()`, after the step has applied its mask
+* networked — `RPW.localMask()`, which net.js calls once per frame to send
+* `newMatch()` and window blur, so nothing pressed beforehand leaks into a match
+
+`npm run test:input` guards this. It drives the real game in a stubbed DOM and
+fires key events precisely between frames. Remove the latch and its first three
+assertions fail — that has been checked, not assumed.
+
+One consequence worth knowing: `tools/net-round-test.js` reports a different
+frame and hash than it did before this change. That is not a regression. The rig
+scripts a sub-frame dash tap, which used to be silently dropped and now lands,
+so the match plays out differently. The golden fingerprint is unchanged, because
+the bots' own decisions never depended on it.
+
 ## The page layout
 
 `fitStage()` in `src/game.js` caps the arena by height as well as width. The

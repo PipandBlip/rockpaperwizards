@@ -60,7 +60,10 @@ function fakeEl(id) {
 }
 
 /** run one match, returning a checksum every `every` frames */
-function run({ seed, diff, room, frames, every = 30, opts = null }) {
+/* Boot the game in a stubbed DOM and hand back the controls.
+   Split out of run() so other rigs — tools/input-test.js — can drive the same
+   sandbox instead of keeping a second copy of these stubs in step with this one. */
+function boot({ seed = 1, diff = 1, room = 0, opts = null } = {}) {
   const els = {};
   const listeners = {};
   let frameCb = null;
@@ -108,6 +111,19 @@ function run({ seed, diff, room, frames, every = 30, opts = null }) {
     opts
   });
 
+  return {
+    sandbox, fire, rng,
+    RPW: sandbox.window.RPW,
+    // advance exactly one rendered frame, the way the browser would
+    step(ms = 16){ clock += ms; frameCb(clock); },
+    now: () => clock
+  };
+}
+
+function run({ seed, diff, room, frames, every = 30, opts = null }) {
+  const rig = boot({ seed, diff, room, opts });
+  const { fire, rng, sandbox } = rig;
+
   const SPELLS = [["y", .42, [2, 10]], ["u", .24, [6, 30]], ["i", .13, [20, 70]],
                   ["h", .11, [2, 8]], ["k", .06, [10, 40]], ["j", .04, [70, 170]]];
   const release = new Map();
@@ -135,8 +151,7 @@ function run({ seed, diff, room, frames, every = 30, opts = null }) {
     }
     for (const [k, at] of [...release]) if (i >= at) { fire("keyup", k); release.delete(k); }
 
-    clock += 16;
-    frameCb(clock);
+    rig.step();
     if (i % every === 0) marks.push(sandbox.window.RPW.hash());
   }
   return marks;
@@ -146,7 +161,7 @@ function run({ seed, diff, room, frames, every = 30, opts = null }) {
 // what the bots actually DO — the check that an optimisation left behaviour
 // alone, which this file on its own cannot make (it compares a build against
 // itself, not against yesterday's).
-module.exports = { run };
+module.exports = { run, boot };
 if (require.main !== module) return;
 
 const SEEDS = +(process.env.SEEDS || 6);
