@@ -3357,7 +3357,6 @@ function endRound(win){
       const networked = NET.active;
       leaveRoom();
       show(networked ? "mp" : "solo");
-      if (networked) el("mpNote").hidden = true;   // not a menu hint on a results screen
       renderStats();
       el("curtainTitle").textContent = mine ? "You take the match" : win.name + " takes the match";
       // The line under the title is the match's payout, or nothing at all.
@@ -3677,14 +3676,8 @@ function onNetChange(n){
 
 /* ---------------------------------------------------- the buttons */
 el("soloBtn").addEventListener("click", () => { leaveRoom(); show("solo"); });
-const MP_NOTE = "Host a duel to get an invite code, or paste a friend\u2019s code to join theirs.";
 el("mpBtn").addEventListener("click", () => {
   show("mp");
-  const note = el("mpNote");
-  note.hidden = false;              // a results screen hides it; the menu wants it back
-  note.classList.toggle("bad", !hasNet());
-  note.textContent = hasNet() ? MP_NOTE
-    : "No match server is configured yet, so hosting and joining will not connect. Solo play works as normal.";
 });
 el("diffRow").addEventListener("click", e => {
   const b = e.target.closest ? e.target.closest("button[data-diff]") : null;
@@ -4081,7 +4074,6 @@ window.RPW = {
     el("pausePanel").hidden = true;
     el("curtain").hidden = false;
     show("mp");
-    el("mpNote").hidden = true;
     if (reason === "dropped"){
       el("curtainTitle").textContent = "You dropped out";
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";
