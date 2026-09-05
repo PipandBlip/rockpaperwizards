@@ -257,10 +257,12 @@ function makeProp(type, x, y){
 function makeMap(){
   debris = [];
   const s = mapScale();
-  // Presets are a multiplayer host choice only. In solo, duel, or escalation the
-  // arena ALWAYS uses the seeded random scatter — never a fixed layout — no
-  // matter what state a previous networked match left behind.
-  const preset = NET.active ? MAP_PRESETS[matchCfg.mapPreset] : null;
+  // The chosen arena, in EVERY mode. This used to be gated on NET.active, which
+  // meant picking Forest or Castle did nothing unless a stranger had actually
+  // joined your room — the picker looked broken because it was. matchCfg is now
+  // set explicitly at the start of every match (solo picker, host options, or
+  // the relay's start message), so there is no stale preset left to leak.
+  const preset = MAP_PRESETS[matchCfg.mapPreset] || null;
   if (preset){
     // a fixed layout — identical on every machine, no RNG touched
     for (const [type, fx, fy] of preset){
@@ -411,17 +413,17 @@ function bakeFloor(){
      and two clients disagreeing about where a tuft of grass sits costs nothing,
      whereas a decorative draw from the SEEDED stream shifts every roll that
      follows it and silently desyncs a networked match. */
-  const theme = NET.active ? matchCfg.mapPreset : "random";
+  const theme = matchCfg.mapPreset || "random";
   if (theme === "forest"){
-    g.fillStyle = "#0b1410"; g.fillRect(0,0,W,H);
+    g.fillStyle = "#101c14"; g.fillRect(0,0,W,H);
     // earth, mottled in patches rather than tiled in squares
-    for (let i = 0; i < 90; i++){
-      const x = vrnd(0,W), y = vrnd(0,H), r = vrnd(30,110);
-      g.fillStyle = `rgba(${(30+vrand()*18)|0},${(58+vrand()*26)|0},${(34+vrand()*16)|0},0.06)`;
+    for (let i = 0; i < 150; i++){
+      const x = vrnd(0,W), y = vrnd(0,H), r = vrnd(18,62);
+      g.fillStyle = `rgba(${(38+vrand()*22)|0},${(74+vrand()*30)|0},${(44+vrand()*18)|0},0.045)`;
       g.beginPath(); g.arc(x,y,r,0,TAU); g.fill();
     }
     // roots creeping across the floor
-    g.strokeStyle = "rgba(60,44,28,.34)";
+    g.strokeStyle = "rgba(74,54,34,.40)";
     for (let i = 0; i < 26; i++){
       const x = vrnd(0,W), y = vrnd(0,H), a = vrnd(0,TAU), L = vrnd(40,150);
       g.lineWidth = vrnd(1,3);
@@ -431,7 +433,7 @@ function bakeFloor(){
       g.stroke();
     }
     // tufts of grass
-    g.strokeStyle = "rgba(96,150,80,.30)"; g.lineWidth = 1.2;
+    g.strokeStyle = "rgba(112,170,92,.38)"; g.lineWidth = 1.2;
     for (let i = 0; i < 220; i++){
       const x = vrnd(0,W), y = vrnd(0,H), h = vrnd(3,8);
       g.beginPath(); g.moveTo(x,y); g.lineTo(x + vrnd(-2,2), y - h); g.stroke();
@@ -554,7 +556,7 @@ window.addEventListener("keydown", e => {
   keys[k] = true;
   tapped[k] = true;                 // hold it for the simulation even if released first
   if (k === "p" && (phase === "fight" || phase === "paused")) togglePause();
-  if (k === "r" && phase !== "menu") { resetOfflineCfg(); newMatch(); }
+  if (k === "r" && phase !== "menu") { newMatch(); }   // same arena, fresh round
 });
 window.addEventListener("keyup", e => {
   if (typing(e)) return;
@@ -3237,13 +3239,12 @@ let seatLevels = null;
 // message. The relay sanitises them server-side too, so the lockstep sim can
 // trust they never diverge.
 let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random" };
-// Offline play (solo duel, escalation, or a local fallback match) always gets
-// the fresh default world. Multiplayer opts are set by startMatch from the
-// relay's start message and must NOT be carried into solo — solo has no map
-// selector, so a preset left over from a hosted game would otherwise replace
-// the random-scatter arena forever.
+// Offline play (solo duel or escalation) gets the default world plus whatever
+// arena the player picked in the solo panel. Multiplayer opts arrive from the
+// relay's start message and are never carried into solo: the only thing that
+// crosses over is the solo picker's own value, which the player can see.
 function resetOfflineCfg(){
-  matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random" };
+  matchCfg = sanitizeMatchCfg({ mapPreset: soloMapPreset });
 }
 function sanitizeMatchCfg(o){
   o = o || {};
@@ -3259,6 +3260,9 @@ function sanitizeMatchCfg(o){
 // The host panel UI state (what the host is choosing in the lobby).
 let hostRounds = 2, hostMode = "rounds", hostLives = 3,
     hostMapSize = "medium", hostFog = 0, hostMapPreset = "random";
+// The solo panel has its own arena picker, so a solo match never silently
+// inherits a hosted room's map.
+let soloMapPreset = "random";
 
 // Map-size factor: scales the arena's spawn ring and prop placement bounds.
 const MAP_SCALE = { small: 0.82, medium: 1.0, large: 1.28 };
@@ -3798,8 +3802,10 @@ const paintMapSize = segRow(el("segMapSize"), ["small","medium","large"], () => 
                             v => v[0].toUpperCase() + v.slice(1));
 const paintFog = segRow(el("segFog"), [0,1], () => hostFog, v => { hostFog = v; },
                         v => v ? "On" : "Off");
-const paintPreset = segRow(el("segPreset"), ["random","arena","gauntlet","crossfire","forest","castle"], () => hostMapPreset, v => { hostMapPreset = v; },
-                           v => v === "random" ? "Random" : v[0].toUpperCase() + v.slice(1));
+const PRESET_NAMES = ["random","arena","gauntlet","crossfire","forest","castle"];
+const presetLabel = v => v === "random" ? "Random" : v[0].toUpperCase() + v.slice(1);
+const paintPreset = segRow(el("segPreset"), PRESET_NAMES, () => hostMapPreset, v => { hostMapPreset = v; }, presetLabel);
+const paintSoloPreset = segRow(el("segSoloPreset"), PRESET_NAMES, () => soloMapPreset, v => { soloMapPreset = v; }, presetLabel);
 function paintModeRows(){
   const lives = hostMode === "lives";
   el("rowRounds").hidden = lives;
@@ -3992,7 +3998,10 @@ el("startRoom").addEventListener("click", () => {
   if (inRoom()){ window.RPWNet.start(); return; }   // the server hands everyone the same seed
   mode = "match";
   roomHumans = 1;
-  resetOfflineCfg();
+  // Nobody joined, so this runs locally — but the host still chose these
+  // options a moment ago, and throwing them away is how "Forest" appeared to
+  // do nothing at all.
+  matchCfg = sanitizeMatchCfg(hostOpts());
   newMatch();
   cvs.focus();
 });

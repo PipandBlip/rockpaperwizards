@@ -281,7 +281,14 @@
   .room h4{margin:0;font-family:var(--display);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:600}
   .rrow{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10.5px;letter-spacing:.08em;color:#a99fc4;text-transform:uppercase}
   .rrow b{color:var(--chalk);font-weight:600}
-  .seg{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  /* min-width:0 is what actually lets flex-wrap fire: without it the row keeps
+     its content width and six preset names push straight out of the panel */
+  .seg{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
+  /* the solo arena picker gets the label above the names — six of them never sit
+     beside a label at panel width */
+  .arenapick{width:100%}
+  .arenapick .rrow{flex-direction:column;align-items:center;gap:7px}
+  .arenapick .seg{justify-content:center}
   .seg button{padding:4px 9px;font-size:10.5px;letter-spacing:.04em}
   .seg button.sel{border-color:var(--spark);color:var(--spark);background:rgba(63,231,255,.12)}
   .rrow input[type=range]{flex:1;max-width:130px;accent-color:var(--spark);background:transparent;cursor:pointer}

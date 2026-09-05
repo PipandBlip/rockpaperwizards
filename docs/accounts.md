@@ -373,6 +373,32 @@ left **out of `SPAWN`**, so the random map generates exactly the arenas it
 always did. That is why `npm run test:golden` still prints the same 20
 fingerprints — the bots play precisely as before.
 
+### The picker had to work in solo, and did not
+
+Green picked Forest and got the same purple arena. The presets were gated on
+`NET.active`:
+
+```js
+const preset = NET.active ? MAP_PRESETS[matchCfg.mapPreset] : null;   // was
+```
+
+so an arena choice only took effect once a stranger had actually joined the
+room. Pressing **Start** in a room nobody joined called `resetOfflineCfg()`,
+which threw the host's options away wholesale — map, fog, rounds and all — and
+solo had no picker of its own to begin with. Three ways to choose a map, none
+of which reached `makeMap()`.
+
+The gate is gone. `matchCfg` is now set explicitly at the start of every match —
+from the solo panel's own **Arena** row, from `hostOpts()` when a hosted room
+starts locally, or from the relay's start message — so there is no stale preset
+left to leak, which is what the gate was guarding against. Pressing `R`
+restarts in the arena you are already standing in rather than resetting to
+Random.
+
+The determinism rig used to flip `NET.active` to reach the presets at all, which
+meant the fixed-layout runs passed while the path a player actually takes was
+broken. It now starts them the offline way.
+
 ### Scenery is baked, not drawn
 
 `bakeFloor()` is themed. Forest gets mottled earth, roots and grass tufts;

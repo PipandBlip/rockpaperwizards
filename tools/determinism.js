@@ -122,13 +122,13 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null } = {}) {
 
 function run({ seed, diff, room, frames, every = 30, opts = null, preset = null }) {
   const rig = boot({ seed, diff, room, opts });
-  /* Map presets are a HOST choice and only apply in a networked match, so a
-     solo rig never reaches them. Flipping NET.active is what lets these runs
-     cover the fixed layouts — including the two themed ones, whose props are
-     built with the same seeded draws as everything else and would desync just
-     as loudly if they were not. */
+  /* A fixed layout, started the way an OFFLINE match starts — no NET.active.
+     Presets used to be gated on a live network match, which made the arena
+     picker do nothing in solo; these runs would have passed anyway and told us
+     nothing. Started this way they cover the path a player actually takes, and
+     the themed props still draw from the same seeded stream as everything else,
+     so they would desync just as loudly if they were wrong. */
   if (preset){
-    rig.RPW.NET.active = true;
     rig.RPW.startMatch({ mode: "match", seed, difficulty: diff, total: room || 2,
                          humans: 1, opts: Object.assign({}, opts, { mapPreset: preset }) });
   }
