@@ -1058,7 +1058,26 @@ const PROPS = {
   shelf:   { solid:1, stopsShot:1, stopsBeam:1, hp:5,        lift:0, r:[26,36], chip:"#8f6b45" },
   urn:     { solid:1, stopsShot:1, stopsBeam:0, hp:1,        lift:1, r:[11,15], chip:"#9fb6c9" },
   chair:   { solid:0, stopsShot:0, stopsBeam:0, hp:1,        lift:1, r:[11,14], chip:"#c09566" },
-  stool:   { solid:0, stopsShot:0, stopsBeam:0, hp:1,        lift:1, r:[9,12],  chip:"#c09566" }
+  stool:   { solid:0, stopsShot:0, stopsBeam:0, hp:1,        lift:1, r:[9,12],  chip:"#c09566" },
+
+  /* Scenery for the two themed maps. Deliberately NOT added to SPAWN below —
+     the random scatter keeps exactly the props it always had, so every existing
+     map generates identically and the behaviour fingerprint does not move.
+
+     Each one earns its place by playing differently, not just by looking
+     different: a tree is cover you cannot break, a bush hides you without
+     stopping a shot, a log is a heavy thing to throw, a brazier is a barrel
+     that lights the room. */
+  // forest
+  tree:    { solid:1, stopsShot:1, stopsBeam:1, hp:Infinity, lift:0, r:[26,34], chip:"#4a6b3a" },
+  bush:    { solid:0, stopsShot:0, stopsBeam:1, hp:3,        lift:0, r:[20,27], chip:"#5f8a46" },
+  log:     { solid:1, stopsShot:1, stopsBeam:1, hp:4,        lift:1, r:[18,24], chip:"#7a5a38" },
+  stump:   { solid:1, stopsShot:1, stopsBeam:1, hp:6,        lift:0, r:[14,19], chip:"#6b523a" },
+  // castle
+  statue:  { solid:1, stopsShot:1, stopsBeam:1, hp:Infinity, lift:0, r:[18,24], chip:"#8e93b8" },
+  brazier: { solid:1, stopsShot:1, stopsBeam:0, hp:2,        lift:0, r:[13,17], chip:"#ffb457" },
+  chest:   { solid:1, stopsShot:1, stopsBeam:1, hp:3,        lift:1, r:[16,21], chip:"#c8a24e" },
+  rubble:  { solid:0, stopsShot:0, stopsBeam:0, hp:2,        lift:1, r:[11,15], chip:"#7c7490" }
 };
 const SPAWN = [["stone",.15],["pillar",.09],["lattice",.09],["crate",.15],["barrel",.11],
                ["table",.08],["shelf",.06],["urn",.10],["chair",.11],["stool",.08]];
@@ -1226,22 +1245,84 @@ function bakeFloor(){
   const f = document.createElement("canvas");
   f.width = W; f.height = H;
   const g = f.getContext("2d");
-  g.fillStyle = "#0c0918"; g.fillRect(0,0,W,H);
-  // flagstones
-  for (let y = 0; y < H; y += 40){
-    for (let x = 0; x < W; x += 40){
-      g.fillStyle = `rgba(255,255,255,${0.006 + rand()*0.012})`;
-      g.fillRect(x+1, y+1, 38, 38);
+  /* The ground each map stands on.
+
+     Every mark here is decoration, so it is drawn from vrand() — the view's
+     unseeded stream — and never from rand(). The floor is baked once per round
+     and two clients disagreeing about where a tuft of grass sits costs nothing,
+     whereas a decorative draw from the SEEDED stream shifts every roll that
+     follows it and silently desyncs a networked match. */
+  const theme = NET.active ? matchCfg.mapPreset : "random";
+  if (theme === "forest"){
+    g.fillStyle = "#0b1410"; g.fillRect(0,0,W,H);
+    // earth, mottled in patches rather than tiled in squares
+    for (let i = 0; i < 90; i++){
+      const x = vrnd(0,W), y = vrnd(0,H), r = vrnd(30,110);
+      g.fillStyle = `rgba(${(30+vrand()*18)|0},${(58+vrand()*26)|0},${(34+vrand()*16)|0},0.06)`;
+      g.beginPath(); g.arc(x,y,r,0,TAU); g.fill();
+    }
+    // roots creeping across the floor
+    g.strokeStyle = "rgba(60,44,28,.34)";
+    for (let i = 0; i < 26; i++){
+      const x = vrnd(0,W), y = vrnd(0,H), a = vrnd(0,TAU), L = vrnd(40,150);
+      g.lineWidth = vrnd(1,3);
+      g.beginPath(); g.moveTo(x,y);
+      g.quadraticCurveTo(x + Math.cos(a)*L*.5 + vrnd(-30,30), y + Math.sin(a)*L*.5 + vrnd(-30,30),
+                         x + Math.cos(a)*L, y + Math.sin(a)*L);
+      g.stroke();
+    }
+    // tufts of grass
+    g.strokeStyle = "rgba(96,150,80,.30)"; g.lineWidth = 1.2;
+    for (let i = 0; i < 220; i++){
+      const x = vrnd(0,W), y = vrnd(0,H), h = vrnd(3,8);
+      g.beginPath(); g.moveTo(x,y); g.lineTo(x + vrnd(-2,2), y - h); g.stroke();
+    }
+  } else if (theme === "castle"){
+    g.fillStyle = "#0f0d16"; g.fillRect(0,0,W,H);
+    // big flagstones with mortar between them
+    const F = 80;
+    for (let y = 0; y < H; y += F){
+      for (let x = 0; x < W; x += F){
+        g.fillStyle = `rgba(255,255,255,${0.010 + vrand()*0.016})`;
+        g.fillRect(x+2, y+2, F-4, F-4);
+        g.strokeStyle = "rgba(0,0,0,.28)"; g.lineWidth = 1;
+        g.strokeRect(x+2.5, y+2.5, F-5, F-5);
+      }
+    }
+    // a runner up the middle of the hall
+    g.fillStyle = "rgba(96,26,44,.20)";
+    g.fillRect(W*0.5 - 66, 0, 132, H);
+    g.strokeStyle = "rgba(200,162,78,.30)"; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(W*0.5-58, 0); g.lineTo(W*0.5-58, H);
+    g.moveTo(W*0.5+58, 0); g.lineTo(W*0.5+58, H); g.stroke();
+    // torchlight pooling down the walls
+    for (const [tx,ty] of [[70,H*0.22],[70,H*0.78],[W-70,H*0.22],[W-70,H*0.78]]){
+      const grd = g.createRadialGradient(tx,ty,0,tx,ty,150);
+      grd.addColorStop(0,"rgba(255,168,72,.10)");
+      grd.addColorStop(1,"rgba(255,168,72,0)");
+      g.fillStyle = grd; g.beginPath(); g.arc(tx,ty,150,0,TAU); g.fill();
+    }
+  } else {
+    g.fillStyle = "#0c0918"; g.fillRect(0,0,W,H);
+    // flagstones
+    for (let y = 0; y < H; y += 40){
+      for (let x = 0; x < W; x += 40){
+        g.fillStyle = `rgba(255,255,255,${0.006 + rand()*0.012})`;
+        g.fillRect(x+1, y+1, 38, 38);
+      }
     }
   }
   // duelling circle
   g.save();
   g.translate(W/2, H/2);
-  g.strokeStyle = "rgba(169,124,255,.14)";
+  const ring = theme === "forest" ? ["rgba(120,190,110,.16)", "rgba(190,225,150,.10)"]
+             : theme === "castle" ? ["rgba(214,176,96,.16)", "rgba(255,196,120,.10)"]
+             : ["rgba(169,124,255,.14)", "rgba(63,231,255,.10)"];
+  g.strokeStyle = ring[0];
   g.lineWidth = 1.4;
   g.beginPath(); g.arc(0,0,190,0,TAU); g.stroke();
   g.beginPath(); g.arc(0,0,168,0,TAU); g.stroke();
-  g.strokeStyle = "rgba(63,231,255,.10)";
+  g.strokeStyle = ring[1];
   for (let i = 0; i < 12; i++){
     const a = i/12*TAU;
     g.beginPath();
@@ -1259,7 +1340,24 @@ function bakeFloor(){
     g.fillStyle = grd;
     g.beginPath(); g.arc(x,y,r,0,TAU); g.fill();
   }
+  /* Unbreakable scenery is painted into the floor and never drawn again.
+
+     A stone, a pillar, a tree, a statue: infinite hit points, never picked up,
+     never moved. Redrawing them sixty times a second is pure waste, and in a
+     lockstep match waste on ONE machine stalls everybody, because the others
+     cannot advance until its inputs arrive. So they are baked here and skipped
+     in the draw loop — the themed maps carry more scenery than the old ones and
+     still cost less per frame. */
+  const ctxWas = ctx;
+  ctx = g;
+  for (const d of debris) if (bakedProp(d)) drawDebris(d);
+  ctx = ctxWas;
+
   floor = f;
+}
+// A prop is baked only if nothing can ever change about it.
+function bakedProp(d){
+  return d.hp === Infinity && !d.lift && !d.owner;
 }
 
 /* ---------------------------------------------------------- input */
@@ -2370,7 +2468,9 @@ function draw(){
     }
   }
   ctx.drawImage(floor, 0, 0);
-  for (const d of debris) drawDebris(d);
+  // the permanent scenery is already in the floor image; only the things that
+  // can break, burn or be thrown are worth redrawing
+  for (const d of debris) if (!bakedProp(d)) drawDebris(d);
   if (you.lock && !you.lock.dead){
     const t = you.lock;
     ctx.save();
@@ -2568,6 +2668,141 @@ function drawDebris(d){
       ctx.globalAlpha = 1;
       break;
     }
+    /* ---- forest ------------------------------------------------------ */
+    case "tree": {
+      // seen from above: a canopy of overlapping leaf clumps with the trunk
+      // showing through the middle. Unbreakable, so it is permanent cover.
+      ctx.fillStyle = "#2a1c14";
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.30, 0, TAU); ctx.fill();
+      for (let i = 0; i < 6; i++){
+        const ang = d.seed + i/6*TAU;
+        const rr = d.r * (0.46 + 0.12*Math.sin(d.seed*2 + i*1.7));
+        const cx = Math.cos(ang)*d.r*0.46, cy = Math.sin(ang)*d.r*0.46;
+        ctx.fillStyle = i % 2 ? "#31532a" : "#24401f";
+        ctx.beginPath(); ctx.arc(cx, cy, rr, 0, TAU); ctx.fill();
+      }
+      ctx.fillStyle = "#3e6634";
+      ctx.beginPath(); ctx.arc(-d.r*0.16, -d.r*0.18, d.r*0.42, 0, TAU); ctx.fill();
+      ctx.strokeStyle = line; ctx.globalAlpha *= .45; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.86, 0, TAU); ctx.stroke();
+      ctx.globalAlpha = d.solid ? 1 : .82;
+      break;
+    }
+    case "bush": {
+      // hides you without stopping anything: shots pass straight through
+      const clumps = 5;
+      for (let i = 0; i < clumps; i++){
+        const ang = d.seed + i/clumps*TAU;
+        const cx = Math.cos(ang)*d.r*0.42, cy = Math.sin(ang)*d.r*0.42;
+        ctx.fillStyle = i % 2 ? "#1f3a22" : "#27492a";
+        ctx.beginPath(); ctx.arc(cx, cy, d.r*0.52, 0, TAU); ctx.fill();
+      }
+      ctx.strokeStyle = line; ctx.globalAlpha *= .5; ctx.lineWidth = 1.2;
+      for (let i = 0; i < 7; i++){
+        const ang = d.seed*1.7 + i/7*TAU, rr = d.r*(0.5 + 0.35*Math.sin(d.seed+i));
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang)*rr*0.4, Math.sin(ang)*rr*0.4);
+        ctx.lineTo(Math.cos(ang)*rr, Math.sin(ang)*rr);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = d.solid ? 1 : .82;
+      break;
+    }
+    case "log": {
+      const L = d.r*1.15, T = d.r*0.52;
+      ctx.fillStyle = "#2e2015"; ctx.strokeStyle = line; ctx.lineWidth = 2;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-L, -T, L*2, T*2, T*0.7);
+      else ctx.rect(-L, -T, L*2, T*2);
+      ctx.fill(); ctx.stroke();
+      // the cut ends, with rings
+      for (const sx of [-1, 1]){
+        ctx.fillStyle = "#4a361f";
+        ctx.beginPath(); ctx.ellipse(sx*L*0.94, 0, T*0.36, T*0.86, 0, 0, TAU); ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,.35)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(sx*L*0.94, 0, T*0.2, T*0.5, 0, 0, TAU); ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-L*0.7, -T*0.3); ctx.lineTo(L*0.7, -T*0.3); ctx.stroke();
+      break;
+    }
+    case "stump": {
+      ctx.fillStyle = "#3d2c1c"; ctx.strokeStyle = line; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(0, 0, d.r, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#5a4227";
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.78, 0, TAU); ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 1;
+      for (let i = 1; i <= 3; i++){
+        ctx.beginPath(); ctx.arc(0, 0, d.r*0.78*(i/3.4), 0, TAU); ctx.stroke();
+      }
+      break;
+    }
+
+    /* ---- castle ------------------------------------------------------ */
+    case "statue": {
+      // a figure on a plinth, robed and facing its own way
+      ctx.fillStyle = "#22243a"; ctx.strokeStyle = "#4b4f70"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, d.r, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#5d6289";
+      ctx.beginPath();
+      ctx.moveTo(d.r*0.5, 0);
+      ctx.quadraticCurveTo(0, d.r*0.66, -d.r*0.55, 0);
+      ctx.quadraticCurveTo(0, -d.r*0.66, d.r*0.5, 0);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#8e93b8";
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.26, 0, TAU); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.16)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.72, 0, TAU); ctx.stroke();
+      break;
+    }
+    case "brazier": {
+      // beams pass over an open fire bowl; shots do not
+      ctx.fillStyle = "#1e1b28"; ctx.strokeStyle = "#4a4358"; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(0, 0, d.r, 0, TAU); ctx.fill(); ctx.stroke();
+      // the flame breathes on view time — never on the seeded clock
+      const flick = 0.82 + 0.18*Math.sin(performance.now()/150 + d.seed*6);
+      ctx.fillStyle = "#5a2a10";
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.66, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#ff8a2b";
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.5*flick, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#ffd88a";
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.26*flick, 0, TAU); ctx.fill();
+      break;
+    }
+    case "chest": {
+      const tw = d.r*0.92, th = d.r*0.66;
+      ctx.fillStyle = "#2b1d12"; ctx.strokeStyle = line; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.rect(-tw, -th, tw*2, th*2); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = line; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-tw, -th*0.2); ctx.lineTo(tw, -th*0.2);
+      ctx.moveTo(-tw*0.45, -th); ctx.lineTo(-tw*0.45, th);
+      ctx.moveTo(tw*0.45, -th); ctx.lineTo(tw*0.45, th);
+      ctx.stroke();
+      ctx.fillStyle = line;
+      ctx.beginPath(); ctx.arc(0, 0, 2.4, 0, TAU); ctx.fill();
+      break;
+    }
+    case "rubble": {
+      // knocked-out masonry: a scatter of chunks you can pick up and throw
+      for (let i = 0; i < 4; i++){
+        const ang = d.seed + i*1.9;
+        const cx = Math.cos(ang)*d.r*0.4, cy = Math.sin(ang)*d.r*0.4;
+        const rr = d.r*(0.3 + 0.16*Math.sin(d.seed + i*2.3));
+        ctx.fillStyle = i % 2 ? "#2b2a3d" : "#35334a";
+        ctx.beginPath();
+        ctx.moveTo(cx + rr, cy);
+        ctx.lineTo(cx, cy + rr*0.9);
+        ctx.lineTo(cx - rr*0.9, cy);
+        ctx.lineTo(cx, cy - rr*0.8);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.strokeStyle = line; ctx.globalAlpha *= .4; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, 0, d.r*0.8, 0, TAU); ctx.stroke();
+      ctx.globalAlpha = d.solid ? 1 : .82;
+      break;
+    }
+
     case "crate": {
       const t = d.r*0.82;
       ctx.fillStyle = "#33261a"; ctx.strokeStyle = line; ctx.lineWidth = 2;
@@ -3859,7 +4094,7 @@ function sanitizeMatchCfg(o){
     lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
     mapSize: ["small","medium","large"].includes(o.mapSize) ? o.mapSize : "medium",
     fog: o.fog ? 1 : 0,
-    mapPreset: ["random","arena","gauntlet","crossfire"].includes(o.mapPreset) ? o.mapPreset : "random"
+    mapPreset: ["random","arena","gauntlet","crossfire","forest","castle"].includes(o.mapPreset) ? o.mapPreset : "random"
   };
 }
 // The host panel UI state (what the host is choosing in the lobby).
@@ -3883,7 +4118,26 @@ const MAP_PRESETS = {
             ["barrel",.62,.33],["barrel",.38,.67]],
   crossfire:[["stone",.20,.35],["stone",.20,.65],["pillar",.80,.35],["pillar",.80,.65],
              ["crate",.40,.20],["crate",.60,.80],["barrel",.40,.80],["barrel",.60,.20],
-             ["lattice",.50,.50],["chair",.33,.33],["stool",.67,.67],["urn",.50,.28]]
+             ["lattice",.50,.50],["chair",.33,.33],["stool",.67,.67],["urn",.50,.28]],
+
+  /* A clearing ringed by trees you cannot cut down, with bushes to disappear
+     into. Mirror-symmetric so neither spawn is favoured, and the middle is left
+     open so the fight has somewhere to happen. */
+  forest:  [["tree",.16,.20],["tree",.16,.80],["tree",.84,.20],["tree",.84,.80],
+            ["tree",.50,.10],["tree",.50,.90],
+            ["bush",.32,.38],["bush",.32,.62],["bush",.68,.38],["bush",.68,.62],
+            ["log",.44,.24],["log",.56,.76],
+            ["stump",.28,.50],["stump",.72,.50],
+            ["rubble",.50,.50]],
+
+  /* A hall: statues down the spine, braziers at the corners of the floor, and
+     chests worth hiding behind until somebody breaks them. */
+  castle:  [["statue",.50,.22],["statue",.50,.78],
+            ["pillar",.22,.28],["pillar",.22,.72],["pillar",.78,.28],["pillar",.78,.72],
+            ["brazier",.34,.50],["brazier",.66,.50],
+            ["chest",.40,.30],["chest",.60,.70],
+            ["chest",.40,.70],["chest",.60,.30],
+            ["rubble",.50,.46],["rubble",.50,.54]]
 };
 
 // Fog of war: how far a wizard can see, scaled a little with the arena.
@@ -4385,7 +4639,7 @@ const paintMapSize = segRow(el("segMapSize"), ["small","medium","large"], () => 
                             v => v[0].toUpperCase() + v.slice(1));
 const paintFog = segRow(el("segFog"), [0,1], () => hostFog, v => { hostFog = v; },
                         v => v ? "On" : "Off");
-const paintPreset = segRow(el("segPreset"), ["random","arena","gauntlet","crossfire"], () => hostMapPreset, v => { hostMapPreset = v; },
+const paintPreset = segRow(el("segPreset"), ["random","arena","gauntlet","crossfire","forest","castle"], () => hostMapPreset, v => { hostMapPreset = v; },
                            v => v === "random" ? "Random" : v[0].toUpperCase() + v.slice(1));
 function paintModeRows(){
   const lives = hostMode === "lives";
@@ -4853,6 +5107,33 @@ let last = performance.now(), acc = 0;
 function hiddenTab(){
   return typeof document !== "undefined" && document.hidden === true;
 }
+/* The clock that keeps a match honest.
+
+   The simulation must advance sixty times a second in REAL time. It is not a
+   solo game where running slow merely feels sluggish: in a lockstep match every
+   client steps together, so one machine simulating at three quarters speed puts
+   the whole room in slow motion. Measured on a full six-Archmage arena, that is
+   exactly what used to happen — 46 simulation frames a second against a wall
+   clock wanting 60.
+
+   Two things caused it, and both were in these few lines:
+
+   1. The step cap was five. A frame that renders in 77ms owes 4.6 steps, so any
+      jitter at all pushed past the cap.
+   2. On hitting the cap the leftover time was thrown away (`acc = 0`). That is
+      not a catch-up policy, it is a leak — the time never comes back, and the
+      match silently runs slow for everybody.
+
+   Now the cap is generous enough to absorb a slow frame, the backlog is carried
+   rather than dumped (bounded, so it can never spiral), and if the simulation
+   is still behind after all that, the frame skips its PICTURE instead. Drawing
+   is the expensive part by two orders of magnitude; a step is about a
+   millisecond. Better to show one fewer frame than to hold five other players
+   in treacle. */
+const STEP_CAP = 12;        // steps one frame may run before it gives up
+const MAX_BACKLOG = 12;     // steps of debt we are willing to carry
+const MAX_SKIP = 1;         // never drop two pictures in a row
+let skipped = 0;
 function pump(now){
   const bg = hiddenTab();
   // background timers are clamped to about a second, so a hidden tab wakes up
@@ -4860,16 +5141,26 @@ function pump(now){
   const real = Math.min((now - last)/1000, bg ? 2 : .25);
   last = now;
   acc += real;
-  let steps = 0;
-  const cap = bg ? 300 : 5;
+  let steps = 0, waiting = false;
+  const cap = bg ? 300 : STEP_CAP;
   while (acc >= STEP && steps < cap){
-    if (NET.active && !NET.ready(simFrame)) break;   // stalled waiting on a peer
+    if (NET.active && !NET.ready(simFrame)) { waiting = true; break; }   // a peer owes us input
     acc -= STEP;
     simStep();
     steps++;
   }
-  if (steps >= cap) acc = 0;
-  if (!bg){ updateCapes(real); draw(); syncHUD(); }
+  // Waiting on a peer is not the same as being slow. Do not bank the waiting
+  // time, or the moment their input lands we fast-forward through everything
+  // that happened while we sat there.
+  if (waiting) acc = Math.min(acc, STEP * 2);
+  else if (acc > STEP * MAX_BACKLOG) acc = STEP * MAX_BACKLOG;
+
+  if (bg) return;
+  syncHUD();
+  if (!waiting && acc >= STEP && skipped < MAX_SKIP){ skipped++; return; }
+  skipped = 0;
+  updateCapes(real);
+  draw();
 }
 function frame(now){
   pump(now);

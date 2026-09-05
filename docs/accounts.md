@@ -354,6 +354,75 @@ multiplayer match.
 the straight line behind the wizard — that is what lets a test assert it
 actually sways (3.4px at rest, 7.8px moving) rather than trailing rigidly.
 
+## Maps: forest and castle
+
+There are now two hand-laid arenas alongside the random one, chosen by
+`matchCfg.mapPreset` and laid out in `MAP_PRESETS`. Both are mirror-symmetric
+so neither seat gets the better half, and both keep the middle open — a map
+that clutters the duelling ring turns every round into a game of hide.
+
+**Forest** — six trees (indestructible, block shots and beams), four bushes
+(soft cover: beams stop, shots pass), two logs and two stumps you can break,
+one patch of rubble.
+
+**Castle** — two statues and four pillars that never come down, two braziers,
+four chests and two rubble piles that do.
+
+The props are additive: they were appended to the prop table and deliberately
+left **out of `SPAWN`**, so the random map generates exactly the arenas it
+always did. That is why `npm run test:golden` still prints the same 20
+fingerprints — the bots play precisely as before.
+
+### Scenery is baked, not drawn
+
+`bakeFloor()` is themed. Forest gets mottled earth, roots and grass tufts;
+castle gets 80px flagstones, a red runner down the middle and torchlight pools.
+The duelling ring is tinted to match — green in the forest, gold in the castle.
+
+Every one of those decorations is drawn with **`vrand()`/`vrnd()`, the view RNG,
+never `rand()`**. The floor is painted once per match from a stream the
+simulation does not share, so two clients can have different-looking moss and
+still agree on every frame of the fight.
+
+Anything static then gets painted straight onto that same floor canvas:
+
+```js
+function bakedProp(d){ return d.hp === Infinity && !d.lift && !d.owner; }
+```
+
+Trees, statues and pillars are baked in at map time and skipped by the per-frame
+draw loop. Only things that can move or break are drawn each frame. The brazier
+flame flickers off `performance.now()` — view time — for the same reason.
+
+## Keeping multiplayer at full speed
+
+Green reported the game feeling laggy online. It was, and not in the way it
+looked. The measurement that mattered was not frames per second but **how much
+simulation time the game managed per second of real time**:
+
+| | before | after |
+|---|---|---|
+| 2 wizards | 100% | 100% |
+| 6 wizards, Adept | 99% | 101% |
+| 6 wizards, Archmage | **75%** | **98%** |
+
+At 75% the match was running in slow motion. In a lockstep game that is
+contagious: every other client has to wait on the slowest one, so one loaded
+machine drags the whole room.
+
+The cause was `pump()` doing a full render after every batch of simulation
+steps, however far behind it had fallen. The fix lets drawing be skipped when
+the simulation is behind, and caps how much backlog can accumulate:
+
+```js
+const STEP_CAP = 12; const MAX_BACKLOG = 12; const MAX_SKIP = 1;
+```
+
+`MAX_SKIP = 1` is the important bound — at most one frame is ever dropped in a
+row, so catching up can never turn into a stutter. Drawn frame rate at 6
+Archmage wizards is unchanged (13fps); what changed is that the fight underneath
+now runs at real speed.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile
