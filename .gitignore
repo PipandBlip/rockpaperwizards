@@ -4,3 +4,8 @@ npm-debug.log*
 Thumbs.db
 *.tar.gz
 .vscode/
+Charged.png
+Normal.png
+Targeting.png
+charged-vs-normal.png
+spells.png
