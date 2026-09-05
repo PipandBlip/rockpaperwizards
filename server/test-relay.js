@@ -305,4 +305,81 @@ test("clients that agree are left alone", () => {
   assert.ok(!a.last("desync"), "matching worlds are not reported as desynced");
 });
 
+/* ---------------------------------------------------------------- arenas
+
+   The host picks an arena; the relay sanitises it and hands the SAME value to
+   every client. An arena name the relay does not recognise is quietly rewritten
+   to "random", so a list here that has drifted from the client's list makes the
+   host's choice disappear for the whole room with no error anywhere. Forest and
+   Castle shipped that way. These tests pin the lists together. */
+
+const fs = require("fs");
+const pathM = require("path");
+const REPO = pathM.join(__dirname, "..");
+const gameSrc   = fs.readFileSync(pathM.join(REPO, "src/game.js"), "utf8");
+const workerSrc = fs.readFileSync(pathM.join(REPO, "cloudflare/worker/src/index.js"), "utf8");
+
+/** the arena names a source file lists in its mapPreset whitelist */
+function presetList(src){
+  const line = src.split("\n").find(l => l.includes("mapPreset:") && l.includes("includes("));
+  assert.ok(line, "no mapPreset whitelist found");
+  return line.slice(line.indexOf("[") + 1, line.indexOf("]"))
+             .split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
+}
+/** the arenas the client can actually BUILD */
+const buildable = ["random"].concat((() => {
+  const body = gameSrc.slice(gameSrc.indexOf("const MAP_PRESETS = {"));
+  const names = [];
+  for (const line of body.split("\n").slice(1)){
+    if (line.startsWith("};")) break;              // end of the object
+    const m = line.match(/^\s{2}([a-z]+):\s*\[/);
+    if (m) names.push(m[1]);
+  }
+  return names;
+})());
+
+function roomWith(preset){
+  const a = fake("Host");
+  a.say({ t: "create", total: 2, opts: { mapPreset: preset } });
+  return a;
+}
+
+test("every arena the client can build survives the relay", () => {
+  assert.ok(buildable.length >= 6, "expected the presets plus random, got " + buildable);
+  for (const name of buildable){
+    assert.strictEqual(roomWith(name).last("room").opts.mapPreset, name,
+                       name + " was rewritten by the relay");
+  }
+});
+
+test("and an arena nobody has heard of falls back to random", () => {
+  assert.strictEqual(roomWith("swamp").last("room").opts.mapPreset, "random");
+  assert.strictEqual(roomWith(undefined).last("room").opts.mapPreset, "random");
+});
+
+test("the relay offers exactly what the client can build", () => {
+  assert.deepStrictEqual(presetList(require("fs").readFileSync(
+    pathM.join(REPO, "server/rooms.js"), "utf8")).sort(), [...buildable].sort());
+});
+
+test("and the Cloudflare worker agrees with the node relay", () => {
+  assert.deepStrictEqual(presetList(workerSrc).sort(), [...buildable].sort(),
+                         "cloudflare/worker/src/index.js and server/rooms.js must be patched in step");
+});
+
+test("the client's own sanitiser knows them too", () => {
+  assert.deepStrictEqual(presetList(gameSrc).sort(), [...buildable].sort());
+});
+
+test("every seat is told the same arena when the match starts", () => {
+  const a = fake("A");
+  a.say({ t: "create", total: 2, opts: { mapPreset: "forest" } });
+  const code = a.last("room").code;
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.strictEqual(a.last("start").opts.mapPreset, "forest");
+  assert.strictEqual(b.last("start").opts.mapPreset, "forest");
+});
+
 console.log(`\n${pass} passing`);

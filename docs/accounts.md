@@ -399,6 +399,34 @@ The determinism rig used to flip `NET.active` to reach the presets at all, which
 meant the fixed-layout runs passed while the path a player actually takes was
 broken. It now starts them the offline way.
 
+### …and then the relay ate it anyway
+
+Fixing the solo path fixed solo. Multiplayer still showed the ordinary arena,
+because the relay sanitises the host's options server-side and its whitelist had
+never been updated:
+
+```js
+mapPreset: ["random", "arena", "gauntlet", "crossfire"].includes(o.mapPreset)
+  ? o.mapPreset : "random"            // was — in BOTH relays
+```
+
+An arena the relay does not recognise is rewritten to `"random"` with no error
+anywhere: the host picks Forest, the relay hands every client Random, and the
+room plays Random. Both `cloudflare/worker/src/index.js` and `server/rooms.js`
+carried the stale list.
+
+Chasing that turned up a second, larger hole. The node relay's `create` handler
+never passed `msg.opts` to the room at all, and `config` never applied them, so
+in that twin **no** host option — map, fog, rounds, lives — had ever reached a
+match. The Cloudflare worker did it correctly. The twins had drifted apart on
+the rules of the game they were relaying, and nothing tested it.
+
+`server/test-relay.js` now pins the three lists together: every arena in the
+client's `MAP_PRESETS` must survive a round trip through the relay, an unknown
+name must fall back to Random, and the worker's whitelist must equal the node
+relay's, which must equal the client's. Adding a map without updating a relay
+now fails a test instead of silently playing somewhere else.
+
 ### Scenery is baked, not drawn
 
 `bakeFloor()` is themed. Forest gets mottled earth, roots and grass tufts;

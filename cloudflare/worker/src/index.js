@@ -62,7 +62,11 @@ function sanitizeOpts(o) {
     lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
     mapSize: ["small", "medium", "large"].includes(o.mapSize) ? o.mapSize : "medium",
     fog: o.fog ? 1 : 0,
-    mapPreset: ["random", "arena", "gauntlet", "crossfire"].includes(o.mapPreset) ? o.mapPreset : "random"
+    // Every name here must match the client's MAP_PRESETS. A name the relay does
+    // not know is silently rewritten to "random", so forgetting to add one here
+    // makes the host's arena choice vanish for the whole room — which is exactly
+    // what happened to forest and castle.
+    mapPreset: ["random", "arena", "gauntlet", "crossfire", "forest", "castle"].includes(o.mapPreset) ? o.mapPreset : "random"
   };
 }
 

@@ -39,7 +39,11 @@ function sanitizeOpts(o) {
     lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
     mapSize: ["small", "medium", "large"].includes(o.mapSize) ? o.mapSize : "medium",
     fog: o.fog ? 1 : 0,
-    mapPreset: ["random", "arena", "gauntlet", "crossfire"].includes(o.mapPreset) ? o.mapPreset : "random"
+    // Every name here must match the client's MAP_PRESETS. A name the relay does
+    // not know is silently rewritten to "random", so forgetting to add one here
+    // makes the host's arena choice vanish for the whole room — which is exactly
+    // what happened to forest and castle.
+    mapPreset: ["random", "arena", "gauntlet", "crossfire", "forest", "castle"].includes(o.mapPreset) ? o.mapPreset : "random"
   };
 }
 
@@ -199,7 +203,12 @@ function handle(p, msg) {
       const room = new Room({
         total: msg.total,
         difficulty: msg.difficulty,
-        isPublic: msg.isPublic !== false
+        isPublic: msg.isPublic !== false,
+        // The host's match options. This twin used to drop them on the floor —
+        // no map, no fog, no round count ever reached the room — while the
+        // Cloudflare worker passed them through, so the two relays disagreed
+        // about the rules of the game they were relaying.
+        opts: msg.opts
       });
       room.add(p);
       room.sync();
@@ -255,6 +264,7 @@ function handle(p, msg) {
       if (!p.room || p.seat !== 0 || p.room.state !== "lobby") return;
       if (msg.total != null) p.room.total = Math.min(MAX_SEATS, Math.max(2, msg.total | 0));
       if (msg.difficulty != null) p.room.difficulty = Math.min(2, Math.max(0, msg.difficulty | 0));
+      if (msg.opts) p.room.opts = sanitizeOpts({ ...p.room.opts, ...msg.opts });
       while (p.room.players.length > p.room.total) p.room.remove(p.room.players[p.room.players.length - 1]);
       p.room.sync();
       return;
