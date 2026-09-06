@@ -371,6 +371,27 @@ test("the client's own sanitiser knows them too", () => {
   assert.deepStrictEqual(presetList(gameSrc).sort(), [...buildable].sort());
 });
 
+test("the co-op flag survives the relay, and is a flag", () => {
+  const a = fake("Host");
+  a.say({ t: "create", total: 4, opts: { coop: 1 } });
+  assert.strictEqual(a.last("room").opts.coop, 1);
+  const b = fake("Host2");
+  b.say({ t: "create", total: 4, opts: { coop: "yes please" } });
+  assert.strictEqual(b.last("room").opts.coop, 1, "anything truthy means co-op");
+  const c = fake("Host3");
+  c.say({ t: "create", total: 4 });
+  assert.strictEqual(c.last("room").opts.coop, 0, "and a duel is the default");
+});
+
+test("the host can switch a waiting room between duel and co-op", () => {
+  const a = fake("Host");
+  a.say({ t: "create", total: 2, opts: { coop: 0, mapPreset: "forest" } });
+  a.say({ t: "config", opts: { coop: 1 } });
+  const opts = a.last("room").opts;
+  assert.strictEqual(opts.coop, 1, "the switch took");
+  assert.strictEqual(opts.mapPreset, "forest", "and did not wipe the arena");
+});
+
 test("every seat is told the same arena when the match starts", () => {
   const a = fake("A");
   a.say({ t: "create", total: 2, opts: { mapPreset: "forest" } });

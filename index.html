@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=38">
+  <link rel="stylesheet" href="src/style.css?v=40">
 </head>
 <body>
 
@@ -120,29 +120,32 @@
 
       <!-- hosting: the code, the size, who has turned up -->
       <div class="panel room" id="hostPanel" hidden>
-        <h4>Hosting a duel</h4>
+        <h4 id="hostTitle">Hosting a duel</h4>
         <div class="invite">
           <span>Invite code</span>
           <b id="inviteCode">&middot;&middot;&middot;&middot;</b>
           <button id="copyCode" type="button">Copy</button>
         </div>
         <div class="opts">
-          <div class="rrow full"><span>Wizards</span><div class="seg" id="segTotal"></div></div>
-          <div class="rrow full"><span>Bots fill the rest</span><div class="seg" id="segBotLvl"></div></div>
+          <div class="rrow full"><span>Game</span><div class="seg" id="segCoop"></div></div>
+          <div class="rrow full"><span>Players</span><div class="seg" id="segTotal"></div></div>
+          <div class="rrow full"><span>Bot skill</span><div class="seg" id="segBotLvl"></div></div>
         </div>
+        <div class="opts arenapick">
+          <div class="rrow full"><span>Arena</span><div class="seg" id="segPreset"></div></div>
+        </div>
+        <div class="roster" id="hostRoster"></div>
+        <p class="note" id="hostNote">Send the code to your friends. Any seat still empty when you start becomes a bot.</p>
         <details class="moreopts">
-          <summary>Match options</summary>
+          <summary>More options</summary>
           <div class="opts">
-            <div class="rrow full"><span>Mode</span><div class="seg" id="segMode"></div></div>
+            <div class="rrow full" id="rowWinBy"><span>Win by</span><div class="seg" id="segMode"></div></div>
             <div class="rrow full" id="rowRounds"><span>Rounds to win</span><input type="range" id="hostRounds" min="1" max="9" value="2" aria-label="Rounds to win"><b id="hostRoundsVal">2</b></div>
             <div class="rrow full" id="rowLives" hidden><span>Lives each</span><input type="range" id="hostLives" min="1" max="9" value="3" aria-label="Lives"><b id="hostLivesVal">3</b></div>
-            <div class="rrow full"><span>Map size</span><div class="seg" id="segMapSize"></div></div>
-            <div class="rrow full"><span>Preset map</span><div class="seg" id="segPreset"></div></div>
+            <div class="rrow full"><span>Arena size</span><div class="seg" id="segMapSize"></div></div>
             <div class="rrow full"><span>Fog of war</span><div class="seg" id="segFog"></div></div>
           </div>
         </details>
-        <div class="roster" id="hostRoster"></div>
-        <p class="note" id="hostNote">Send the code to your friends. Any seat still empty when you start becomes a bot.</p>
         <div class="room-actions">
           <button class="go" id="startRoom">Start match</button>
           <button class="back" id="hostBack">Leave</button>
@@ -244,8 +247,8 @@
   </details>
 </div>
 
-  <script src="src/account.js?v=38"></script>
-  <script src="src/game.js?v=38"></script>
-  <script src="src/net.js?v=38"></script>
+  <script src="src/account.js?v=40"></script>
+  <script src="src/game.js?v=40"></script>
+  <script src="src/net.js?v=40"></script>
 </body>
 </html>

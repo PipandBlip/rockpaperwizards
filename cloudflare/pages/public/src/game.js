@@ -156,8 +156,14 @@ let playerName = "Wizard";
 const PAD1 = { up:"w", down:"s", left:"a", right:"d", dash:"shiftL", tab:true };
 const PAD2 = { up:"arrowup", down:"arrowdown", left:"arrowleft", right:"arrowright", dash:"shiftR", tab:false };
 
+/* Every wizard gets a stable id. Seats only number the party — wave rivals all
+   shared seat 0, so nothing could name one of them: not a test, not a log line.
+   The counter is reset per match and only ever incremented in makeWizard, so it
+   is the same on every client. */
+let nextWizId = 0;
 function makeWizard(x,y,friendly){
   return {
+    id: nextWizId++,
     x, y, vx:0, vy:0, r:15, friendly,
     team: friendly ? 0 : 1, human: false, D: null, target: null, pad: PAD1,
     name: "Wizard", tint: "#7ee9ff", wins: 0, seat: 0, lock: null, surge: 0,
@@ -833,6 +839,20 @@ function waveComp(i){
     idx += count;
   }
   return [2,2,2];
+}
+/* The wave a party of `party` wizards faces on set `i`. One wizard gets the
+   solo ladder exactly as it always was — waveComp is untouched, so a solo run
+   plays identically to before. Every extra ally adds rivals drawn from the
+   tiers already in the set, so a bigger party meets a bigger set rather than a
+   nastier one, and the total is capped so a six-stack cannot melt a slow
+   machine. */
+function waveFor(i, party){
+  const base = waveComp(i);
+  if (party <= 1) return base;
+  const out = base.slice();
+  const extra = Math.min(14 - base.length, Math.round((party - 1) * base.length * 0.8));
+  for (let k = 0; k < extra; k++) out.push(base[k % base.length]);
+  return out;
 }
 const DIFF = [
   { react:1.15,aim:.25, cover:.06, greed:.07, regen:0.34, miss:.88, dash:false, power:0, dmg:.5,  hp:74,  tier:"Easy",   name:"Apprentice" },
@@ -3044,8 +3064,10 @@ function syncHUD(){
 
   if (mode === "escalation"){
     const alive = Math.max(1, livingOf(1).length);
+    const party = seats.length > 1
+      ? ` · ${livingOf(0).length}/${seats.length} standing` : "";
     el("roundLabel").textContent =
-      `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ${alive} ${alive === 1 ? "rival" : "rivals"}`;
+      `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ${alive} ${alive === 1 ? "rival" : "rivals"}${party}`;
   } else {
     el("roundLabel").textContent = matchCfg.mode === "lives"
       ? `Lives · ${matchCfg.lives} each`
@@ -3238,7 +3260,7 @@ let seatLevels = null;
 // Host match settings, applied identically on every client from the start
 // message. The relay sanitises them server-side too, so the lockstep sim can
 // trust they never diverge.
-let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random" };
+let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random", coop: 0 };
 // Offline play (solo duel or escalation) gets the default world plus whatever
 // arena the player picked in the solo panel. Multiplayer opts arrive from the
 // relay's start message and are never carried into solo: the only thing that
@@ -3254,12 +3276,13 @@ function sanitizeMatchCfg(o){
     lives: Math.min(9, Math.max(1, o.lives | 0 || 3)),
     mapSize: ["small","medium","large"].includes(o.mapSize) ? o.mapSize : "medium",
     fog: o.fog ? 1 : 0,
-    mapPreset: ["random","arena","gauntlet","crossfire","forest","castle"].includes(o.mapPreset) ? o.mapPreset : "random"
+    mapPreset: ["random","arena","gauntlet","crossfire","forest","castle"].includes(o.mapPreset) ? o.mapPreset : "random",
+    coop: o.coop ? 1 : 0
   };
 }
 // The host panel UI state (what the host is choosing in the lobby).
 let hostRounds = 2, hostMode = "rounds", hostLives = 3,
-    hostMapSize = "medium", hostFog = 0, hostMapPreset = "random";
+    hostMapSize = "medium", hostFog = 0, hostMapPreset = "random", hostCoop = 0;
 // The solo panel has its own arena picker, so a solo match never silently
 // inherits a hosted room's map.
 let soloMapPreset = "random";
@@ -3333,7 +3356,22 @@ function makeSeats(){
       });
     }
   } else if (mode === "escalation"){
-    seats = [{ human:true, name: playerName, tint: TINTS[0], D: null, wins: 0 }];
+    // Co-op survival. Solo escalation is simply a party of one, so one code
+    // path covers both: every seat here is an ALLY (team 0) and the waves are
+    // the only thing on team 1.
+    const n = coopParty();
+    for (let i = 0; i < n; i++){
+      const human = i < (matchCfg.coop ? roomHumans : 1);
+      seats.push({
+        human, ally: true,
+        name: human
+          ? ((seatNames && seatNames[i]) || (i === localSeat ? playerName : "Player " + (i + 1)))
+          : DIFF[difficulty].name + " " + (i - roomHumans + 1),
+        tint: TINTS[i % TINTS.length],
+        D: human ? null : DIFF[difficulty],
+        wins: 0
+      });
+    }
   } else {
     seats = [
       { human:true, name: playerName, tint: TINTS[0], D: null, wins: 0 },
@@ -3341,9 +3379,14 @@ function makeSeats(){
     ];
   }
 }
+// How many wizards stand together in an escalation run. Solo is one; a co-op
+// room is however many seats the host opened.
+function coopParty(){
+  return matchCfg.coop ? Math.max(1, roomTotal) : 1;
+}
 function buildRoster(){
   if (!seats.length) makeSeats();
-  const n = mode === "escalation" ? 2 : seats.length;
+  const n = seats.length;
   const pts = spawnRing(Math.max(2, n));
   wizards = [];
   p2 = null;
@@ -3358,14 +3401,26 @@ function buildRoster(){
     w.human = seat.human;
     w.D = seat.D;
     if (w.D && w.D.hp){ w.hpMax = w.D.hp; w.hp = w.D.hp; }
-    // duel and escalation are player-versus-everyone; a match room is a free-for-all
-    w.team = mode === "match" ? i : (seat.human ? 0 : 1);
+    // A match room is a free-for-all. A duel is you against the bot. Escalation —
+    // solo or co-op — puts the whole party on team 0 and the waves on team 1;
+    // every check that could hurt or target a wizard already goes through team,
+    // so allies cannot shoot, beam, throw at or even lock onto each other.
+    w.team = mode === "match" ? i : (mode === "escalation" || seat.human) ? 0 : 1;
+    w.ally = w.team === 0 && mode === "escalation";
     if (seat.human) w.pad = (i === localSeat) ? PAD1 : PAD2;
     wizards.push(w);
     if (seat.human && i === 1) p2 = w;
   });
-  you = wizards[localSeat] || wizards[0];
-  you.human = true;
+  /* `you` is a view concept — which wizard this client drives — and it must
+     never change the simulation. This used to read
+         you = wizards[localSeat] || wizards[0]; you.human = true;
+     which rewrote whatever sat at localSeat into a human. w.human gates the AI,
+     so a client whose seat index landed on a bot would stop running that bot's
+     AI while every other client kept running it: a silent, one-sided desync.
+     Now the local wizard is picked from the seats that are ALREADY human. */
+  you = (wizards[localSeat] && wizards[localSeat].human)
+      ? wizards[localSeat]
+      : (wizards.find(w => w.human) || wizards[0]);
   if (mode === "escalation"){ waveNo = 0; waveLive = false; waveGap = 1.1; }
   for (const w of wizards) w.target = nearestEnemy(w);
   foe = nearestEnemy(you) || wizards[1];
@@ -3379,10 +3434,15 @@ function resetWizards(){
 }
 // Escalation drops a fresh rival in somewhere you are not looking.
 function spawnEnemy(tier){
+  // Nothing in here may read `you`: that is a different wizard on every client,
+  // so a spawn point chosen relative to it would put the wave in a different
+  // place on each machine and desync the run on its first frame. The party is
+  // the same list everywhere, in the same order.
+  const party = livingOf(0);
   let x = W/2, y = H/2, guard = 0;
   while (guard++ < 300){
     x = rnd(50, W-50); y = rnd(50, H-50);
-    if (dist({x,y}, you) < 300) continue;
+    if (party.some(a => dist({x,y}, a) < 300)) continue;
     if (debris.some(d => d.solid && dist({x,y}, d) < d.r + 26)) continue;
     break;
   }
@@ -3393,7 +3453,8 @@ function spawnEnemy(tier){
   e.name = DIFF[tier].name;
   e.tint = TIER_TINT[tier];
   e.team = 1;
-  e.target = you;
+  e.ally = false;
+  e.target = nearestEnemy(e);
   wizards.push(e);
   rings.push({ x, y, r:6, max:80, t:0, life:.55, color:e.tint, width:2.6 });
   puff(x, y, e.tint, 26);
@@ -3402,8 +3463,10 @@ function spawnEnemy(tier){
 function escTick(dt){
   survT += dt;
   runScore += dt * 5;
-  if (wizards.some(w => w.dead && !w.human))
-    wizards = wizards.filter(w => w.human || !w.dead);
+  // Clear away dead rivals, never dead party members — an ally bot is not
+  // `human`, and filtering on that would have quietly deleted it from the run.
+  if (wizards.some(w => w.dead && !w.ally))
+    wizards = wizards.filter(w => w.ally || !w.dead);
   if (livingOf(1).length > 0) return;      // the set is still on its feet
 
   if (waveLive){                            // it just went down
@@ -3416,7 +3479,13 @@ function escTick(dt){
   if (waveGap > 0) return;
 
   waveNo++;
-  const comp = waveComp(waveNo - 1);
+  const comp = waveFor(waveNo - 1, coopParty());
+  // A new wave is also the party's second chance: anyone who went down in the
+  // last one is back on their feet for this one, at part health. Being downed
+  // costs you the rest of a wave, not the whole run.
+  for (const a of wizards){
+    if (a.ally && a.dead){ respawnWizard(a); a.hp = Math.round(a.hpMax * 0.6); }
+  }
   for (const tier of comp) spawnEnemy(tier);
   waveLive = true;
   const tally = [0,0,0];
@@ -3428,11 +3497,19 @@ function escTick(dt){
 }
 function onDeath(w){
   if (mode === "escalation"){
-    if (w.human){ escGameOver(); return; }
+    if (w.ally){
+      // A downed ally is not out of the run — the next wave brings them back.
+      // The run ends only when the whole party is down at the same moment.
+      if (livingOf(0).length === 0) escGameOver();
+      return;
+    }
     kills++;
     if (w.lastBy && w.lastBy !== w) w.lastBy.kills++;
     runScore += 100 * ((w.tier || 0) + 1);
-    you.hp = Math.min(you.hpMax, you.hp + 10 + (w.tier || 0)*4);
+    // The kill heals whoever landed it, not `you` — `you` is a different wizard
+    // on every client, so healing it would desync a co-op run.
+    const healer = (w.lastBy && w.lastBy.ally && !w.lastBy.dead) ? w.lastBy : null;
+    if (healer) healer.hp = Math.min(healer.hpMax, healer.hp + 10 + (w.tier || 0)*4);
     impact(w.x, w.y, 5, w.tint);
     puff(w.x, w.y, w.tint, 30);
     return;
@@ -3454,7 +3531,7 @@ function onDeath(w){
   if (teams.size <= 1) endRound(wizards.find(q => !q.dead) || null);
 }
 function respawnWizard(w){
-  const pts = spawnRing(Math.max(2, mode === "escalation" ? 2 : seats.length));
+  const pts = spawnRing(Math.max(2, seats.length));
   const p = pts[w.seat % pts.length];
   w.x = p.x; w.y = p.y;
   w.hp = w.hpMax || 100; w.mana = 100;
@@ -3506,20 +3583,29 @@ function renderBoard(fresh){
 }
 function escGameOver(){
   phase = "over"; phaseT = 1.2;
+  const wave = Math.max(1, waveNo);
   const final = Math.round(runScore);
-  const entry = { s: final, k: kills, w: Math.max(1, waveNo), d: Date.now(), n: playerName };
-  saveScore(entry);
-  msg = { text: "Fallen", sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
-  const banked = bankRun(final, Math.max(1, waveNo), kills);
+  const party = seats.length > 1;
+  // The score and the wave belong to the party; the kill count is your own.
+  const mine = (you && you.kills) | 0;
+  if (!party) saveScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
+  msg = { text: party ? "The party falls" : "Fallen",
+          sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
+  const banked = bankRun(final, wave, party ? mine : kills);
   setTimeout(() => {
-    show("solo");   // first, because it rewrites the copy — then say what happened
+    // show() rewrites the curtain copy, so it goes first and the report second
+    show(NET.active ? "mp" : "solo");
     renderStats();
-    el("curtainTitle").textContent = playerName + " held out to wave " + Math.max(1, waveNo);
-    const report = final.toLocaleString() + " points · " + kills +
-      (kills === 1 ? " wizard" : " wizards") + " put down · " + Math.round(survT) + " seconds standing.";
+    el("curtainTitle").textContent = party
+      ? "The party held out to wave " + wave
+      : playerName + " held out to wave " + wave;
+    const yours = party ? mine : kills;
+    const report = final.toLocaleString() + " points · " + yours +
+      (yours === 1 ? " wizard" : " wizards") + " put down" + (party ? " by you" : "") +
+      " · " + Math.round(survT) + " seconds standing.";
     el("curtainText").textContent = report;
-    el("goBtn").textContent = "Run it again";
-    renderBoard(entry);
+    if (!party){ el("goBtn").textContent = "Run it again"; renderBoard({ s: final, k: kills, w: wave, d: Date.now(), n: playerName }); }
+    else el("board").hidden = true;
     el("curtain").hidden = false;
     banked.then(out => showEarned(out, report));
   }, 1600);
@@ -3535,7 +3621,8 @@ function newRound(){
   makeMap();
   phase = "count"; phaseT = 1.4;
   msg = mode === "escalation"
-    ? { text: "Survive", sub: "They keep coming.", t: 1.4, color: "#ff4d5e" }
+    ? { text: "Survive", sub: seats.length > 1 ? "Hold the line together." : "They keep coming.",
+        t: 1.4, color: "#ff4d5e" }
     : matchCfg.mode === "lives"
       ? { text: `Round ${roundNo}`, sub: `${matchCfg.lives} lives each — last one standing`, t: 1.4, color: "#a97cff" }
       : { text: `Round ${roundNo}`, sub: "Wands up.", t: 1.4, color: "#a97cff" };
@@ -3553,6 +3640,7 @@ function newMatch(seed){
   roundNo = 1;
   simFrame = 0;   // frame counter restarts once per match, not per round
   runScore = 0; kills = 0; survT = 0; waveNo = 0; waveLive = false; waveGap = 1.1;
+  nextWizId = 0;
   makeSeats();
   newRound();
   el("curtain").hidden = true;
@@ -3806,10 +3894,18 @@ const PRESET_NAMES = ["random","arena","gauntlet","crossfire","forest","castle"]
 const presetLabel = v => v === "random" ? "Random" : v[0].toUpperCase() + v.slice(1);
 const paintPreset = segRow(el("segPreset"), PRESET_NAMES, () => hostMapPreset, v => { hostMapPreset = v; }, presetLabel);
 const paintSoloPreset = segRow(el("segSoloPreset"), PRESET_NAMES, () => soloMapPreset, v => { soloMapPreset = v; }, presetLabel);
+const paintCoop = segRow(el("segCoop"), [0,1], () => hostCoop,
+                         v => { hostCoop = v; paintModeRows(); hostNote(); },
+                         v => v ? "Co-op survival" : "Duel");
 function paintModeRows(){
+  // Co-op has no rounds, no lives and no last-one-standing, so the rows that
+  // describe those disappear rather than sitting there doing nothing.
+  const coop = !!hostCoop;
+  el("hostTitle").textContent = coop ? "Hosting a survival run" : "Hosting a duel";
   const lives = hostMode === "lives";
-  el("rowRounds").hidden = lives;
-  el("rowLives").hidden = !lives;
+  el("rowWinBy").hidden = coop;
+  el("rowRounds").hidden = coop || lives;
+  el("rowLives").hidden = coop || !lives;
 }
 el("hostRounds").addEventListener("input", e => { hostRounds = +e.target.value; el("hostRoundsVal").textContent = hostRounds; afterSeg(); });
 el("hostLives").addEventListener("input", e => { hostLives = +e.target.value; el("hostLivesVal").textContent = hostLives; afterSeg(); });
@@ -3820,7 +3916,8 @@ function hostOpts(){
     lives: hostLives,
     mapSize: hostMapSize,
     fog: hostFog,
-    mapPreset: hostMapPreset
+    mapPreset: hostMapPreset,
+    coop: hostCoop
   };
 }
 function afterSeg(){
@@ -3833,10 +3930,14 @@ function hostNote(){
   const bots = Math.max(0, roomTotal - taken);
   const note = el("hostNote");
   note.classList.remove("bad");
-  note.textContent = "Send the code to your friends. " +
-    (bots === 0 ? "Every seat is taken — start when you are ready."
-                : bots + (bots === 1 ? " seat is" : " seats are") + " still empty; starting now fills " +
-                  (bots === 1 ? "it" : "them") + " with " + DIFF[botLevel].name + " bots.");
+  const fill = bots === 0
+    ? "Every seat is taken — start when you are ready."
+    : bots + (bots === 1 ? " seat is" : " seats are") + " still empty; starting now fills " +
+      (bots === 1 ? "it" : "them") + " with " + DIFF[botLevel].name +
+      (hostCoop ? (bots === 1 ? " ally." : " allies.") : (bots === 1 ? " bot." : " bots."));
+  note.textContent = (hostCoop
+    ? "You fight together against wave after wave — no friendly fire, and a downed ally is back on their feet next wave. "
+    : "Send the code to your friends. ") + fill;
 }
 
 /* ------------------------------------------------------ the relay */
@@ -3993,15 +4094,13 @@ el("joinGo").addEventListener("click", () => {
     .catch(() => netFail("join"));
 });
 el("startRoom").addEventListener("click", () => {
-  if (mode === "escalation") selectMode(difficulty);
+  // selectMode() used to be forced here to drag the solo panel out of
+  // escalation; a hosted room now decides its own game type below.
   difficulty = botLevel;
   if (inRoom()){ window.RPWNet.start(); return; }   // the server hands everyone the same seed
-  mode = "match";
-  roomHumans = 1;
-  // Nobody joined, so this runs locally — but the host still chose these
-  // options a moment ago, and throwing them away is how "Forest" appeared to
-  // do nothing at all.
   matchCfg = sanitizeMatchCfg(hostOpts());
+  mode = matchCfg.coop ? "escalation" : "match";
+  roomHumans = 1;
   newMatch();
   cvs.focus();
 });
@@ -4386,14 +4485,17 @@ window.RPW = {
   seatOf: () => you.seat,
   frameNow: () => simFrame,
   startMatch(opts){
-    mode = opts.mode || "match";
+    // The game type rides in the sanitised opts rather than as its own protocol
+    // field, so all three relays already agree on it and src/net.js does not
+    // need to know co-op exists.
+    matchCfg = sanitizeMatchCfg(opts.opts || null);
+    mode = matchCfg.coop ? "escalation" : (opts.mode || "match");
     difficulty = opts.difficulty != null ? opts.difficulty : difficulty;
     roomTotal = opts.total || roomTotal;
     roomHumans = opts.humans || 1;
     localSeat = opts.seat != null ? opts.seat : 0;
     seatNames = opts.names || null;
     seatLevels = opts.levels || null;
-    matchCfg = sanitizeMatchCfg(opts.opts || null);
     if (opts.name) playerName = opts.name;
     newMatch(opts.seed);
   },
@@ -4446,8 +4548,35 @@ window.RPW = {
   },
   // test hook: land a finishing blow on a seat, so a rig can reach the end of
   // a round (and of a match) without playing one out in real time
-  smite(seat){
-    const w = wizards.find(x => x.seat === seat);
+  /* Test hook: put a live shot in the air from one wizard aimed straight at
+     another, bypassing targeting entirely. Normal play cannot aim an ally at an
+     ally — which is exactly why the no-friendly-fire rule needs a way to be
+     tested rather than assumed. Uses only view-safe values and is never called
+     during a real match. */
+  fireAt(fromId, toId, dmg = 40){
+    const a = wizards.find(x => x.id === fromId);
+    const b = wizards.find(x => x.id === toId);
+    if (!a || !b) return false;
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    shots.push({
+      x: a.x + Math.cos(ang)*22, y: a.y + Math.sin(ang)*22,
+      vx: Math.cos(ang)*600, vy: Math.sin(ang)*600,
+      weight: 3, w0: 3, dmg, r: 9, glow: 22,
+      color: "#fff", kind: "spark", owner: a, life: 4, trail: [], spin: 0,
+      seek: null, lvl: 0
+    });
+    return true;
+  },
+  // Test hook: who is on whose side, and what each wizard is aiming at.
+  sides: () => wizards.map(w => ({
+    id: w.id, seat: w.seat, team: w.team, ally: !!w.ally, dead: !!w.dead,
+    hp: Math.round(w.hp * 100) / 100,
+    target: w.target ? w.target.team : null,
+    lock: w.lock ? w.lock.team : null
+  })),
+  waveNow: () => waveNo,
+  smite(id){
+    const w = wizards.find(x => x.id === id) || wizards.find(x => x.seat === id);
     if (w && w.hp > 0) strike(w, 9999, w.x, w.y, "spark", false);
   },
   matchCfg: () => ({ ...matchCfg }),

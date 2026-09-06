@@ -63,7 +63,7 @@ function fakeEl(id) {
 /* Boot the game in a stubbed DOM and hand back the controls.
    Split out of run() so other rigs — tools/input-test.js — can drive the same
    sandbox instead of keeping a second copy of these stubs in step with this one. */
-function boot({ seed = 1, diff = 1, room = 0, opts = null } = {}) {
+function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1 } = {}) {
   const els = {};
   const listeners = {};
   let frameCb = null;
@@ -107,7 +107,8 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null } = {}) {
     seed,
     difficulty: diff,
     total: room || 2,
-    humans: 1,
+    humans,
+    seat,
     opts
   });
 
@@ -120,8 +121,8 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null } = {}) {
   };
 }
 
-function run({ seed, diff, room, frames, every = 30, opts = null, preset = null }) {
-  const rig = boot({ seed, diff, room, opts });
+function run({ seed, diff, room, frames, every = 30, opts = null, preset = null, seat = 0, humans = 1, idle = false }) {
+  const rig = boot({ seed, diff, room, opts, seat, humans });
   /* A fixed layout, started the way an OFFLINE match starts — no NET.active.
      Presets used to be gated on a live network match, which made the arena
      picker do nothing in solo; these runs would have passed anyway and told us
@@ -141,6 +142,13 @@ function run({ seed, diff, room, frames, every = 30, opts = null, preset = null 
   const marks = [];
 
   for (let i = 0; i < frames; i++) {
+    /* An idle run presses nothing at all. That is the point: two idle runs that
+       differ ONLY in which seat is "you" must produce the same hashes, and they
+       will not if any line of the simulation reads the local wizard. That is
+       precisely the mistake co-op escalation invited — spawn points chosen
+       relative to `you`, kills healing `you` — and a same-seat run could never
+       have caught it, because `you` is the same wizard in both halves. */
+    if (idle) { rig.step(); if (i % every === 0) marks.push(sandbox.window.RPW.hash()); continue; }
     if (i >= moveUntil) {
       for (const k of moveKeys) fire("keyup", k);
       moveKeys = [];
@@ -189,11 +197,42 @@ for (let seed = 1; seed <= SEEDS; seed++) {
     { name: `fog r4 seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES,
                                           opts: { fog: 1, mapSize: "large", mapPreset: "random" } } },
     { name: `forest seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES, preset: "forest" } },
-    { name: `castle seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES, preset: "castle" } }
+    { name: `castle seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES, preset: "castle" } },
+    // Escalation: solo, then a party of four sharing team 0 against the waves.
+    { name: `esc    seed ${seed}`, opts: { seed, diff: 1, frames: FRAMES } , solo: true },
+    { name: `co-op  seed ${seed}`, opts: { seed, diff: 1, room: 4, humans: 4, frames: FRAMES,
+                                          opts: { coop: 1, mapPreset: "random" } } }
   ];
+  /* The cross-seat pairs are the expensive half of this file — two full rigs
+     each — so they run on the first three seeds rather than all six. Three is
+     enough: a simulation that reads the local player is wrong on every seed,
+     not on unlucky ones. */
+  if (seed <= 3){
+  // A co-op run is also checked ACROSS SEATS: the same match watched from seat
+  // 0 and from seat 3 must agree frame for frame, which is the only shape of
+  // test that catches a simulation reading the local player.
+  cases.push({
+    name: `co-op seats ${seed}`,
+    opts: { seed, diff: 1, room: 4, humans: 4, frames: FRAMES, idle: true, seat: 0,
+            opts: { coop: 1, mapPreset: "random" } },
+    other: { seat: 3 }
+  });
+  /* And again with a MIXED party: seats 0-1 human (idle), 2-3 ally bots. The
+     bots actually kill things, which is what exercises the kill reward — that
+     reward used to heal `you`. Both compared seats must be human ones, or both
+     rigs resolve `you` to the same wizard and the case proves nothing. */
+  cases.push({
+    name: `co-op mixed ${seed}`,
+    opts: { seed, diff: 1, room: 4, humans: 2, frames: FRAMES, idle: true, seat: 0,
+            opts: { coop: 1, mapPreset: "random" } },
+    other: { seat: 1 }
+  });
+  }
+
   for (const c of cases) {
+    if (c.solo) c.opts.opts = Object.assign({ mapPreset: "random" }, c.opts.opts, { coop: 1 });
     const a = run(c.opts);
-    const b = run(c.opts);
+    const b = run(c.other ? Object.assign({}, c.opts, c.other) : c.opts);
     const at = a.findIndex((h, i) => h !== b[i]);
     if (at < 0) {
       console.log(`  ok  ${c.name} — ${a.length} checkpoints identical`);

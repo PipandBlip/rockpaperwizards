@@ -109,6 +109,22 @@ Two things it depends on, both easy to break:
   `<details>`, which is skipped on purpose so the how-to-play manual can sit
   below the fold.
 
+### The host panel
+
+The lobby leads with what a host actually does: the invite code, how many
+players, how good the bots are, which arena, who has turned up. Arena came out
+from behind the disclosure because it is the one choice people open that screen
+to make — it now sits in the open in both the host and solo panels, as a fixed
+three-wide grid (six names never divide evenly across a 430px row; left to wrap
+they came out five and a lonely one). What stays behind **More options** is the
+genuinely occasional: win condition, round or life count, arena size, fog.
+
+One bug fell out of looking at it. `.rrow` sets `display:flex`, which outranks
+the browser's own `[hidden]{display:none}`, so the Lives slider sat under the
+Rounds slider in Rounds mode — both visible, one of them doing nothing. The fix
+is a single `.rrow[hidden]{display:none}`; the same trap is waiting for any
+future row that relies on the `hidden` attribute.
+
 ## Drawing cost: shadowBlur
 
 A full room of Archmages ran at about six frames a second, and the obvious
@@ -476,6 +492,74 @@ const STEP_CAP = 12; const MAX_BACKLOG = 12; const MAX_SKIP = 1;
 row, so catching up can never turn into a stutter. Drawn frame rate at 6
 Archmage wizards is unchanged (13fps); what changed is that the fight underneath
 now runs at real speed.
+
+## Co-op survival
+
+Escalation used to be a solo mode: one wizard, endless waves, no way to bring a
+friend. It is now a game type the host picks in the lobby — **Duel** or **Co-op
+survival** — and a solo run is simply a party of one, so both go down the same
+code path.
+
+The party shares team 0; the waves are the only thing on team 1. That matters
+more than it sounds, because every rule that can hurt or aim at a wizard already
+went through `team`:
+
+```js
+if (q.dead || q.team === s.owner.team) continue;   // shots
+if (q.dead || q.team === d.thrower.team) continue; // thrown scenery
+if (!firing(b) || b.clash || b.team === a.team) continue;  // beams
+if (o.dead || o.team === w.team) continue;         // targeting, and Tab
+```
+
+So no friendly fire and no friendly targeting come out of putting the party on
+one team, rather than out of new special cases. `tools/coop-test.js` proves it
+by firing a real shot down the middle of the party and reading the health bars —
+and, because a test that can only pass is worth nothing, it also fires the same
+shot at a rival and fails if THAT does nothing either.
+
+Being downed costs you the rest of a wave, not the run: the next set brings
+every fallen ally back at 60% health, and the run ends only when the whole party
+is down at once. Wave size scales with the party (`waveFor`) by adding rivals
+drawn from the tiers already in the set, capped at 14, so four wizards meet a
+bigger set rather than a nastier one — and `waveComp` itself is untouched, so a
+solo ladder is exactly the ladder it always was.
+
+### The desync this invited, and the test shape that catches it
+
+Escalation was written for one player and it showed. Three lines read `you`:
+
+```js
+if (dist({x,y}, you) < 300) continue;              // where a wave spawns
+you.hp = Math.min(you.hpMax, you.hp + 10 + ...);   // the kill reward
+if (w.human){ escGameOver(); return; }             // and who ends the run
+```
+
+`you` is a different wizard on every client. A wave spawned relative to it lands
+somewhere else on each machine; a kill heals a different wizard on each machine.
+Both desync a lockstep match on contact.
+
+The determinism suite could not have caught any of it. It ran the same match
+twice **in the same rig**, so `you` was the same wizard in both halves and the
+hashes agreed. What catches it is running the match from **two different seats**
+and requiring the hashes to match — `co-op seats` and `co-op mixed` in
+`tools/determinism.js`, both idle so the only difference between the two rigs is
+which wizard is local. Reintroducing the spawn bug fails `co-op seats` at frame
+180 while every same-seat case still passes.
+
+`co-op mixed` (two idle humans, two ally bots, compared from two human seats)
+exists because the kill reward only fires when something actually dies. It
+caught the heal bug on some seeds and not others — a partial net, and worth
+saying so rather than claiming a clean catch.
+
+Two other things fell out of the same look:
+
+- `makeWizard` now hands out a stable `id`. Wave rivals all carried seat 0, so
+  nothing could name one of them — no test, no log line.
+- `buildRoster` used to end with `you = wizards[localSeat]; you.human = true;`.
+  `w.human` gates the AI, so a client whose seat index landed on a bot would
+  stop running that bot's brain while every other client kept running it: a
+  silent, one-sided desync waiting for the first roster where that could happen.
+  The local wizard is now chosen from the seats that are already human.
 
 ## What is not built yet
 

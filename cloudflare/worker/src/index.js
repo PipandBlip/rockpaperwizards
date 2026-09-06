@@ -66,7 +66,9 @@ function sanitizeOpts(o) {
     // not know is silently rewritten to "random", so forgetting to add one here
     // makes the host's arena choice vanish for the whole room — which is exactly
     // what happened to forest and castle.
-    mapPreset: ["random", "arena", "gauntlet", "crossfire", "forest", "castle"].includes(o.mapPreset) ? o.mapPreset : "random"
+    mapPreset: ["random", "arena", "gauntlet", "crossfire", "forest", "castle"].includes(o.mapPreset) ? o.mapPreset : "random",
+    // co-op survival: the whole room is one team against endless waves
+    coop: o.coop ? 1 : 0
   };
 }
 
