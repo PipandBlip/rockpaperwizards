@@ -4745,6 +4745,30 @@ resetWizards();
 msg = null;
 requestAnimationFrame(frame);
 
+/* ------------------------------------------------------------- desync report
+
+   The relay tells us WHICH components stopped matching, not just that something
+   did. Turn that into one plain sentence: a player learns it was not their
+   connection, and we learn which part of the simulation to open. The names come
+   from hashParts() and must keep meaning the same thing on both ends. */
+let lastDesync = null;
+const DESYNC_WORDS = {
+  wizards: "the wizards themselves",
+  spells:  "the spells in flight",
+  scenery: "the scenery",
+  rolls:   "the run of random rolls"
+};
+function desyncNote(d){
+  if (!d) return "";
+  const at = d.frame > 0 ? " at frame " + (d.frame | 0) : "";
+  const named = (d.parts || []).map(k => DESYNC_WORDS[k]).filter(Boolean);
+  if (!named.length) return "The two worlds parted company" + at + ".";
+  let list = named[0];
+  if (named.length === 2) list = named[0] + " and " + named[1];
+  else if (named.length > 2) list = named.slice(0, -1).join(", ") + " and " + named[named.length - 1];
+  return "What stopped matching: " + list + at + ".";
+}
+
 // handed to src/net.js so the network layer can drive a match without
 // reaching into the simulation's internals
 window.RPW = {
@@ -4759,7 +4783,7 @@ window.RPW = {
   // net.js calls this when a match cannot continue. Saying plainly what happened
   // beats leaving somebody standing in an arena that has stopped agreeing with
   // everyone else's.
-  endMatch(reason){
+  endMatch(reason, detail){
     phase = "menu"; msg = null;
     hushBeams();
     el("pausePanel").hidden = true;
@@ -4773,12 +4797,22 @@ window.RPW = {
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";
     } else {
       el("curtainTitle").textContent = "The match fell out of sync";
-      el("curtainText").textContent = "Two players stopped agreeing about the state of the arena, so the match was stopped rather than left to drift apart. Host or join again to play on.";
+      // Name what stopped matching. A player reads "the spells in flight" and
+      // knows it was not their connection; we read it and know which function
+      // to open. Without it every report is the same report.
+      el("curtainText").textContent =
+        "Two players stopped agreeing about the state of the arena, so the match was stopped rather than left to drift apart. "
+        + desyncNote(detail)
+        + " Host or join again to play on.";
+      lastDesync = detail || null;
     }
     el("curtainText").hidden = false;
   },
   seatOf: () => you.seat,
   frameNow: () => simFrame,
+  // test hook: what the last desync report actually said
+  lastDesync: () => lastDesync,
+  desyncNote,
   startMatch(opts){
     // The game type rides in the sanitised opts rather than as its own protocol
     // field, so all three relays already agree on it and src/net.js does not
@@ -4878,6 +4912,39 @@ window.RPW = {
   matchCfg: () => ({ ...matchCfg }),
   phase: () => phase,
   // a cheap checksum of everything the simulation owns, for determinism tests
+  /* The same checksum, taken in pieces.
+
+     `hash()` answers "do we still agree?". When the answer is no, that single
+     number says nothing about WHAT stopped agreeing, and finding out has meant
+     asking two people in different countries to play again and guess with me.
+     These four say where to look:
+
+       wizards   position, health, mana, facing
+       spells    everything in flight
+       scenery   the props, where they are and what is left of them
+       rolls     the seeded random stream, and the frame it is on
+
+     A divergence in `rolls` alone means somebody drew from the seeded stream
+     when they should not have — the shape of every desync this game has shipped.
+     One in `wizards` but not `rolls` means the inputs or the timestep differed.
+     Four small numbers a second, and the next failure names itself. */
+  hashParts(){
+    const acc = { wizards: 2166374761, spells: 2166374761, scenery: 2166374761, rolls: 2166374761 };
+    const mix = (k, v) => { let h = acc[k]; h ^= (v * 1000) | 0; acc[k] = Math.imul(h, 16777619) >>> 0; };
+    mix("rolls", simFrame); mix("rolls", rngState & 0xffff);
+    mix("spells", shots.length); mix("scenery", debris.length);
+    for (const w of wizards){
+      mix("wizards", w.x); mix("wizards", w.y); mix("wizards", w.hp);
+      mix("wizards", w.mana); mix("wizards", w.facing);
+    }
+    for (const s of shots){ mix("spells", s.x); mix("spells", s.y); mix("spells", s.weight); }
+    for (const d of debris){
+      mix("scenery", d.x); mix("scenery", d.y);
+      mix("scenery", d.hp === Infinity ? 9 : d.hp);
+    }
+    for (const k in acc) acc[k] = acc[k] >>> 0;
+    return acc;
+  },
   hash(){
     let h = 2166136261 >>> 0;
     const mix = v => { h ^= (v * 1000) | 0; h = Math.imul(h, 16777619) >>> 0; };

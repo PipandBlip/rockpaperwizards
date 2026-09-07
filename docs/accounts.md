@@ -632,8 +632,30 @@ long as the round trip fits inside that. A quarter of a second does not fit
 inside fifty milliseconds, so **every frame waited for the post**: 732 frames in
 seventy seconds, about ten a second, in slow motion.
 
-The delay now grows when a client is being made to wait and shrinks when it is
-not, between 3 and 20 frames. Measured on a simulated 255ms link, same two
+The delay is now **computed from the measured trip** rather than groped towards.
+
+What has to fit inside it is not a round trip. It is the one-way hop from this
+client to the relay plus the one-way hop from the relay to the furthest other
+player — the journey a mask actually makes before somebody needs it. Each
+client's own ping is twice its own leg, so the two halves come to
+`(my ping + their ping) / 2`. The ping reply carries the furthest other player's
+trip, so each client can work the whole thing out:
+
+```js
+const transit = (rtt + (peerRtt || rtt)) / 2;
+return clamp(DELAY, Math.ceil(transit / (1000/60)) + JITTER_FRAMES, DELAY_MAX);
+```
+
+The first version only ever **ratcheted**: three frames up whenever a second held
+more than 100ms of waiting, one frame back only after a whole second with almost
+none. On a jittery long link that second never arrives, so it climbed to the
+20-frame ceiling and stayed — 333ms of input lag on routes needing far less.
+Measured, two clients 73ms and 361ms from the relay settle on 16 frames instead
+of 20, and a local pair settles on 5.
+
+The waiting signal is kept, but only as a safety net that can push *above* the
+measurement when the link is worse than it looks. The delay still moves between
+3 and 20 frames. Measured on a simulated 255ms link, same two
 clients, same seventy seconds:
 
 | | frames in 70s | effective rate |
@@ -826,6 +848,65 @@ Two other things fell out of the same look:
   stop running that bot's brain while every other client kept running it: a
   silent, one-sided desync waiting for the first roster where that could happen.
   The local wizard is now chosen from the seats that are already human.
+
+## A desync that names itself
+
+The relay has always compared a checksum of the whole world once a second and
+stopped a match when two clients disagreed. That check is correct and almost
+useless. "You desynced" is the same sentence for a projectile bug, a scenery
+bug and a wizard bug, and the only way to learn which one it was is to
+reproduce it — which, on this game, means coordinating a session with a friend
+nine hours away and hoping it happens again inside the seven seconds it usually
+takes. The reduce-motion desync above cost exactly that, twice.
+
+So each client now sends a checksum **per component** alongside the whole-world
+one. `hashParts()` in `src/game.js` returns four separate accumulators:
+
+| name      | what it covers                                    |
+|-----------|---------------------------------------------------|
+| `wizards` | every wizard's position, health, mana and facing  |
+| `spells`  | the projectiles in flight                         |
+| `scenery` | the destructible debris                           |
+| `rolls`   | the frame counter and the seeded RNG's state      |
+
+When the whole-world numbers split, the relay works out which of those four
+split with them and puts the names in the `desync` broadcast. The client turns
+them into a sentence a player can read:
+
+> Two players stopped agreeing about the state of the arena, so the match was
+> stopped rather than left to drift apart. What stopped matching: the spells in
+> flight at frame 120. Host or join again to play on.
+
+A player reads that and knows it was not their connection. We read it and know
+which function to open. The next report is worth something on its own, which is
+the whole point — no second coordinated session required.
+
+Three things about it are deliberate:
+
+- **`hash()` is untouched.** Its exact value is what `tools/net-round-test.js`,
+  `tools/determinism.js` and `tools/golden.js` compare against, and the parts
+  are a diagnostic riding alongside, not a replacement. A component checksum
+  covers less than the whole-world one, so a split that no part explains is
+  possible; the report says the worlds parted company and names nothing rather
+  than guessing.
+- **A client that sends no parts makes the report unnamed, not agreed.** An old
+  build in the room is a missing measurement. Treating silence as a match would
+  name the wrong component, and a wrong name is worse than no name — it sends
+  the next hour of work into the wrong file.
+- **The name list lives in three files and is pinned in tests.** `HASH_PARTS`
+  in `server/rooms.js` and `cloudflare/worker/src/index.js` must be equal, and
+  every name in it must be something `hashParts()` actually measures and
+  `DESYNC_WORDS` can say out loud. A name present in only two of the three
+  produces a report nobody can read.
+
+`tools/desync-parts-test.js` proves the pointing is accurate rather than merely
+present: two worlds on one seed agree on every component, a spell fired into
+only one of them names the spells **and only the spells**, and a wizard hurt in
+only one names the wizards without blaming the rolls. `server/test-relay.js`
+covers the relay's half — junk in the parts field, a missing parts field, and
+worker/node parity — and the whole loop was then driven in a real browser under
+the real CSP with a real relay: two clients, one of them lying about its spells
+from frame 120, and the honest client read back exactly the sentence above.
 
 ## What is not built yet
 

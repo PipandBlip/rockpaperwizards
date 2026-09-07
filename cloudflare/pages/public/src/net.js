@@ -183,6 +183,8 @@
       case "pong": {
         const sample = Date.now() - (+msg.s || Date.now());
         rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+        // what the furthest OTHER player in the room costs, as the relay sees it
+        peerRtt = Math.max(0, +msg.peer || 0);
         emit();
         return;
       }
@@ -191,7 +193,13 @@
         // Two clients stopped agreeing about the world. Lockstep has no way back
         // from that without shipping whole game states around, so stop honestly
         // instead of leaving people standing in worlds that have parted company.
-        endedBy("desync");
+        // The relay also names which components split, which turns the next
+        // report from "it broke" into a place to look.
+        net.desync = {
+          frame: msg.f | 0,
+          parts: Array.isArray(msg.parts) ? msg.parts.map(String) : []
+        };
+        endedBy("desync", net.desync);
         return;
       }
 
@@ -209,7 +217,7 @@
   }
 
   // one exit for every way a match can stop being playable
-  function endedBy(reason) {
+  function endedBy(reason, detail) {
     net.state = net.ws && net.ws.readyState === 1 ? "lobby" : "offline";
     net.room = null;
     net.players = [];
@@ -219,7 +227,7 @@
     net.dropped.clear();
     RPW.NET.active = false;
     if (RPW.pumpSync) RPW.pumpSync();
-    if (RPW.endMatch) RPW.endMatch(reason);
+    if (RPW.endMatch) RPW.endMatch(reason, detail || null);
     emit();
   }
 
@@ -318,13 +326,14 @@
      to be sent, and therefore how much lag you play with — so it is worth
      showing people, and worth knowing before changing anything about where the
      relay lives. Smoothed, because a single sample is mostly jitter. */
-  let rtt = 0, pingAt = 0;
+  let rtt = 0, peerRtt = 0, pingAt = 0;
   RPW.NET.rtt = () => Math.round(rtt);
+  RPW.NET.peerRtt = () => Math.round(peerRtt);
   function pingTick(now) {
     if (!net.ws || net.ws.readyState !== 1) return;
     if (now - pingAt < 2000) return;
     pingAt = now;
-    send({ t: "ping", s: now });
+    send({ t: "ping", s: now, rtt: Math.round(rtt) });
   }
 
   /* ------------------------------------------------- adaptive input delay
@@ -347,16 +356,42 @@
      ahead as it likes. It only has to fill the gap when it moves the horizon
      out, or it would leave frames nobody ever sent. */
   const DELAY_MAX = 20;                 // ~330ms; beyond this the input lag is worse than the wait
+  const JITTER_FRAMES = 3;              // headroom, so ordinary wobble does not stall a frame
   let delay = DELAY, waited = 0, adjAt = 0;
+
+  /* How far ahead input actually has to be sent, from measurement rather than
+     from groping upwards.
+
+     What has to fit inside the delay is not a round trip: it is the ONE-WAY trip
+     from this client to the relay plus the one-way trip from the relay to the
+     furthest other player — that is the journey a mask makes before somebody
+     needs it. Each client's own ping is twice its own leg, so the two halves add
+     up to (mine + theirs) / 2. */
+  function needFrames() {
+    if (!rtt) return DELAY;
+    const transit = (rtt + (peerRtt || rtt)) / 2;
+    const frames = Math.ceil(transit / (1000 / 60)) + JITTER_FRAMES;
+    return Math.max(DELAY, Math.min(DELAY_MAX, frames));
+  }
+  RPW.NET.need = needFrames;
   RPW.NET.waiting = function (ms) { waited += ms; };
   function retune(now) {
     pingTick(now);
     if (now - adjAt < 1000) return;
     adjAt = now;
-    /* A band, not a threshold, so the delay settles instead of oscillating
-       between two values every second. */
-    if (waited > 100 && delay < DELAY_MAX) delay = Math.min(DELAY_MAX, delay + 3);
-    else if (waited < 16 && delay > DELAY) delay -= 1;   // under a frame of waiting all second
+    /* Settle ON the measured need, and only exceed it when the link is worse
+       than the measurement says.
+
+       The old rule only ever ratcheted: three frames up whenever a second held
+       more than 100ms of waiting, one frame back only after a whole second with
+       almost none. On a jittery long link that second never comes, so it climbed
+       to the 20-frame ceiling and stayed — 330ms of input lag on a route that
+       needed about 190ms. Measuring the trip and aiming at it directly gives
+       back everything above that. */
+    const want = needFrames();
+    if (waited > 100 && delay < DELAY_MAX) delay = Math.min(DELAY_MAX, delay + 2);
+    else if (delay > want) delay -= 1;
+    if (delay < want) delay = want;
     waited = 0;
   }
   RPW.NET.delay = () => delay;
@@ -411,8 +446,13 @@
     }
     // Once a second, hand the server a checksum of our whole world. It compares
     // clients at equal frames; two that disagree have diverged for good.
+    // The checksum says THAT we diverged; the parts say WHERE. One number cannot
+    // tell a projectile bug from a scenery bug, and a desync you cannot name
+    // costs another coordinated session with a friend to reproduce.
     if (frame % 60 === 0 && typeof RPW.hash === "function") {
-      send({ t: "hash", f: frame, h: RPW.hash() >>> 0 });
+      const m = { t: "hash", f: frame, h: RPW.hash() >>> 0 };
+      if (typeof RPW.hashParts === "function") m.parts = RPW.hashParts();
+      send(m);
     }
     // forget frames we will never look at again
     if (frame % 120 === 0) {

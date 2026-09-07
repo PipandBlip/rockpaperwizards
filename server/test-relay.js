@@ -8,7 +8,7 @@
 "use strict";
 
 const assert = require("assert");
-const { Player, handle, rooms, sweepStalled, STALL_MS, STALL_LAG } = require("./rooms");
+const { Player, handle, rooms, sweepStalled, STALL_MS, STALL_LAG, HASH_PARTS, partsSplit } = require("./rooms");
 
 let pass = 0;
 function test(name, fn) {
@@ -305,6 +305,71 @@ test("clients that agree are left alone", () => {
   assert.ok(!a.last("desync"), "matching worlds are not reported as desynced");
 });
 
+/* ------------------------------------------------------- naming the culprit
+
+   A desync you cannot name costs a whole coordinated session with a friend in
+   another timezone to reproduce, and the next report says exactly as little.
+   Each client sends a checksum per component alongside the whole-world one, so
+   the relay can say which part parted company. These tests pin that: the wrong
+   name is worse than no name, because it sends us reading the wrong function. */
+
+const P = (w, s, c, r) => ({ wizards: w, spells: s, scenery: c, rolls: r });
+
+test("the desync report names only the component that actually differs", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 240, h: 111, parts: P(1, 2, 3, 4) });
+  b.say({ t: "hash", f: 240, h: 222, parts: P(1, 9, 3, 4) });
+  const d = a.last("desync");
+  assert.ok(d, "a disagreement is still reported");
+  assert.deepStrictEqual(d.parts, ["spells"], "only the spells differ, so only the spells are named");
+  assert.strictEqual(d.f, 240);
+});
+
+test("several differing components are all named", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 60, h: 1, parts: P(1, 2, 3, 4) });
+  b.say({ t: "hash", f: 60, h: 2, parts: P(7, 2, 8, 4) });
+  assert.deepStrictEqual(a.last("desync").parts, ["wizards", "scenery"]);
+});
+
+test("a client that sends no parts leaves the report unnamed rather than wrong", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 60, h: 1, parts: P(1, 2, 3, 4) });
+  b.say({ t: "hash", f: 60, h: 2 });
+  const d = a.last("desync");
+  assert.ok(d, "the desync itself is still reported");
+  assert.deepStrictEqual(d.parts, [], "a missing measurement is not agreement");
+});
+
+test("junk in the parts field cannot crash the relay or invent a component", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 60, h: 1, parts: { wizards: "x", spells: null } });
+  b.say({ t: "hash", f: 60, h: 2, parts: P(1, 2, 3, 4) });
+  assert.deepStrictEqual(a.last("desync").parts, []);
+});
+
+test("matching parts alongside matching worlds report nothing at all", () => {
+  const a = fake("A"), code = (a.say({ t: "create", total: 2 }), a.last("room").code);
+  const b = fake("B"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "hash", f: 60, h: 7, parts: P(1, 2, 3, 4) });
+  b.say({ t: "hash", f: 60, h: 7, parts: P(1, 2, 3, 4) });
+  assert.ok(!a.last("desync"));
+});
+
+test("partsSplit keeps the component order the game reports them in", () => {
+  assert.deepStrictEqual(partsSplit([P(1, 1, 1, 1), P(2, 1, 2, 2)]), ["wizards", "scenery", "rolls"]);
+  assert.deepStrictEqual(partsSplit([P(1, 1, 1, 1), P(1, 1, 1, 1)]), []);
+});
+
 /* ------------------------------------------------------- builds and waiting
 
    Two clients on different builds are two different programs. Everything about
@@ -383,6 +448,41 @@ test("and normal lag is never mistaken for falling behind", () => {
     "a seat less than STALL_LAG frames behind must never be dropped");
 });
 
+test("a ping comes back with what the furthest other player costs", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "46"); b.say({ t: "join", code });
+  // each side reports its own measured round trip
+  a.say({ t: "ping", s: 1, rtt: 40 });
+  b.say({ t: "ping", s: 2, rtt: 300 });
+  a.say({ t: "ping", s: 3, rtt: 40 });
+  assert.strictEqual(a.last("pong").s, 3, "the echo carries the stamp back");
+  assert.strictEqual(a.last("pong").peer, 300, "A is told B's leg, not its own");
+  b.say({ t: "ping", s: 4, rtt: 300 });
+  assert.strictEqual(b.last("pong").peer, 40, "and B is told A's");
+});
+
+test("and a nonsense round trip cannot poison it", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "46"); b.say({ t: "join", code });
+  b.say({ t: "ping", s: 1, rtt: -5 });
+  a.say({ t: "ping", s: 2, rtt: 10 });
+  assert.ok(a.last("pong").peer >= 0, "a negative trip must not come back");
+  b.say({ t: "ping", s: 3, rtt: 999999 });
+  a.say({ t: "ping", s: 4, rtt: 10 });
+  assert.ok(a.last("pong").peer <= 60000, "and an absurd one is clamped");
+});
+
+test("alone in a room, there is nobody else to wait for", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  a.say({ t: "ping", s: 1, rtt: 120 });
+  assert.strictEqual(a.last("pong").peer, 0, "a lone host is told zero, not its own trip");
+});
+
 /* ---------------------------------------------------------------- arenas
 
    The host picks an arena; the relay sanitises it and hands the SAME value to
@@ -456,6 +556,12 @@ test("the worker knows every message the node relay knows", () => {
   assert.deepStrictEqual(missing, [], "the worker is missing: " + missing.join(", "));
 });
 
+test("and reports a peer's round trip the same way", () => {
+  assert.ok(/case "ping"/.test(workerSrc), "the worker does not answer a ping");
+  assert.ok(/peer/.test(workerSrc.slice(workerSrc.indexOf('case "ping"'), workerSrc.indexOf('case "ping"') + 700)),
+            "the worker's pong carries no peer trip, so its clients cannot size their input delay");
+});
+
 test("and refuses a split-build room the same way", () => {
   assert.ok(/buildSplit/.test(workerSrc), "the worker has no build check");
   assert.ok(/badbuild/.test(workerSrc), "the worker never says badbuild");
@@ -499,6 +605,35 @@ test("every seat is told the same arena when the match starts", () => {
   a.say({ t: "start" });
   assert.strictEqual(a.last("start").opts.mapPreset, "forest");
   assert.strictEqual(b.last("start").opts.mapPreset, "forest");
+});
+
+/* The relay names the component; the game turns the name into a sentence and
+   the simulation produces it in the first place. Three files, one vocabulary --
+   a name that exists in only two of them reports a desync no one can read. */
+
+test("the worker names desync components exactly as the node relay does", () => {
+  const roomsSrc = fs.readFileSync(pathM.join(REPO, "server/rooms.js"), "utf8");
+  const list = src => {
+    const m = src.match(/const HASH_PARTS = \[([^\]]*)\]/);
+    assert.ok(m, "no HASH_PARTS list found");
+    return m[1].split(",").map(x => x.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  };
+  assert.deepStrictEqual(list(workerSrc), list(roomsSrc),
+    "cloudflare/worker/src/index.js and server/rooms.js must be patched in step");
+  assert.ok(/partsSplit\(/.test(workerSrc), "the worker never works out which component split");
+  assert.ok(/t: "desync", f, parts/.test(workerSrc), "the worker's desync report carries no component names");
+});
+
+test("the game measures every component the relays can name, and can say it out loud", () => {
+  const roomsSrc = fs.readFileSync(pathM.join(REPO, "server/rooms.js"), "utf8");
+  const parts = roomsSrc.match(/const HASH_PARTS = \[([^\]]*)\]/)[1]
+    .split(",").map(x => x.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  const hp = gameSrc.slice(gameSrc.indexOf("hashParts()"), gameSrc.indexOf("hashParts()") + 1400);
+  for (const k of parts){
+    assert.ok(hp.includes(k), "hashParts() never measures " + k + ", so the relay can never name it");
+    assert.ok(/DESYNC_WORDS = \{[\s\S]*?\}/.exec(gameSrc)[0].includes(k),
+      "the game has no words for a " + k + " desync, so the report reads as blank");
+  }
 });
 
 console.log(`\n${pass} passing`);

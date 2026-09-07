@@ -210,6 +210,40 @@ function cleanLevel(v) {
   return (n >= 1 && n <= 999) ? n : 1;
 }
 
+/* ---------------------------------------------------------------- desync parts
+
+   A single checksum can only say "these two worlds are not the same". That is
+   true and useless: it costs a coordinated session with a friend in another
+   timezone to reproduce, and the next report says exactly as little. So each
+   client also sends a checksum PER COMPONENT, and when the whole-world numbers
+   split we name the components that split with them. "the wizards agreed, the
+   spells did not, at frame 240" points at one function; "you desynced" points
+   at 210KB. The names live here and in game.js's hashParts(); keep them equal. */
+const HASH_PARTS = ["wizards", "spells", "scenery", "rolls"];
+function cleanParts(o) {
+  if (!o || typeof o !== "object") return null;
+  const out = {};
+  for (const k of HASH_PARTS) {
+    if (typeof o[k] !== "number" || !isFinite(o[k])) return null;
+    out[k] = o[k] >>> 0;
+  }
+  return out;
+}
+function partsSplit(list) {
+  // Every client must have sent parts, or we cannot say which part differs --
+  // an old client with no parts is a missing measurement, not agreement.
+  for (const o of list) if (!o) return [];
+  const out = [];
+  for (const k of HASH_PARTS) {
+    let first = null;
+    for (const o of list) {
+      if (first === null) first = o[k];
+      else if (o[k] !== first) { out.push(k); break; }
+    }
+  }
+  return out;
+}
+
 function handle(p, msg) {
   switch (msg.t) {
     case "hello":
@@ -312,13 +346,13 @@ function handle(p, msg) {
       const r = p.room, f = msg.f | 0, h = msg.h >>> 0;
       let at = r.hashes.get(f);
       if (!at) { at = new Map(); r.hashes.set(f, at); }
-      at.set(p.seat, h);
+      at.set(p.seat, { h, parts: cleanParts(msg.parts) });
       if (!r.desynced && at.size > 1) {
         let first = null, split = false;
-        for (const v of at.values()) { if (first === null) first = v; else if (v !== first) split = true; }
+        for (const v of at.values()) { if (first === null) first = v.h; else if (v.h !== first) split = true; }
         if (split) {
           r.desynced = true;
-          r.broadcast({ t: "desync", f });
+          r.broadcast({ t: "desync", f, parts: partsSplit([...at.values()].map(v => v.parts)) });
         }
       }
       for (const k of r.hashes.keys()) if (k < f - 900) r.hashes.delete(k);
@@ -328,11 +362,17 @@ function handle(p, msg) {
     /* "I am still here, just waiting." A client in lockstep sends no input while
        it waits on a distant peer, and the stall sweep reads silence as absence.
        This is the message that tells the two apart. */
-    /* The round trip, measured. Echoed straight back so the client can time it —
-       the relay does no work and keeps no state for this. */
-    case "ping":
-      p.send({ t: "pong", s: msg.s });
+    /* The round trip, measured. Echoed straight back so the client can time it.
+       The reply carries what the furthest OTHER player in the room costs, so a
+       client can work out the whole journey its input makes — its own leg plus
+       theirs — instead of guessing at it by stalling. */
+    case "ping": {
+      if (msg.rtt != null) p.rtt = Math.max(0, Math.min(60000, msg.rtt | 0));
+      let peer = 0;
+      if (p.room) for (const q of p.room.players) if (q !== p) peer = Math.max(peer, q.rtt || 0);
+      p.send({ t: "pong", s: msg.s, peer });
       return;
+    }
 
     case "alive":
       if (p.room && p.room.state === "running") p.lastIn = Date.now();
@@ -386,4 +426,4 @@ function sweepStalled(now) {
   return dropped;
 }
 
-module.exports = { Room, Player, handle, rooms, MAX_SEATS, ROOM_IDLE_MS, STALL_MS, STALL_LAG, sweepStalled, cleanName };
+module.exports = { Room, Player, handle, rooms, MAX_SEATS, ROOM_IDLE_MS, STALL_MS, STALL_LAG, sweepStalled, cleanName, HASH_PARTS, cleanParts, partsSplit };

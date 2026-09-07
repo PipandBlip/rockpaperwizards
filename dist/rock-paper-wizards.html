@@ -5696,6 +5696,30 @@ resetWizards();
 msg = null;
 requestAnimationFrame(frame);
 
+/* ------------------------------------------------------------- desync report
+
+   The relay tells us WHICH components stopped matching, not just that something
+   did. Turn that into one plain sentence: a player learns it was not their
+   connection, and we learn which part of the simulation to open. The names come
+   from hashParts() and must keep meaning the same thing on both ends. */
+let lastDesync = null;
+const DESYNC_WORDS = {
+  wizards: "the wizards themselves",
+  spells:  "the spells in flight",
+  scenery: "the scenery",
+  rolls:   "the run of random rolls"
+};
+function desyncNote(d){
+  if (!d) return "";
+  const at = d.frame > 0 ? " at frame " + (d.frame | 0) : "";
+  const named = (d.parts || []).map(k => DESYNC_WORDS[k]).filter(Boolean);
+  if (!named.length) return "The two worlds parted company" + at + ".";
+  let list = named[0];
+  if (named.length === 2) list = named[0] + " and " + named[1];
+  else if (named.length > 2) list = named.slice(0, -1).join(", ") + " and " + named[named.length - 1];
+  return "What stopped matching: " + list + at + ".";
+}
+
 // handed to src/net.js so the network layer can drive a match without
 // reaching into the simulation's internals
 window.RPW = {
@@ -5710,7 +5734,7 @@ window.RPW = {
   // net.js calls this when a match cannot continue. Saying plainly what happened
   // beats leaving somebody standing in an arena that has stopped agreeing with
   // everyone else's.
-  endMatch(reason){
+  endMatch(reason, detail){
     phase = "menu"; msg = null;
     hushBeams();
     el("pausePanel").hidden = true;
@@ -5724,12 +5748,22 @@ window.RPW = {
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";
     } else {
       el("curtainTitle").textContent = "The match fell out of sync";
-      el("curtainText").textContent = "Two players stopped agreeing about the state of the arena, so the match was stopped rather than left to drift apart. Host or join again to play on.";
+      // Name what stopped matching. A player reads "the spells in flight" and
+      // knows it was not their connection; we read it and know which function
+      // to open. Without it every report is the same report.
+      el("curtainText").textContent =
+        "Two players stopped agreeing about the state of the arena, so the match was stopped rather than left to drift apart. "
+        + desyncNote(detail)
+        + " Host or join again to play on.";
+      lastDesync = detail || null;
     }
     el("curtainText").hidden = false;
   },
   seatOf: () => you.seat,
   frameNow: () => simFrame,
+  // test hook: what the last desync report actually said
+  lastDesync: () => lastDesync,
+  desyncNote,
   startMatch(opts){
     // The game type rides in the sanitised opts rather than as its own protocol
     // field, so all three relays already agree on it and src/net.js does not
@@ -5829,6 +5863,39 @@ window.RPW = {
   matchCfg: () => ({ ...matchCfg }),
   phase: () => phase,
   // a cheap checksum of everything the simulation owns, for determinism tests
+  /* The same checksum, taken in pieces.
+
+     `hash()` answers "do we still agree?". When the answer is no, that single
+     number says nothing about WHAT stopped agreeing, and finding out has meant
+     asking two people in different countries to play again and guess with me.
+     These four say where to look:
+
+       wizards   position, health, mana, facing
+       spells    everything in flight
+       scenery   the props, where they are and what is left of them
+       rolls     the seeded random stream, and the frame it is on
+
+     A divergence in `rolls` alone means somebody drew from the seeded stream
+     when they should not have — the shape of every desync this game has shipped.
+     One in `wizards` but not `rolls` means the inputs or the timestep differed.
+     Four small numbers a second, and the next failure names itself. */
+  hashParts(){
+    const acc = { wizards: 2166374761, spells: 2166374761, scenery: 2166374761, rolls: 2166374761 };
+    const mix = (k, v) => { let h = acc[k]; h ^= (v * 1000) | 0; acc[k] = Math.imul(h, 16777619) >>> 0; };
+    mix("rolls", simFrame); mix("rolls", rngState & 0xffff);
+    mix("spells", shots.length); mix("scenery", debris.length);
+    for (const w of wizards){
+      mix("wizards", w.x); mix("wizards", w.y); mix("wizards", w.hp);
+      mix("wizards", w.mana); mix("wizards", w.facing);
+    }
+    for (const s of shots){ mix("spells", s.x); mix("spells", s.y); mix("spells", s.weight); }
+    for (const d of debris){
+      mix("scenery", d.x); mix("scenery", d.y);
+      mix("scenery", d.hp === Infinity ? 9 : d.hp);
+    }
+    for (const k in acc) acc[k] = acc[k] >>> 0;
+    return acc;
+  },
   hash(){
     let h = 2166136261 >>> 0;
     const mix = v => { h ^= (v * 1000) | 0; h = Math.imul(h, 16777619) >>> 0; };
@@ -6029,6 +6096,8 @@ window.RPW = {
       case "pong": {
         const sample = Date.now() - (+msg.s || Date.now());
         rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+        // what the furthest OTHER player in the room costs, as the relay sees it
+        peerRtt = Math.max(0, +msg.peer || 0);
         emit();
         return;
       }
@@ -6037,7 +6106,13 @@ window.RPW = {
         // Two clients stopped agreeing about the world. Lockstep has no way back
         // from that without shipping whole game states around, so stop honestly
         // instead of leaving people standing in worlds that have parted company.
-        endedBy("desync");
+        // The relay also names which components split, which turns the next
+        // report from "it broke" into a place to look.
+        net.desync = {
+          frame: msg.f | 0,
+          parts: Array.isArray(msg.parts) ? msg.parts.map(String) : []
+        };
+        endedBy("desync", net.desync);
         return;
       }
 
@@ -6055,7 +6130,7 @@ window.RPW = {
   }
 
   // one exit for every way a match can stop being playable
-  function endedBy(reason) {
+  function endedBy(reason, detail) {
     net.state = net.ws && net.ws.readyState === 1 ? "lobby" : "offline";
     net.room = null;
     net.players = [];
@@ -6065,7 +6140,7 @@ window.RPW = {
     net.dropped.clear();
     RPW.NET.active = false;
     if (RPW.pumpSync) RPW.pumpSync();
-    if (RPW.endMatch) RPW.endMatch(reason);
+    if (RPW.endMatch) RPW.endMatch(reason, detail || null);
     emit();
   }
 
@@ -6164,13 +6239,14 @@ window.RPW = {
      to be sent, and therefore how much lag you play with — so it is worth
      showing people, and worth knowing before changing anything about where the
      relay lives. Smoothed, because a single sample is mostly jitter. */
-  let rtt = 0, pingAt = 0;
+  let rtt = 0, peerRtt = 0, pingAt = 0;
   RPW.NET.rtt = () => Math.round(rtt);
+  RPW.NET.peerRtt = () => Math.round(peerRtt);
   function pingTick(now) {
     if (!net.ws || net.ws.readyState !== 1) return;
     if (now - pingAt < 2000) return;
     pingAt = now;
-    send({ t: "ping", s: now });
+    send({ t: "ping", s: now, rtt: Math.round(rtt) });
   }
 
   /* ------------------------------------------------- adaptive input delay
@@ -6193,16 +6269,42 @@ window.RPW = {
      ahead as it likes. It only has to fill the gap when it moves the horizon
      out, or it would leave frames nobody ever sent. */
   const DELAY_MAX = 20;                 // ~330ms; beyond this the input lag is worse than the wait
+  const JITTER_FRAMES = 3;              // headroom, so ordinary wobble does not stall a frame
   let delay = DELAY, waited = 0, adjAt = 0;
+
+  /* How far ahead input actually has to be sent, from measurement rather than
+     from groping upwards.
+
+     What has to fit inside the delay is not a round trip: it is the ONE-WAY trip
+     from this client to the relay plus the one-way trip from the relay to the
+     furthest other player — that is the journey a mask makes before somebody
+     needs it. Each client's own ping is twice its own leg, so the two halves add
+     up to (mine + theirs) / 2. */
+  function needFrames() {
+    if (!rtt) return DELAY;
+    const transit = (rtt + (peerRtt || rtt)) / 2;
+    const frames = Math.ceil(transit / (1000 / 60)) + JITTER_FRAMES;
+    return Math.max(DELAY, Math.min(DELAY_MAX, frames));
+  }
+  RPW.NET.need = needFrames;
   RPW.NET.waiting = function (ms) { waited += ms; };
   function retune(now) {
     pingTick(now);
     if (now - adjAt < 1000) return;
     adjAt = now;
-    /* A band, not a threshold, so the delay settles instead of oscillating
-       between two values every second. */
-    if (waited > 100 && delay < DELAY_MAX) delay = Math.min(DELAY_MAX, delay + 3);
-    else if (waited < 16 && delay > DELAY) delay -= 1;   // under a frame of waiting all second
+    /* Settle ON the measured need, and only exceed it when the link is worse
+       than the measurement says.
+
+       The old rule only ever ratcheted: three frames up whenever a second held
+       more than 100ms of waiting, one frame back only after a whole second with
+       almost none. On a jittery long link that second never comes, so it climbed
+       to the 20-frame ceiling and stayed — 330ms of input lag on a route that
+       needed about 190ms. Measuring the trip and aiming at it directly gives
+       back everything above that. */
+    const want = needFrames();
+    if (waited > 100 && delay < DELAY_MAX) delay = Math.min(DELAY_MAX, delay + 2);
+    else if (delay > want) delay -= 1;
+    if (delay < want) delay = want;
     waited = 0;
   }
   RPW.NET.delay = () => delay;
@@ -6257,8 +6359,13 @@ window.RPW = {
     }
     // Once a second, hand the server a checksum of our whole world. It compares
     // clients at equal frames; two that disagree have diverged for good.
+    // The checksum says THAT we diverged; the parts say WHERE. One number cannot
+    // tell a projectile bug from a scenery bug, and a desync you cannot name
+    // costs another coordinated session with a friend to reproduce.
     if (frame % 60 === 0 && typeof RPW.hash === "function") {
-      send({ t: "hash", f: frame, h: RPW.hash() >>> 0 });
+      const m = { t: "hash", f: frame, h: RPW.hash() >>> 0 };
+      if (typeof RPW.hashParts === "function") m.parts = RPW.hashParts();
+      send(m);
     }
     // forget frames we will never look at again
     if (frame % 120 === 0) {
