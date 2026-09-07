@@ -36,7 +36,13 @@ const STALL_MS = 6000;
 // separates them is how far ahead each has sent: a client merely waiting has
 // already queued its next DELAY frames and sits level with the room, while the one
 // that stopped stepping is measurably behind. Only that one is dropped.
-const STALL_LAG = 2;   // frames behind the room's furthest sender
+/* Frames behind the room's furthest sender before a quiet seat counts as one
+   that has fallen out rather than one that is merely waiting. Two was far too
+   tight: on a long link normal jitter puts a perfectly healthy client further
+   behind than that, and it was dropped mid-match for it. Half a second of
+   frames is comfortably outside jitter and still catches a seat that has
+   genuinely stopped. */
+const STALL_LAG = 30;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
 
 // A player's level, purely so the others can draw their cape with the right
@@ -44,6 +50,14 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
 // level it has not earned wins nothing but a prettier cloak — but it is still
 // clamped to a sane integer here, because "banana" reaching another client's
 // rendering code is how you crash somebody else's game.
+/* Two clients on different builds are two different programs. They will disagree
+   about the arena within seconds, and every symptom of it looks exactly like a
+   desync — which sends people hunting the netcode instead of pressing refresh.
+   So the build each client is running is part of the handshake, and a room that
+   is not all on one build never starts. */
+function cleanBuild(v) {
+  return String(v == null ? "" : v).replace(/[^0-9]/g, "").slice(0, 8) || "0";
+}
 function cleanLevel(v) {
   const n = Math.floor(Number(v));
   return (n >= 1 && n <= 999) ? n : 1;
@@ -273,8 +287,23 @@ export class RPWRelay extends DurableObject {
     }
   }
 
+  /* Every seat on the same build, or nobody plays. */
+  buildSplit(room) {
+    const seen = new Set();
+    for (const pid of room.playerIds) {
+      const q = this.byId.get(pid);
+      if (q) seen.add(q.build || "0");
+    }
+    return seen.size > 1 ? [...seen].sort() : null;
+  }
   startRoom(room) {
     if (room.state === "running") return;
+    const split = this.buildSplit(room);
+    if (split) {
+      this.broadcast(room, { t: "badbuild", builds: split,
+                             why: "the players are not all running the same version" });
+      return;
+    }
     room.state = "running";
     room.seed = (Math.random() * 0xffffffff) >>> 0;
     room.touched = Date.now();
@@ -307,6 +336,7 @@ export class RPWRelay extends DurableObject {
       case "hello":
         p.name = cleanName(msg.name);
         p.lv = cleanLevel(msg.lv);
+        p.build = cleanBuild(msg.build);
         dirty = true;
         this.sendToId(p.id, { t: "hello", name: p.name });
         break;
@@ -422,6 +452,22 @@ export class RPWRelay extends DurableObject {
           dirty = true;
         }
         this.broadcast(r, { t: "in", seat: p.seat, f: msg.f | 0, m: msg.m | 0 }, p.id);
+        break;
+      }
+
+      /* "I am still here, just waiting." A client in lockstep sends no input
+         while it waits on a distant peer, and the stall sweep reads silence as
+         absence. This is the message that tells the two apart. */
+      /* The round trip, measured. Echoed straight back so the client can time
+         it — the relay does no work and keeps no state for this. */
+      case "ping":
+        this.sendToId(p.id, { t: "pong", s: msg.s });
+        break;
+
+      case "alive": {
+        if (!p.roomCode) break;
+        const r = this.rooms.get(p.roomCode);
+        if (r && r.state === "running"){ p.lastIn = Date.now(); dirty = true; }
         break;
       }
 

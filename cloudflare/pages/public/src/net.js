@@ -62,8 +62,17 @@
         const ws = new WebSocket(url);
         net.ws = ws;
         ws.onopen = () => {
+          /* A lobby ticker, so the round trip is known BEFORE the match starts —
+             during a match `retune` pings from the frame loop instead. Guarded,
+             because the headless rigs have no timers and net.js must not assume
+             a browser: assuming one here crashed the net-round test outright. */
+          if (typeof setInterval === "function"){
+            if (net.pinger) clearInterval(net.pinger);
+            net.pinger = setInterval(() => pingTick(Date.now()), 2000);
+          }
+          pingTick(Date.now());
           net.state = "lobby";
-          send({ t: "hello", name: currentName(), lv: currentLevel() });
+          send({ t: "hello", name: currentName(), lv: currentLevel(), build: currentBuild() });
           emit();
           resolve(net);
         };
@@ -73,6 +82,8 @@
           receive(msg);
         };
         ws.onclose = () => {
+          if (net.pinger && typeof clearInterval === "function"){ clearInterval(net.pinger); }
+          net.pinger = null;
           net.state = "offline";
           RPW.NET.active = false;
           if (RPW.pumpSync) RPW.pumpSync();
@@ -100,6 +111,21 @@
   // traffic that could cost anybody a frame. The colours are not sent: cloak
   // jewels are earned strictly in level order, so a level is enough for every
   // client to rebuild the same row of stones from the shared GEMS table.
+  /* The build this page is running. Taken from the cache-bust on our own script
+     tag, so it changes on every deploy. Two clients running different builds
+     have different simulations and WILL diverge; saying so plainly beats
+     letting them play for seven seconds and calling it a desync. */
+  function currentBuild() {
+    try {
+      const tags = document.getElementsByTagName("script");
+      for (const t of tags) {
+        const m = (t.getAttribute("src") || "").match(/game\.js\?v=(\d+)/);
+        if (m) return m[1];
+      }
+    } catch (e) {}
+    return "0";
+  }
+
   function currentLevel() {
     const p = window.RPWA && window.RPWA.profile;
     const lv = p && p.level;
@@ -144,6 +170,22 @@
         }
         emit();
         return;
+
+      /* The room is not all on the same build. This is not a desync — the two
+         simulations were never the same program — so it gets its own message,
+         because "refresh the page" is the fix and nothing else is. */
+      case "badbuild": {
+        net.error = msg.why || "different versions";
+        endedBy("build");
+        return;
+      }
+
+      case "pong": {
+        const sample = Date.now() - (+msg.s || Date.now());
+        rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+        emit();
+        return;
+      }
 
       case "desync": {
         // Two clients stopped agreeing about the world. Lockstep has no way back
@@ -257,6 +299,77 @@
     return m < 0 ? 0 : m;
   };
 
+  /* Waiting is not silence.
+
+     A client only sends input when it takes a simulation step, and in lockstep
+     it cannot step until its peer's input arrives. On a long link — Japan to
+     Canada is a quarter of a second each way — a client can therefore sit
+     perfectly healthy and perfectly quiet for seconds at a time, waiting. The
+     relay could not tell that apart from a client that had gone away, and
+     dropped it out of the match for "falling behind".
+
+     So a waiting client says so, about once a second. It costs one tiny message
+     and it is the difference between a long-distance game that plays and one
+     that throws somebody out every few seconds. */
+  /* ------------------------------------------------------------- ping
+
+     The round trip to the relay, measured rather than guessed. It decides
+     everything about how a long-distance match feels — how far ahead input has
+     to be sent, and therefore how much lag you play with — so it is worth
+     showing people, and worth knowing before changing anything about where the
+     relay lives. Smoothed, because a single sample is mostly jitter. */
+  let rtt = 0, pingAt = 0;
+  RPW.NET.rtt = () => Math.round(rtt);
+  function pingTick(now) {
+    if (!net.ws || net.ws.readyState !== 1) return;
+    if (now - pingAt < 2000) return;
+    pingAt = now;
+    send({ t: "ping", s: now });
+  }
+
+  /* ------------------------------------------------- adaptive input delay
+
+     Lockstep cannot start frame F until every player's input for F has arrived.
+     Input is sent `delay` frames ahead, so as long as the round trip is shorter
+     than `delay` frames nobody ever waits. DELAY is 3 — fifty milliseconds —
+     which is right for two people in the same country and hopeless between
+     Japan and Canada, where the round trip is a quarter of a second. Every
+     single frame then waits for the post, and a match that is otherwise
+     perfectly healthy crawls along at ten frames a second.
+
+     So the delay grows when we are being made to wait, and shrinks again when
+     we are not. The cost is that OUR OWN key presses land further ahead — the
+     standard trade every lockstep game makes over distance, and much the better
+     end of it than slow motion.
+
+     This needs no agreement between clients and no change to the protocol: each
+     "in" message already names the frame it is for, so a client may send as far
+     ahead as it likes. It only has to fill the gap when it moves the horizon
+     out, or it would leave frames nobody ever sent. */
+  const DELAY_MAX = 20;                 // ~330ms; beyond this the input lag is worse than the wait
+  let delay = DELAY, waited = 0, adjAt = 0;
+  RPW.NET.waiting = function (ms) { waited += ms; };
+  function retune(now) {
+    pingTick(now);
+    if (now - adjAt < 1000) return;
+    adjAt = now;
+    /* A band, not a threshold, so the delay settles instead of oscillating
+       between two values every second. */
+    if (waited > 100 && delay < DELAY_MAX) delay = Math.min(DELAY_MAX, delay + 3);
+    else if (waited < 16 && delay > DELAY) delay -= 1;   // under a frame of waiting all second
+    waited = 0;
+  }
+  RPW.NET.delay = () => delay;
+
+  let lastAlive = 0;
+  RPW.NET.alive = function () {
+    if (!net.ws || net.state !== "running") return;
+    const now = Date.now();
+    if (now - lastAlive < 1000) return;
+    lastAlive = now;
+    send({ t: "alive" });
+  };
+
   RPW.NET.ready = function (frame) {
     if (!net.ws || net.state !== "running") return true;
     const row = net.inputs.get(frame);
@@ -280,13 +393,20 @@
 
   RPW.NET.onStep = function (frame) {
     if (!net.ws || net.state !== "running") return;
-    const target = frame + DELAY;
+    retune(Date.now());
+    const target = frame + delay;
     if (target > net.lastSent) {
       const seat = net.seat < 0 ? 0 : net.seat;
       const mask = RPW.localMask() | 0;   // whatever this keyboard is holding right now
-      const row = frameRow(target);
-      if (row && seat < row.length) row[seat] = mask;
-      send({ t: "in", f: target, m: mask });
+      /* Every frame from the last one we sent up to the new horizon, or moving
+         the horizon out would leave a hole nobody ever fills and the whole room
+         would wait on it forever. Normally that is exactly one frame. */
+      const from = Math.max(net.lastSent + 1, frame + 1);
+      for (let f = from; f <= target; f++) {
+        const row = frameRow(f);
+        if (row && seat < row.length) row[seat] = mask;
+        send({ t: "in", f, m: mask });
+      }
       net.lastSent = target;
     }
     // Once a second, hand the server a checksum of our whole world. It compares

@@ -590,6 +590,95 @@ Trees, statues and pillars are baked in at map time and skipped by the per-frame
 draw loop. Only things that can move or break are drawn each frame. The brazier
 flame flickers off `performance.now()` — view time — for the same reason.
 
+## Playing across an ocean
+
+Japan to Canada is about a quarter of a second, there and back. Three separate
+things broke on that link, and only the first was a desync.
+
+### 1. The relay threw healthy players out
+
+`sweepStalled` drops a seat that has sent no input for six seconds AND is at
+least `STALL_LAG` frames behind the room's furthest sender. `STALL_LAG` was
+**2**.
+
+Both halves of that were wrong over distance. A client in lockstep sends input
+only when it takes a step, and it cannot step until its peer's input arrives —
+so on a long link a perfectly healthy client sits silent for seconds at a time,
+waiting. And two frames behind is ordinary jitter, not a straggler.
+
+So the relay dropped somebody mid-match every few seconds. Now:
+
+- a waiting client sends `{t:"alive"}` about once a second, which says "still
+  here, just waiting" — silence and absence are no longer the same thing
+- `STALL_LAG` is 30 frames, half a second, comfortably outside jitter
+
+### 2. Different builds looked exactly like a desync
+
+Two clients running different builds are two different programs. They diverge
+within seconds and every symptom is indistinguishable from a netcode bug, which
+sends you hunting the wrong thing while the fix is to press refresh.
+
+The build each client is running — taken from the cache-bust on its own script
+tag, so it changes every deploy — is now part of the handshake. A room that is
+not all on one build **never starts**, and says so in its own words.
+
+### 3. It played at ten frames a second
+
+This is the one that decides whether a long-distance game is worth playing.
+
+Lockstep cannot start frame F until every player's input for F has arrived.
+Input is sent `DELAY` frames ahead — 3, fifty milliseconds — so nobody waits as
+long as the round trip fits inside that. A quarter of a second does not fit
+inside fifty milliseconds, so **every frame waited for the post**: 732 frames in
+seventy seconds, about ten a second, in slow motion.
+
+The delay now grows when a client is being made to wait and shrinks when it is
+not, between 3 and 20 frames. Measured on a simulated 255ms link, same two
+clients, same seventy seconds:
+
+| | frames in 70s | effective rate |
+|---|---|---|
+| fixed 3-frame delay | 732 | ~10/s |
+| adaptive | 3506 | ~50/s |
+
+The cost is that your own key presses land further ahead — the trade every
+lockstep game makes over distance, and much the better end of it than slow
+motion. Near-zero latency still settles low and stays sharp.
+
+It needs **no agreement between clients and no protocol change**: every `in`
+message already names the frame it is for, so a client may send as far ahead as
+it likes. It only has to fill the gap when it moves its horizon out, or it
+leaves frames nobody ever sends and the whole room waits on them forever.
+
+### The round trip, on screen
+
+The lobby and the match HUD now show the measured round trip to the relay —
+"347ms" — because it is the single number that decides how a long-distance match
+feels, and until it was visible nobody could tell a slow link from a broken one.
+Both relays answer a `ping` by echoing it straight back; the client smooths the
+samples. In a match the frame loop drives it, and in the lobby a timer does, so
+you know the number before you start rather than after.
+
+Two things this makes answerable that were guesswork before: whether a match is
+slow because of distance or because of a bug, and whether the relay is sensibly
+placed for the people using it.
+
+**And it is not, yet.** Every match in the world currently lands on a single
+Durable Object — `idFromName('main-relay')`, one fixed name, therefore one
+datacentre. A Japan-to-Canada game may well be crossing the Pacific twice: once
+to reach the object, once to come back. Giving each room its own object near its
+host is free and is the obvious next move, but it should be made when the ping
+readout says it is worth making, not on a hunch.
+
+### What the relay tests now hold
+
+The live site runs the Cloudflare worker while every test drives the node twin,
+so anything one learns and the other does not is a fix that silently never
+ships. `server/test-relay.js` now checks that **the worker handles every message
+verb the node relay does**, that both refuse a split-build room, and that both
+agree on `STALL_LAG` — on top of a waiting client not being swept up and a
+merely-lagging one not being dropped.
+
 ## The desync that was an accessibility setting
 
 Two friends could not finish a match: it fell out of sync about seven seconds

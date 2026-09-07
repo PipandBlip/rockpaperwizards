@@ -134,8 +134,20 @@ class Room {
     }
   }
 
+  /* Every seat on the same build, or nobody plays. */
+  buildSplit() {
+    const seen = new Set();
+    for (const p of this.players) seen.add(p.build || "0");
+    return seen.size > 1 ? [...seen].sort() : null;
+  }
   start() {
     if (this.state === "running") return;
+    const split = this.buildSplit();
+    if (split) {
+      this.broadcast({ t: "badbuild", builds: split,
+                       why: "the players are not all running the same version" });
+      return;
+    }
     this.state = "running";
     this.hashes.clear();
     this.desynced = false;
@@ -185,6 +197,14 @@ function cleanName(n) {
 // level it has not earned wins nothing but a prettier cloak — but it is still
 // clamped to a sane integer here, because "banana" reaching another client's
 // rendering code is how you crash somebody else's game.
+/* Two clients on different builds are two different programs. They will disagree
+   about the arena within seconds, and every symptom of it looks exactly like a
+   desync — which sends people hunting the netcode instead of pressing refresh.
+   So the build each client is running is part of the handshake, and a room that
+   is not all on one build never starts. */
+function cleanBuild(v) {
+  return String(v == null ? "" : v).replace(/[^0-9]/g, "").slice(0, 8) || "0";
+}
 function cleanLevel(v) {
   const n = Math.floor(Number(v));
   return (n >= 1 && n <= 999) ? n : 1;
@@ -195,6 +215,7 @@ function handle(p, msg) {
     case "hello":
       p.name = cleanName(msg.name);
       p.lv = cleanLevel(msg.lv);
+      p.build = cleanBuild(msg.build);
       p.send({ t: "hello", name: p.name });
       return;
 
@@ -304,6 +325,19 @@ function handle(p, msg) {
       return;
     }
 
+    /* "I am still here, just waiting." A client in lockstep sends no input while
+       it waits on a distant peer, and the stall sweep reads silence as absence.
+       This is the message that tells the two apart. */
+    /* The round trip, measured. Echoed straight back so the client can time it —
+       the relay does no work and keeps no state for this. */
+    case "ping":
+      p.send({ t: "pong", s: msg.s });
+      return;
+
+    case "alive":
+      if (p.room && p.room.state === "running") p.lastIn = Date.now();
+      return;
+
     case "bye":
       if (p.room) p.room.remove(p);
       return;
@@ -326,7 +360,13 @@ function handle(p, msg) {
 // stepping until they run out of its masks — reaching F+DELAY, having sent
 // F+2*DELAY. So the waiting clients end up level with the room's furthest sender
 // and the straggler is exactly DELAY frames behind it. Drop only that one.
-const STALL_LAG = 2;   // frames behind the room's furthest sender
+/* Frames behind the room's furthest sender before a quiet seat counts as one
+   that has fallen out rather than one that is merely waiting. Two was far too
+   tight: on a long link normal jitter puts a perfectly healthy client further
+   behind than that, and it was dropped mid-match for it. Half a second of
+   frames is comfortably outside jitter and still catches a seat that has
+   genuinely stopped. */
+const STALL_LAG = 30;
 function sweepStalled(now) {
   now = now || Date.now();
   const dropped = [];

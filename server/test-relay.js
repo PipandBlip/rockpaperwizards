@@ -8,7 +8,7 @@
 "use strict";
 
 const assert = require("assert");
-const { Player, handle, rooms, sweepStalled, STALL_MS } = require("./rooms");
+const { Player, handle, rooms, sweepStalled, STALL_MS, STALL_LAG } = require("./rooms");
 
 let pass = 0;
 function test(name, fn) {
@@ -305,6 +305,84 @@ test("clients that agree are left alone", () => {
   assert.ok(!a.last("desync"), "matching worlds are not reported as desynced");
 });
 
+/* ------------------------------------------------------- builds and waiting
+
+   Two clients on different builds are two different programs. Everything about
+   that looks like a desync from the outside, which sends people hunting the
+   netcode when the fix is to press refresh — so the build is part of the
+   handshake and a split room never starts.
+
+   And a client that is merely WAITING must never be mistaken for one that has
+   gone. In lockstep a client sends input only when it steps, and it cannot step
+   until its peer's input arrives; on a Japan-to-Canada link that is seconds of
+   perfectly healthy silence. */
+
+function fakeB(name, build){
+  const p = fake(name);
+  p.say({ t: "hello", name, build });
+  return p;
+}
+
+test("a room where everyone is on the same build starts", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "46"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.ok(a.last("start"), "the match started");
+  assert.ok(!a.last("badbuild"), "and nobody was told otherwise");
+});
+
+test("a room split across two builds refuses to start, and says why", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "45"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.ok(!a.last("start"), "the match must not start");
+  const bad = a.last("badbuild");
+  assert.ok(bad, "the host is told");
+  assert.ok(b.last("badbuild"), "and so is the joiner");
+  assert.deepStrictEqual(bad.builds, ["45", "46"], "and told which builds are in the room");
+});
+
+test("a client that is waiting is not a client that has gone", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "46"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  // A races ahead; B has sent nothing for longer than the stall timeout but
+  // keeps saying it is there, which is what a waiting client does
+  for (let f = 0; f < 200; f++) a.say({ t: "in", f, m: 0 });
+  const room = rooms.get(code);
+  const longAgo = Date.now() - (STALL_MS + 5000);
+  room.players.find(p => p.seat === 1).lastIn = longAgo;
+  b.say({ t: "alive" });
+  assert.strictEqual(sweepStalled().length, 0, "a waiting client was dropped");
+  // and one that says nothing at all is still swept up
+  room.players.find(p => p.seat === 1).lastIn = longAgo;
+  assert.strictEqual(sweepStalled().length, 1, "a client that has gone was not dropped");
+});
+
+test("and normal lag is never mistaken for falling behind", () => {
+  const a = fakeB("A", "46");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "46"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  for (let f = 0; f < 200; f++) a.say({ t: "in", f, m: 0 });
+  for (let f = 0; f < 200 - (STALL_LAG - 1); f++) b.say({ t: "in", f, m: 0 });
+  const room = rooms.get(code);
+  for (const p of room.players) p.lastIn = Date.now() - (STALL_MS + 5000);
+  assert.strictEqual(sweepStalled().length, 0,
+    "a seat less than STALL_LAG frames behind must never be dropped");
+});
+
 /* ---------------------------------------------------------------- arenas
 
    The host picks an arena; the relay sanitises it and hands the SAME value to
@@ -365,6 +443,26 @@ test("the relay offers exactly what the client can build", () => {
 test("and the Cloudflare worker agrees with the node relay", () => {
   assert.deepStrictEqual(presetList(workerSrc).sort(), [...buildable].sort(),
                          "cloudflare/worker/src/index.js and server/rooms.js must be patched in step");
+});
+
+/* The two relays are the same protocol implemented twice, and the live site
+   runs the worker while every test here drives the node twin. Anything the node
+   side learns that the worker does not is a fix that silently never ships. */
+test("the worker knows every message the node relay knows", () => {
+  const roomsSrc = fs.readFileSync(pathM.join(REPO, "server/rooms.js"), "utf8");
+  const verbs = src => new Set([...src.matchAll(/case "([a-z]+)":/g)].map(m => m[1]));
+  const node = verbs(roomsSrc), worker = verbs(workerSrc);
+  const missing = [...node].filter(v => !worker.has(v));
+  assert.deepStrictEqual(missing, [], "the worker is missing: " + missing.join(", "));
+});
+
+test("and refuses a split-build room the same way", () => {
+  assert.ok(/buildSplit/.test(workerSrc), "the worker has no build check");
+  assert.ok(/badbuild/.test(workerSrc), "the worker never says badbuild");
+  const lag = s => +(s.match(/const STALL_LAG = (\d+)/) || [])[1];
+  const roomsSrc = fs.readFileSync(pathM.join(REPO, "server/rooms.js"), "utf8");
+  assert.strictEqual(lag(workerSrc), lag(roomsSrc), "the two relays disagree about STALL_LAG");
+  assert.ok(lag(workerSrc) >= 30, "STALL_LAG is tight enough to drop a merely-lagging player");
 });
 
 test("the client's own sanitiser knows them too", () => {

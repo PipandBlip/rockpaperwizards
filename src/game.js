@@ -3308,9 +3308,10 @@ function syncHUD(){
     el("roundLabel").textContent =
       `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ${alive} ${alive === 1 ? "rival" : "rivals"}${party}`;
   } else {
-    el("roundLabel").textContent = matchCfg.mode === "lives"
+    const ping = NET.active && RPW_NET_RTT() ? ` · ${RPW_NET_RTT()}ms` : "";
+    el("roundLabel").textContent = (matchCfg.mode === "lives"
       ? `Lives · ${matchCfg.lives} each`
-      : `Round ${roundNo} · first to ${matchCfg.roundsToWin}`;
+      : `Round ${roundNo} · first to ${matchCfg.roundsToWin}`) + ping;
   }
 }
 
@@ -4164,6 +4165,19 @@ function afterSeg(){
   // the lobby only obeys the host, and only before the match starts
   if (panel === "host" && inRoom()) window.RPWNet.config({ total: roomTotal, difficulty: botLevel, opts: hostOpts() });
 }
+/* The round trip to the relay, in plain words. It is the single number that
+   decides how a long-distance match feels, and until it was on screen nobody
+   could tell a slow link from a broken one. */
+function pingText(){
+  const n = window.RPWNet;
+  if (!n || !RPW_NET_RTT()) return "";
+  const ms = RPW_NET_RTT();
+  const how = ms < 90 ? "sharp" : ms < 180 ? "fine" : ms < 320 ? "long, but playable" : "very long";
+  return " · " + ms + "ms to the relay (" + how + ")";
+}
+function RPW_NET_RTT(){
+  return (window.RPW && window.RPW.NET && window.RPW.NET.rtt) ? window.RPW.NET.rtt() : 0;
+}
 function hostNote(){
   const taken = inRoom() ? window.RPWNet.net.players.length : 1;
   const bots = Math.max(0, roomTotal - taken);
@@ -4176,7 +4190,7 @@ function hostNote(){
       (hostCoop ? (bots === 1 ? " ally." : " allies.") : (bots === 1 ? " bot." : " bots."));
   note.textContent = (hostCoop
     ? "You fight together against wave after wave — no friendly fire, and a downed ally is back on their feet next wave. "
-    : "Send the code to your friends. ") + fill;
+    : "Send the code to your friends. ") + fill + pingText();
 }
 
 /* ------------------------------------------------------ the relay */
@@ -4256,6 +4270,12 @@ function paintJoin(){
     btn.classList.remove("done");
   }
   renderRoster(el("joinRoster"));
+  // the joiner is the one who usually has the long link, so show them the number
+  if (inRoom()){
+    const note = el("joinNote");
+    if (note && !note.classList.contains("bad"))
+      note.textContent = "Waiting for the host to start." + pingText();
+  }
 }
 function onNetChange(n){
   if (n.error){
@@ -4684,6 +4704,13 @@ function pump(now){
   // Waiting on a peer is not the same as being slow. Do not bank the waiting
   // time, or the moment their input lands we fast-forward through everything
   // that happened while we sat there.
+  /* Tell the relay we are still here — a client waiting on a distant peer sends
+     no input at all, and silence is what the stall sweep looks for — and tell
+     the netcode how long we waited, so it can reach further ahead next time. */
+  if (waiting){
+    if (NET.alive) NET.alive();
+    if (NET.waiting) NET.waiting(real * 1000);
+  }
   if (waiting) acc = Math.min(acc, STEP * 2);
   else if (acc > STEP * MAX_BACKLOG) acc = STEP * MAX_BACKLOG;
 
@@ -4738,7 +4765,10 @@ window.RPW = {
     el("pausePanel").hidden = true;
     el("curtain").hidden = false;
     show("mp");
-    if (reason === "dropped"){
+    if (reason === "build"){
+      el("curtainTitle").textContent = "You are on different versions";
+      el("curtainText").textContent = "Your game and your opponent's are not running the same build, so they were never going to agree about the arena. Both of you reload the page — a hard refresh, Ctrl+Shift+R or Cmd+Shift+R — and host again.";
+    } else if (reason === "dropped"){
       el("curtainTitle").textContent = "You dropped out";
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";
     } else {
