@@ -9,7 +9,7 @@
 
 import {
   handle, needFor, totalFor, levelFor, xpForResult,
-  cleanName, nameProblem, passProblem
+  cleanName, nameProblem, passProblem, LIMITS
 } from "../cloudflare/worker/src/accounts.js";
 import { readFileSync } from "node:fs";
 
@@ -259,6 +259,58 @@ const run = async () => {
     }
     return true;
   })());
+  /* The sign-up form checks the name and password lengths itself, so a new
+     player is told the rule instead of being bounced by the server. That is only
+     an improvement while the two copies agree — otherwise the form cheerfully
+     accepts a password the server will refuse. */
+  ok("the sign-up form's limits are the server's limits", (() => {
+    if (!client.limits) return false;
+    for (const k of Object.keys(LIMITS)) if (client.limits[k] !== LIMITS[k]) return false;
+    return Object.keys(client.limits).length === Object.keys(LIMITS).length;
+  })());
+  /* The cloak ladder. Capes are view-only, so nothing in the determinism or
+     golden suites can notice a rung that names an emblem the renderer has never
+     heard of — it would just draw the fallback stud on every cloak from there
+     up, silently, and only on the levels nobody has reached yet. */
+  console.log("\nthe cloak ladder");
+  const rungs = client.track(99).rows;
+  const gameSrc = readFileSync("src/game.js", "utf8");
+  eq("fourteen rungs, one per level", rungs.length, 14);
+  ok("one rung for each of levels 1 to 14", rungs.every((r, i) => r.at === i + 1));
+  ok("every rung is fully dressed", rungs.every(r =>
+     r.name && r.emblem && r.tail && r.family &&
+     r.base &&                            // the one colour the cloth fades from
+     r.hat && r.brim && r.lit));          // and the wizard wearing it
+  ok("every emblem has a case in emblemPath()", (() => {
+    const cases = new Set([...gameSrc.matchAll(/case "([a-z0-9]+)":/g)].map(m => m[1]));
+    return rungs.every(r => cases.has(r.emblem));
+  })());
+  ok("the cloth goes grey, then green, then pale — and never back", (() => {
+    const seen = [];
+    for (const r of rungs) if (seen[seen.length - 1] !== r.family) seen.push(r.family);
+    return seen.length === 3 && new Set(seen).size === 3;
+  })());
+  /* The hat is the same family as the cloak. A green wizard in a grey hat is
+     the bug this catches, and it is the kind that only shows up in a screenshot
+     somebody happens to look at. */
+  ok("the wizard's hat is always the cloak's own colours", rungs.every(r => {
+    const fam = rungs.filter(x => x.family === r.family);
+    return fam.every(x => x.hat === r.hat && x.brim === r.brim && x.lit === r.lit);
+  }));
+  ok("each family is one distinct base colour",
+     new Set(rungs.map(r => r.base)).size === new Set(rungs.map(r => r.family)).size);
+  /* The design painted over the cloth is white at every rung — that is what
+     makes one base colour enough, and it is the rule a new family could quietly
+     break by bringing its own trim. */
+  ok("the design over the cloth is white, except the top rung's green wedge",
+     rungs.every(r => !r.wedge || r.wedge === "#ffffff" ||
+                      (r.at === 14 && r.wedge === rungs[7].base)));
+  eq("level 1 is the plain cloth", client.cloak(1).id, rungs[0].id);
+  eq("level 14 is the top of the ladder", client.cloak(14).id, rungs[13].id);
+  eq("and anything above 14 keeps wearing it", client.cloak(400).id, rungs[13].id);
+  eq("a level below 1 is still the plain cloth", client.cloak(0).id, rungs[0].id);
+
+  console.log("");
   eq("a signed-out client calls itself Guest", client.name, "Guest");
   eq("and knows it is signed out", client.signedIn, false);
 

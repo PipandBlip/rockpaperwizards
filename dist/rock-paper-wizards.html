@@ -245,6 +245,13 @@
   .fieldbox:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
   #authForm .note{text-align:left;margin:0 0 12px}
   #authForm{width:100%}
+  /* Sign in and Sign up sit side by side and carry equal weight — one of them
+     is the right answer for you and the page should not be guessing which.
+     Different colours so they never read as the same button twice. */
+  .go.alt{border-color:var(--rive);color:var(--rive)}
+  .go.alt:hover{background:rgba(169,124,255,.12)}
+  .backrow{margin-top:2px}
+  .backrow button{flex:0 0 auto;min-width:120px}
   .linky{background:none;border:0;padding:4px 0 0;cursor:pointer;color:var(--rive);
     font-family:var(--display);font-size:11px;letter-spacing:.06em;text-decoration:underline;
     text-underline-offset:3px}
@@ -514,11 +521,11 @@
           <button id="mpBtn">Multiplayer</button>
         </div>
 
-        <!-- the cloak track: what levelling up is for. Filled by renderPass()
-             in src/game.js from the jewel table in src/account.js. -->
-        <section class="pass" id="pass" aria-label="Cloak jewels">
+        <!-- the cloak ladder: what levelling up is for. Filled by renderPass()
+             in src/game.js from the rung table in src/account.js. -->
+        <section class="pass" id="pass" aria-label="Your cloak">
           <div class="pass-head">
-            <h4>Cloak jewels</h4>
+            <h4>Your cloak</h4>
             <span id="passNext">Sign in to start earning</span>
           </div>
           <ol class="pass-track" id="passTrack"></ol>
@@ -599,7 +606,7 @@
 
       <!-- signing in: one form, two jobs -->
       <div class="panel room" id="authPanel" hidden>
-        <h4 id="authTitle">Sign in</h4>
+        <h4 id="authTitle">Sign in or sign up</h4>
         <form id="authForm" method="post" action="/api/login" autocomplete="on">
           <label class="field" for="authName"><span>Wizard name</span></label>
           <input class="fieldbox" id="authName" name="username" type="text" maxlength="14"
@@ -607,13 +614,15 @@
           <label class="field" for="authPass"><span>Password</span></label>
           <input class="fieldbox" id="authPass" name="password" type="password" maxlength="200"
                  autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
-          <p class="note" id="authNote">Your wizard keeps its level and experience wherever you sign in.</p>
+          <p class="note" id="authNote">Your wizard keeps its level and experience wherever you sign in. New here? Fill the same two boxes and press Sign up.</p>
           <div class="room-actions">
             <button class="go" id="authGo" type="submit">Sign in</button>
+            <button class="go alt" id="authNew" type="button">Sign up</button>
+          </div>
+          <div class="room-actions backrow">
             <button class="back" id="authBack" type="button">Back</button>
           </div>
         </form>
-        <button class="linky" id="authSwap" type="button">New here? Create a wizard</button>
       </div>
 
       <!-- the two post-match panels sit side by side so the end screen fits
@@ -732,28 +741,83 @@
      where `earned` comes from. Ids are permanent; renaming one is fine,
      renumbering one is not. */
 
-  /* `shape` is the cut of the stone, and the ladder is ordered by how elaborate
-     it is: a plain bar to begin with, ending in an eight-pointed sigil. Both
-     the cape and the menu's jewel track draw from this one field, so the row of
-     shapes somebody is climbing towards is the row they will actually wear.
-     Shapes are drawn by jewelPath() in src/game.js — adding one here means
-     adding a case there. */
-  const GEMS = [
-    { id: "quartz",   at: 2,  name: "Chipped Quartz",   shape: "bar",      from: "#cfd6ea", to: "#8e9bbf" },
-    { id: "pearl",    at: 4,  name: "River Pearl",      shape: "dot",      from: "#f2f6ff", to: "#a9c4d8" },
-    { id: "amber",    at: 6,  name: "Amber Ember",      shape: "square",   from: "#ffcf7a", to: "#c9701f" },
-    { id: "jade",     at: 9,  name: "Verdant Jade",     shape: "pentagon", from: "#8ef0c0", to: "#1d8f6a" },
-    { id: "sapphire", at: 12, name: "Cobalt Heart",     shape: "triangle", from: "#8fd0ff", to: "#1f4fd8" },
-    { id: "garnet",   at: 15, name: "Crimson Garnet",   shape: "crescent", from: "#ff9aa8", to: "#a5122c" },
-    { id: "amethyst", at: 18, name: "Deep Amethyst",    shape: "hex",      from: "#d7b0ff", to: "#6a2fd0" },
-    { id: "moonstone",at: 22, name: "Moonstone",        shape: "ring",     from: "#eaf2ff", to: "#6f7fb5" },
-    { id: "emberglass",at:26, name: "Emberglass",       shape: "spark",    from: "#ffb36b", to: "#8e1f5e" },
-    { id: "opal",     at: 30, name: "Starlit Opal",     shape: "star",     from: "#b7ffe8", to: "#7b6cff" },
-    { id: "voidstone",at: 35, name: "Voidstone",        shape: "halo",     from: "#7a6cff", to: "#120a2c" },
-    { id: "archmage", at: 40, name: "Archmage's Heart", shape: "sigil",    from: "#7cf2ff", to: "#a97cff" }
-  ];
+  /* The cloak ladder: one rung per level, level 1 to 14.
 
-  // The track as the menu draws it: every tier, whether it is earned, and
+     A cloak is not "how many stones you have" any more. Three things move as
+     you climb, and they move at different rates, which is what stops the middle
+     of the ladder feeling like a slower version of the start:
+
+       emblem  what is set into the hem — a single stud, then two, then three,
+               then a quatrefoil, a hexagon, paired and crowned hexes, a lattice,
+               and finally a cut diamond
+       seams   the pleats running from collar to hem: none at all on plain
+               cloth, fanning out through the middle of the ladder, then
+               thinning again at the top as broad panels take over
+       colour  a FAMILY: one base colour that fades out down the cloth, drained
+               grey to begin with and sage green from level 8, near white at the
+               top rung
+       tail    the silhouette the hem cuts: a shallow chevron on plain cloth, a
+               pointed kite through the middle, a broad rhombus once the cloth
+               turns, and a pair of lobes split by a deep centre notch at the top — with `flare` widening
+               the skirt as it goes, so rank reads from the outline alone even
+               when a cape is too far away to make out its emblem
+
+     Colour is the coarse read — grey, green, pale — and it is meant to be
+     legible across an arena. The ladder past 14 is designed to keep going
+     through blue, then red, then purple: those are three more entries in
+     FAMILY and a `family` field on the new rungs, and nothing else. Until they
+     exist, a wizard above 14 wears the level 14 cloak.
+
+     A family also dresses the WIZARD. The hat cone, its brim and its lit edge
+     all come from the same entry, so a wizard in a green cloak is a green
+     wizard — the rank reads from the whole figure and not just the cloth
+     trailing behind it. Friend and foe are still told apart by the ring and
+     wand glow, which stay the seat's own tint.
+
+     `emblem` values are drawn by emblemPath() in src/game.js — adding one here
+     means adding a case there. The same function draws the cape and the menu
+     tile, so the ladder is a picture of what you will actually be wearing. */
+  /* A family is ONE base colour plus the wizard wearing it.
+
+     The cloth is not a light-to-dark colour ramp — it is a single base colour
+     that FADES OUT down its length: near solid at the shoulders, nearly gone at
+     the hem. That is what makes it read as hanging cloth you can see through
+     rather than a painted shape, and it is why there is no second colour here
+     to drift out of step with the first.
+
+     Everything drawn on top of it — the seams, the hem band, the emblem — is
+     WHITE, at every rung. `panel` is the one exception: the centre wedge is a
+     white overlay for every family except the last, where it is green on white.
+
+     Blue, red and purple slot in here as three more entries and nothing else. */
+  const FAMILY = {
+    //     the cloth   hat cone    brim        lit edge    centre wedge
+    grey: { base:"#3a3a44", hat:"#5e5e68", brim:"#24242b", lit:"#93939f", panel:null },
+    sage: { base:"#2f5f27", hat:"#4f8442", brim:"#22401c", lit:"#8fc582", panel:null },
+    pale: { base:"#dde7d8", hat:"#c2cfbd", brim:"#5a6756", lit:"#f4f8f1", panel:"#2f5f27" }
+  };
+  const GEMS = [
+    { id:"plain",      at:1,  name:"Plain Cloth",     family:"grey", emblem:"stud1",   seams:0, panel:false, tail:"chevron", flare:0.00 },
+    { id:"twin",       at:2,  name:"Twin Studs",      family:"grey", emblem:"stud2",   seams:0, panel:false, tail:"chevron", flare:0.04 },
+    { id:"triad",      at:3,  name:"Three Studs",     family:"grey", emblem:"stud3",   seams:0, panel:false, tail:"chevron", flare:0.08 },
+    { id:"quatrefoil", at:4,  name:"Quatrefoil",      family:"grey", emblem:"quatre",  seams:1, panel:false, tail:"kite",    flare:0.06 },
+    { id:"fanned",     at:5,  name:"Fanned Seams",    family:"grey", emblem:"quatre",  seams:4, panel:false, tail:"kite",    flare:0.10 },
+    { id:"pleated",    at:6,  name:"Pleated Cloth",   family:"grey", emblem:"quatre",  seams:7, panel:false, tail:"rhombus", flare:0.10 },
+    { id:"hexstone",   at:7,  name:"Hexstone",        family:"grey", emblem:"hex1",    seams:6, panel:false, tail:"rhombus", flare:0.14 },
+    { id:"verdant",    at:8,  name:"Verdant Weave",   family:"sage", emblem:"hex1",    seams:7, panel:true,  tail:"rhombus", flare:0.16 },
+    { id:"paired",     at:9,  name:"Paired Hexes",    family:"sage", emblem:"hex2",    seams:7, panel:true,  tail:"rhombus", flare:0.18 },
+    { id:"crowned",    at:10, name:"Crowned Hexes",   family:"sage", emblem:"hex3",    seams:6, panel:true,  tail:"rhombus", flare:0.20 },
+    { id:"lattice",    at:11, name:"Hex Lattice",     family:"sage", emblem:"lattice", seams:5, panel:true,  tail:"rhombus", flare:0.24 },
+    { id:"panelled",   at:12, name:"Broad Panels",    family:"sage", emblem:"lattice", seams:3, panel:true,  tail:"rhombus", flare:0.30 },
+    { id:"mantle",     at:13, name:"Archmage Mantle", family:"sage", emblem:"lattice", seams:3, panel:true,  tail:"rhombus", flare:0.34 },
+    { id:"crown",      at:14, name:"Crowned Mantle",  family:"pale", emblem:"diamond", seams:2, panel:true,  tail:"split",   flare:0.38 }
+  ].map(r => {
+    const f = FAMILY[r.family];
+    // `from` is the one colour the menu tile tints itself with
+    return { ...r, ...f, wedge: r.panel ? (f.panel || "#ffffff") : null, from: f.hat };
+  });
+
+  // The track as the menu draws it: every rung, whether it is earned, and
   // which one is next.
   function track(level){
     const lv = Math.max(1, level | 0);
@@ -767,6 +831,17 @@
     if (next) next.next = true;
     return { rows, nextAt, level: lv };
   }
+
+  /* The cloak somebody at this level is actually wearing: the highest rung they
+     have reached. Above the top rung they keep wearing the top rung, which is
+     what "hold at 14 until more are designed" means in one line. */
+  function cloak(level){
+    const lv = Math.max(1, Math.floor(Number(level)) || 1);
+    let r = GEMS[0];
+    for (const g of GEMS) if (lv >= g.at) r = g;
+    return r;
+  }
+
 
   /* ------------------------------------------------------------- plumbing */
 
@@ -859,6 +934,15 @@
       return { gained: res.gained || 0, leveled: res.leveled || 0, throttled: !!res.throttled, profile };
     }
   };
+
+  /* Mirrors cloudflare/worker/src/accounts.js LIMITS. The sign-up screen checks
+     these before the round trip so the rule is on screen rather than arriving as
+     a rejection — and server/test-accounts.js pins the two copies together, so
+     changing one side alone fails a test rather than shipping a form that
+     accepts what the server will refuse. */
+  A.limits = { NAME_MIN: 3, NAME_MAX: 14, PASS_MIN: 8, PASS_MAX: 200 };
+  A.cloak = cloak;          // the rung a level is actually wearing
+  A.rungs = GEMS.length;    // how long the ladder is
 
   window.RPWA = A;
 })();
@@ -3125,6 +3209,81 @@ function paintJewel(g, size, color, shape){
     g.beginPath(); g.arc(0, 0, size * 0.26, 0, TAU); g.fill();
   }
 }
+/* The emblem set into a cloak's hem.
+
+   One per rung of the ladder in src/account.js, and it is the thing that says
+   at a glance how far somebody has come: a single stud at level one, a cut
+   diamond at fourteen. Traced around the origin at radius `s`, so the same
+   function serves the cape and the menu tile.
+
+   These are OUTLINED white marks on a plain band, not glowing stones — the
+   ladder they belong to reads by silhouette and by the colour of the cloth
+   behind them, not by how brightly each piece shines. */
+function hexAt(g, x, y, r){
+  g.moveTo(x + r, y);
+  for (let i = 1; i < 6; i++){
+    const a = i * TAU / 6;
+    g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+  }
+  g.closePath();
+}
+function discAt(g, x, y, r){ g.moveTo(x + r, y); g.arc(x, y, r, 0, TAU); }
+function emblemPath(g, s, kind){
+  g.beginPath();
+  switch (kind){
+    case "stud1":  discAt(g, 0, 0, s * 0.40); return "fill";
+    case "stud2":  discAt(g, -s * 0.42, 0, s * 0.36); discAt(g, s * 0.42, 0, s * 0.36); return "fill";
+    case "stud3":  discAt(g, -s * 0.50, s * 0.20, s * 0.32);
+                   discAt(g,  s * 0.50, s * 0.20, s * 0.32);
+                   discAt(g,  0, -s * 0.30, s * 0.32); return "fill";
+    // four discs in a flower — the first mark that is a device rather than a count
+    case "quatre": for (let i = 0; i < 4; i++){
+                     const a = i * TAU / 4 + Math.PI / 4;
+                     discAt(g, Math.cos(a) * s * 0.40, Math.sin(a) * s * 0.40, s * 0.36);
+                   } return "stroke";
+    case "hex1":   hexAt(g, 0, 0, s * 0.62); return "stroke";
+    case "hex2":   hexAt(g, -s * 0.50, 0, s * 0.46); hexAt(g, s * 0.50, 0, s * 0.46); return "stroke";
+    case "hex3":   hexAt(g, -s * 0.48, s * 0.30, s * 0.40);
+                   hexAt(g,  s * 0.48, s * 0.30, s * 0.40);
+                   hexAt(g,  0, -s * 0.40, s * 0.40); return "stroke";
+    // three hexes overlapping into one lattice — a device, not three marks
+    case "lattice":hexAt(g, 0, -s * 0.34, s * 0.46);
+                   hexAt(g, -s * 0.40, s * 0.26, s * 0.46);
+                   hexAt(g,  s * 0.40, s * 0.26, s * 0.46);
+                   hexAt(g, 0, 0, s * 0.30); return "stroke";
+    case "diamond":g.moveTo(0, -s * 0.72); g.lineTo(s * 0.56, 0);
+                   g.lineTo(0, s * 0.72); g.lineTo(-s * 0.56, 0);
+                   g.closePath(); return "fill";
+    default:       discAt(g, 0, 0, s * 0.40); return "fill";
+  }
+}
+function paintEmblem(g, size, kind, color){
+  const how = emblemPath(g, size, kind);
+  // A dark backing first, so a white mark still reads on the pale cloaks at the
+  // top of the ladder as clearly as it does on the grey ones at the bottom.
+  g.strokeStyle = "rgba(8,10,18,.75)";
+  g.lineWidth = Math.max(1.6, size * (how === "fill" ? 0.30 : 0.34));
+  g.lineJoin = "round"; g.stroke();
+  if (how === "fill"){ g.fillStyle = color; g.fill(); return; }
+  g.strokeStyle = color;
+  g.lineWidth = Math.max(0.9, size * 0.17);
+  g.stroke();
+}
+const emblemCache = new Map();
+function emblemSprite(kind, size, color){
+  const sz = Math.max(1, Math.round(size * 2) / 2);
+  const key = kind + "|" + sz + "|" + color;
+  let cv = emblemCache.get(key);
+  if (!cv){
+    cv = makeSprite(Math.ceil((sz * 1.2 + 6) * 2), (g, c) => {
+      g.translate(c, c);
+      paintEmblem(g, sz, kind, color);
+    });
+    emblemCache.set(key, cv);
+  }
+  return cv;
+}
+
 // one cloak jewel, glow and outline baked in; blitted rotated to the cloth
 function jewelSprite(color, size, shape){
   const sz = Math.max(1, Math.round(size * 2) / 2);
@@ -3321,7 +3480,7 @@ function drawBeam(w){
 
 const CAPE_NODES = 8;
 const CAPE_SEG_MIN = 5.0, CAPE_SEG_MAX = 6.8;   // per-segment length, low rank to high
-const CAPE_GEMS_MAX = 12;                       // the whole cloak-jewel ladder
+const CAPE_RUNGS = 14;                          // rungs on the cloak ladder (src/account.js)
 
 /* The cape bends by a bounded amount per segment and no more. This is the
    single rule that keeps it from tying itself in knots.
@@ -3348,43 +3507,64 @@ const CAPE_MAX_TURN = 0.26;                     // radians per segment, ~15 degr
 
    `wide` scales the whole thing gently with rank, so a beginner's cloak is a
    plainer, smaller garment as well as an unadorned one. */
-function capeHalf(i, last, wide){
+/* Half the cloth's width at node i. `flare` widens the SKIRT only — it ramps in
+   over the bottom third — so a high rung reads as a broader hem rather than a
+   uniformly fatter cape, which is what the reference sheet does as it climbs. */
+function capeHalf(i, last, wide, flare){
   const k = i / last;
-  const w = (8.6 + k * 10.4) * (1 - Math.pow(k, 10) * 0.16);
+  let w = (8.6 + k * 10.4) * (1 - Math.pow(k, 10) * 0.16);
+  if (flare) w *= 1 + flare * Math.pow(Math.max(0, (k - 0.34) / 0.66), 1.6);
   return w * (wide == null ? 1 : wide);
 }
-function capeWide(gems){
-  return 0.84 + 0.16 * Math.min(1, gems / CAPE_GEMS_MAX);
+/* Darken or lighten a #rrggbb by a fraction. The cape uses it to shade its own
+   cloth colour towards the hem, so a rung supplies ONE colour and the depth
+   comes out of it rather than out of a second entry that could drift. */
+function shade(hex, k){
+  const h = String(hex).replace("#", "");
+  const n = parseInt(h.length === 3 ? h.replace(/./g, c => c + c) : h, 16);
+  const mix = (c) => Math.max(0, Math.min(255, Math.round(k < 0 ? c * (1 + k) : c + (255 - c) * k)));
+  return "#" + [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    .map(c => mix(c).toString(16).padStart(2, "0")).join("");
+}
+/* #rrggbb at an alpha, for the fade down the cloth. */
+function rgba(hex, a){
+  const n = parseInt(String(hex).replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function capeWide(rung){
+  return 0.84 + 0.16 * Math.min(1, (rung - 1) / (CAPE_RUNGS - 1));
 }
 
-/* How many cloak jewels a wizard has earned, and in what colours.
+/* Which rung of the cloak ladder a wizard has climbed to.
 
    Only a LEVEL crosses the wire (see currentLevel() in src/net.js) — never the
-   colours. Cloak jewels are earned strictly in level order, so every client
-   rebuilds the identical row of stones from the shared GEMS table. One small
-   integer, carried in the roster that already flows on join, leave and start;
-   nothing here rides the per-frame input stream, so no cape can cost anybody a
-   frame however many jewels are on it.
+   cloth, the seams or the emblem. Rungs are reached strictly in level order, so
+   every client derives the identical cloak from the shared table in
+   src/account.js. One small integer, carried in the roster that already flows
+   on join, leave and start; nothing here rides the per-frame input stream, so
+   no cape can cost anybody a frame however elaborate it is.
 
-   Ranks are per-level, not per-wizard, so this is memoised: six capes at sixty
-   frames a second would otherwise rebuild the same twelve-row table 360 times a
+   Rungs are per-level, not per-wizard, so this is memoised: six capes at sixty
+   frames a second would otherwise walk the same fourteen-row table 360 times a
    second for nothing. */
+const PLAIN_CLOAK = { at: 1, emblem: "stud1", seams: 0, tail: "chevron", flare: 0,
+                      base: "#3a3a44", wedge: null,
+                      hat: "#5e5e68", brim: "#24242b", lit: "#93939f" };
 const rankCache = new Map();
 function rankFor(level){
   const lv = Math.max(1, Math.min(999, Math.floor(Number(level)) || 1));
   let r = rankCache.get(lv);
   if (!r){
     const acct = ACCT();
-    const earned = (acct && acct.track) ? acct.track(lv).rows.filter(x => x.earned) : [];
-    r = { n: earned.length, gems: earned.map(x => ({ c: x.from, s: x.shape })) };
+    r = (acct && acct.cloak) ? acct.cloak(lv) : PLAIN_CLOAK;
     rankCache.set(lv, r);
   }
   return r;
 }
-let myRank = { n: 0, gems: [] };
+let myRank = PLAIN_CLOAK;
 function refreshMarks(profile){
   rankCache.clear();
-  myRank = profile ? rankFor(profile.level) : { n: 0, gems: [] };
+  myRank = rankFor(profile ? profile.level : 1);
 }
 /* Bots wear a RANK, not a special case.
 
@@ -3394,14 +3574,15 @@ function refreshMarks(profile){
    able to look at a wizard across the arena and know what you are facing, and
    an Archmage's cloak should be a thing to want.
 
-   Apprentice sits at level 1 — the plain cloth a new player starts in, so a
-   beginner sees themselves in it. Adept is halfway up the ladder at six stones.
-   Archmage carries ten of the twelve: clearly formidable, and still two short
-   of a finished cloak, so there is somewhere left to climb.
+   Apprentice sits at level 1 — the plain grey cloth a new player starts in, so
+   a beginner sees themselves in it. Adept is level 7, the last rung before the
+   cloth turns green: clearly ahead of you, still the same colour. Archmage is
+   13, one rung short of the top, so there is somewhere left to climb even after
+   you can beat one.
 
-   Levels, not gem counts, because then the GEMS table stays the single source
-   of truth — retune the ladder and the bots follow it without being touched. */
-const BOT_LEVEL = [1, 16, 33];      // Apprentice, Adept, Archmage
+   Levels, not rung indexes, because then the ladder in src/account.js stays the
+   single source of truth — retune it and the bots follow without being touched. */
+const BOT_LEVEL = [1, 7, 13];       // Apprentice, Adept, Archmage
 
 // A wizard starting out wears plain cloth. Everything on it is earned.
 function capeMarks(w){
@@ -3412,8 +3593,8 @@ function capeMarks(w){
   }
   return rankFor(seatLevels && seatLevels[w.seat]);                    // another player, from the roster
 }
-function capeSeg(gems){
-  const k = Math.min(1, gems / CAPE_GEMS_MAX);
+function capeSeg(rung){
+  const k = Math.min(1, (rung - 1) / (CAPE_RUNGS - 1));
   return CAPE_SEG_MIN + (CAPE_SEG_MAX - CAPE_SEG_MIN) * k;
 }
 
@@ -3464,8 +3645,8 @@ function updateCapes(dt){
   const last = CAPE_NODES - 1;
 
   for (const w of wizards){
-    const gemCount = capeMarks(w).n;
-    const seg = capeSeg(gemCount), wide = capeWide(gemCount);
+    const rung = capeMarks(w).at;
+    const seg = capeSeg(rung), wide = capeWide(rung);
     const ax = w.x - Math.cos(w.facing) * 3, ay = w.y - Math.sin(w.facing) * 3;
 
     let c = w.cape;
@@ -3513,9 +3694,16 @@ function updateCapes(dt){
 function drawCape(w){
   const c = w.cape;
   if (!c || !c.p || c.p.length < 3) return;
-  const { n: gemCount, gems } = capeMarks(w);
-  const hem  = w.friendly ? "#1b2947" : "#331a24";   // deep, at the hem
-  const back = w.friendly ? "#415c97" : "#7a4353";   // lit, at the shoulders
+  /* The rung this wizard has climbed to. Its ONE base colour is the cloth, and
+     what changes down the length is not the colour but the ALPHA: near solid at
+     the shoulders, nearly gone at the hem. That is the difference between cloth
+     you can see through and a shape cut out of paper, and it is why there is no
+     second colour here that could drift out of step with the first.
+
+     Everything drawn on top of it is white. Friend and foe are told apart by the
+     ring and wand glow, which stay the seat's own tint; shading the cloth by
+     side as well would have muddied the one thing the ladder is for. */
+  const rank = capeMarks(w);
 
   const P = c.p.map(p => ({ x: p.x - w.x, y: p.y - w.y }));
   const last = P.length - 1;
@@ -3529,16 +3717,42 @@ function drawCape(w){
     const d = Math.hypot(ux, uy) || 1;
     return { x: ux / d, y: uy / d };
   };
-  const wide = capeWide(gemCount);
+  const wide = capeWide(rank.at), flare = rank.flare || 0;
+  /* How the cloth closes at the bottom. The reference sheet changes this every
+     few rungs and it is the loudest signal on the whole cape — you can read it
+     from across the arena, long before an emblem is legible:
+
+       chevron  a shallow wide V, tips barely past the body — plain cloth
+       kite     a single deep point
+       rhombus  a broad flat diamond, tips flared out past the body
+       split    two long lobes with a deep notch cut up between them — the top
+                rung, and the only hem that is not one continuous edge
+
+     Every point is built from the tail's own direction and normal, so the shape
+     travels and swings with the cloth instead of being painted on flat. */
+  const tailPts = (f, kind) => {
+    const u = dirAt(last), h = capeHalf(last, last, wide, flare) * f;
+    const T = P[last], nx = -u.y, ny = u.x;
+    const at = (along, side) => ({ x: T.x + u.x * h * along + nx * h * side,
+                                   y: T.y + u.y * h * along + ny * h * side });
+    switch (kind){
+      case "chevron": return [at(0.26, 1.06), at(0.52, 0), at(0.26, -1.06)];
+      case "rhombus": return [at(0.30, 1.30), at(0.86, 0), at(0.30, -1.30)];
+      // the notch is cut back almost to the tail, so the two lobes read as a
+      // deep split rather than a wide shallow dip
+      case "split":   return [at(0.20, 1.26), at(1.12, 0.74), at(0.02, 0.15),
+                              at(0.02, -0.15), at(1.12, -0.74), at(0.20, -1.26)];
+      default:        return [at(0.98, 0)];                      // kite: one deep point
+    }
+  };
   const edges = f => {
     const L = [], R = [];
     for (let i = 0; i <= last; i++){
-      const u = dirAt(i), h = capeHalf(i, last, wide) * f;
+      const u = dirAt(i), h = capeHalf(i, last, wide, flare) * f;
       L.push({ x: P[i].x - u.y * h, y: P[i].y + u.x * h });
       R.push({ x: P[i].x + u.y * h, y: P[i].y - u.x * h });
     }
-    const u = dirAt(last), h = capeHalf(last, last, wide) * f;
-    return { L, R, bulge: { x: P[last].x + u.x * h * 0.9, y: P[last].y + u.y * h * 0.9 } };
+    return { L, R, tail: tailPts(f, rank.tail) };
   };
   const runThrough = pts => {
     for (let i = 1; i < pts.length - 1; i++){
@@ -3547,21 +3761,26 @@ function drawCape(w){
     }
     ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
   };
+  // The tail is drawn with straight segments on purpose: a chevron that has
+  // been smoothed into a curve is just a kite again.
+  const runTail = e => { for (const t of e.tail) ctx.lineTo(t.x, t.y); };
   const trace = (f = 1) => {
     const e = edges(f);
     ctx.beginPath();
     ctx.moveTo(e.L[0].x, e.L[0].y);
     runThrough(e.L);
-    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);
+    runTail(e);
+    ctx.lineTo(e.R[last].x, e.R[last].y);
     runThrough(e.R.slice().reverse());
     ctx.closePath();
   };
   const traceHem = f => {
-    const e = edges(f), from = Math.max(1, last - 3);
+    const e = edges(f), from = Math.max(1, last - 2);
     ctx.beginPath();
     ctx.moveTo(e.L[from].x, e.L[from].y);
     runThrough(e.L.slice(from));
-    ctx.quadraticCurveTo(e.bulge.x, e.bulge.y, e.R[last].x, e.R[last].y);
+    runTail(e);
+    ctx.lineTo(e.R[last].x, e.R[last].y);
     runThrough(e.R.slice(from).reverse());
   };
 
@@ -3571,12 +3790,26 @@ function drawCape(w){
   ctx.globalAlpha = 1;
 
   const tail = P[last];
+  /* The cloth is TRANSLUCENT: the arena reads through it, which is what made
+     the old capes feel like enchanted cloth rather than cardboard. The flat
+     ladder colours had made it opaque and it looked pasted on.
+
+     The glow around the edge is three strokes of the seat's own tint at falling
+     width and rising alpha, NOT shadowBlur. They look the same at this size and
+     the strokes cost almost nothing, where shadowBlur is the single most
+     expensive thing this renderer can do — it is what made six Archmages run at
+     13fps before, and putting it back on every cape would undo that. */
   const grad = ctx.createLinearGradient(P[0].x, P[0].y, tail.x, tail.y);
-  grad.addColorStop(0, back);
-  grad.addColorStop(1, hem);
+  grad.addColorStop(0,   rgba(rank.base, .96));
+  grad.addColorStop(0.55, rgba(rank.base, .74));
+  grad.addColorStop(1,   rgba(rank.base, .40));
   trace();
   ctx.fillStyle = grad; ctx.fill();
-  ctx.globalAlpha = .75; ctx.strokeStyle = w.tint; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = w.tint;
+  ctx.globalAlpha = .12; ctx.lineWidth = 5.5; ctx.stroke();
+  ctx.globalAlpha = .26; ctx.lineWidth = 2.8; ctx.stroke();
+  ctx.globalAlpha = .85; ctx.lineWidth = 1.1; ctx.stroke();
   ctx.globalAlpha = 1;
 
   // a soft fold down the middle, so it has a near side and a far side
@@ -3586,66 +3819,91 @@ function drawCape(w){
   ctx.restore();
   ctx.globalAlpha = 1;
 
-  /* Everything below is EARNED. A wizard starting out wears plain cloth: no
-     braid, no stones. The trim arrives with the first jewel, doubles once a few
-     are in, and gains a collar band late on, so rank reads at a glance even
-     from across the arena. */
-  if (gemCount > 0){
-    ctx.save(); trace(); ctx.clip();
-    ctx.strokeStyle = "#e8cfa0"; ctx.lineCap = "round";
-    ctx.globalAlpha = .8; ctx.lineWidth = 1.4; traceHem(0.9); ctx.stroke();
-    if (gemCount >= 4){
-      ctx.globalAlpha = .55; ctx.lineWidth = 0.9; traceHem(0.78); ctx.stroke();
-    }
-    if (gemCount >= 8){
-      // a band across the shoulders
-      const e = edges(1);
-      ctx.globalAlpha = .7; ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(e.L[1].x, e.L[1].y);
-      ctx.quadraticCurveTo(P[1].x, P[1].y, e.R[1].x, e.R[1].y);
-      ctx.stroke();
-    }
-    ctx.restore();
+  /* Everything below is EARNED, and it is all clipped to the cloth so nothing
+     can spill off the edge of the cape. Three things arrive at different rates
+     — the centre panel, the seams, and the emblem in the hem band — which is
+     what keeps the middle of the ladder from feeling like a slower version of
+     the start. */
+  ctx.save(); trace(); ctx.clip();
+  ctx.globalAlpha = 1;
+
+  // the centre wedge down the spine, from level 8: white everywhere except the
+  // top rung, where it is the one piece of colour on an almost white cloak
+  if (rank.wedge){
+    const E = edges(0.20);
+    ctx.globalAlpha = rank.wedge === "#ffffff" ? .12 : .58; ctx.fillStyle = rank.wedge;
+    ctx.beginPath();
+    ctx.moveTo(E.L[0].x, E.L[0].y);
+    runThrough(E.L);
+    runTail(E);
+    ctx.lineTo(E.R[last].x, E.R[last].y);
+    runThrough(E.R.slice().reverse());
+    ctx.closePath(); ctx.fill();
     ctx.globalAlpha = 1;
   }
 
-  // one stone per jewel earned, in that jewel's own colour, riding the cloth
-  const n = Math.min(gemCount, CAPE_GEMS_MAX);
-  if (n > 0){
-    const perRow = n > 6 ? 2 : 1;
-    const rows = Math.ceil(n / perRow);
-    const E = edges(1);
-    for (let m = 0; m < n; m++){
-      const row = (m / perRow) | 0, col = m % perRow;
-      const alone = (row === rows - 1) && (n - row * perRow) === 1;
-      const f = rows === 1 ? 0.5 : 0.22 + (row / (rows - 1)) * 0.70;
-      const at = f * last;
-      const i0 = Math.min(last - 1, at | 0), fr = at - i0;
-      const a = P[i0], b = P[i0 + 1];
-      let ux = b.x - a.x, uy = b.y - a.y;
-      const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
-      const bx = a.x + (b.x - a.x) * fr, by = a.y + (b.y - a.y) * fr;
-      let x = bx, y = by;
-      if (perRow > 1 && !alone){
-        const side = col === 0 ? E.L : E.R;
-        const ex = side[i0].x + (side[i0 + 1].x - side[i0].x) * fr;
-        const ey = side[i0].y + (side[i0 + 1].y - side[i0].y) * fr;
-        x = bx + (ex - bx) * 0.34;
-        y = by + (ey - by) * 0.34;
+  /* Seams. Each one runs the whole length of the cloth at a fixed fraction of
+     its width, so they fan out with the cape and travel with it rather than
+     being painted on flat. An odd count puts one straight down the spine. */
+  if (rank.seams > 0){
+    ctx.globalAlpha = .48; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 0.85;
+    ctx.lineCap = "round";
+    for (let k = 0; k < rank.seams; k++){
+      const t = rank.seams === 1 ? 0 : (k / (rank.seams - 1)) * 2 - 1;   // -1..1
+      ctx.beginPath();
+      for (let i = 0; i <= last; i++){
+        const u = dirAt(i), h = capeHalf(i, last, wide, flare) * t * 0.82;
+        const x = P[i].x - u.y * h, y = P[i].y + u.x * h;
+        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
       }
-      const size = (2.6 + f * 1.9) * (rows > 4 ? 0.86 : 1);
-      const stone = gems[m] || { c: "#eef2ff", s: "dot" };
-      blitSprite(jewelSprite(stone.c, size, stone.s), x, y, 1, Math.atan2(uy, ux));
+      ctx.stroke();
     }
+    ctx.globalAlpha = 1;
   }
+
+  // the hem band the emblem is set into, and its bright edge
+  const E1 = edges(1), bandFrom = Math.max(1, last - 2);
+  ctx.globalAlpha = .20; ctx.fillStyle = "#ffffff";
+  traceHem(1); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = .85; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(E1.L[bandFrom].x, E1.L[bandFrom].y);
+  ctx.quadraticCurveTo(P[bandFrom].x, P[bandFrom].y, E1.R[bandFrom].x, E1.R[bandFrom].y);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  /* The emblem, riding the cloth in the middle of the hem band. It is blitted
+     from a cached sprite rather than traced every frame — six capes at sixty
+     frames a second would otherwise redraw the same lattice 360 times a second
+     for nothing. */
+  {
+    const f = 0.90 * last;
+    const i0 = Math.min(last - 1, f | 0), fr = f - i0;
+    const a = P[i0], b = P[i0 + 1];
+    let ux = b.x - a.x, uy = b.y - a.y;
+    const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
+    const x = a.x + (b.x - a.x) * fr, y = a.y + (b.y - a.y) * fr;
+    const size = 5.2 + 2.6 * ((rank.at - 1) / (CAPE_RUNGS - 1));
+    ctx.globalAlpha = .92;
+    blitSprite(emblemSprite(rank.emblem, size, "#ffffff"), x, y, 1, Math.atan2(uy, ux) + Math.PI / 2);
+    ctx.globalAlpha = 1;
+  }
+
   ctx.restore();
 }
 
 function drawWizard(w){
   const a = w.facing;
   const tint = w.tint;
-  const robe = w.friendly ? "#1b2b40" : "#3a1f2a";
+  /* The wizard wears their rank, not their side. Hat, brim and robe all come
+     from the same family entry as the cloak, so a wizard in a green cloak is a
+     green wizard and rank reads from the whole figure rather than from the
+     cloth trailing behind it. Friend and foe are carried by the tint — the ring
+     around the brim, the outline, the halo, the wand — which is the channel
+     that was always doing that job anyway. */
+  const rank = capeMarks(w);
+  const robe = shade(rank.brim, -0.25);
   ctx.save();
   ctx.translate(w.x, w.y);
 
@@ -3705,9 +3963,9 @@ function drawWizard(w){
   // cone on top of it catching the light. Tone does the work at thirty pixels —
   // the cone has to be LIGHTER than the brim and cast a shadow onto it, or it
   // stops reading as something raised and turns into a wedge cut out of a disc.
-  const brim = w.friendly ? "#1b2739" : "#331a23";
-  const cone = w.friendly ? "#3f5f88" : "#8a4257";
-  const lit  = w.friendly ? "#5b81ad" : "#b06176";
+  const brim = rank.brim;
+  const cone = rank.hat;
+  const lit  = rank.lit;
   // shadow on the floor
   ctx.fillStyle = "rgba(0,0,0,.45)";
   ctx.beginPath(); ctx.ellipse(1, 3, 16, 15, 0, 0, TAU); ctx.fill();
@@ -5039,16 +5297,34 @@ function renderPass(profile){
 
     const lv = document.createElement("span");
     lv.className = "lv"; lv.textContent = "Lv " + r.at;
-    // The tile shows the stone's actual cut, drawn by the same code that puts
-    // it on a cape — so the ladder is a picture of what you will be wearing,
-    // not a decorative stand-in. CSS handles lit versus locked.
+    // CSS handles lit versus locked.
     let jewel;
     if (document.createElement){
       jewel = document.createElement("canvas");
       jewel.className = "jewel";
       jewel.width = jewel.height = 30;
       const g = jewel.getContext && jewel.getContext("2d");
-      if (g){ g.translate(15, 15); paintJewel(g, 8.5, r.from, r.shape); }
+      if (g){
+        // The tile is a scrap of that rung's cloth with its emblem on it, drawn
+        // by the same code that puts it on a cape — so the ladder is a picture
+        // of what you will be wearing, not a decorative stand-in.
+        // the same dark-shoulder-to-pale-hem gradient the cape is drawn with
+        // the same one-colour fade the cape is drawn with, over the tile's own
+        // dark ground, so the tile is a scrap of that rung's actual cloth
+        g.fillStyle = "#0d0a18"; g.fillRect(3, 3, 24, 24);
+        const grd = g.createLinearGradient(0, 3, 0, 27);
+        grd.addColorStop(0, rgba(r.base, .95));
+        grd.addColorStop(1, rgba(r.base, .16));
+        g.fillStyle = grd; g.fillRect(3, 3, 24, 24);
+        if (r.wedge){
+          g.globalAlpha = r.wedge === "#ffffff" ? .22 : .7;
+          g.fillStyle = r.wedge; g.fillRect(12, 3, 6, 24); g.globalAlpha = 1;
+        }
+        g.globalAlpha = .85; g.strokeStyle = "#ffffff"; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(3, 19.5); g.lineTo(27, 19.5); g.stroke();
+        g.globalAlpha = 1;
+        g.translate(15, 23.5); paintEmblem(g, 5.4, r.emblem, "#ffffff");
+      }
     } else {
       jewel = document.createElement("span");
       jewel.className = "jewel";
@@ -5079,7 +5355,12 @@ function renderPass(profile){
   }
 }
 
-let authMode = "in";                // "in" to sign in, "up" to create
+/* Sign in and sign up are two buttons on one form, not one button and a mode.
+   The old screen had a single "Sign in" button plus a "New here? Create a
+   wizard" link that silently swapped what that button did — so the button you
+   were looking at was not always the button you wanted, and nothing on screen
+   said which state you were in. Now each button does its own thing when
+   pressed, and there is no state to be in. */
 let authFrom = "home";              // where Back and a finished sign-in return to
 
 function authNote(text, kind){
@@ -5088,31 +5369,32 @@ function authNote(text, kind){
   n.textContent = text;
   n.className = "note" + (kind ? " " + kind : "");
 }
-function setAuthMode(m){
-  authMode = m;
-  const up = m === "up";
-  el("authTitle").textContent = up ? "Create a wizard" : "Sign in";
-  el("authGo").textContent = up ? "Create wizard" : "Sign in";
-  el("authSwap").textContent = up ? "Already have a wizard? Sign in" : "New here? Create a wizard";
-  el("authPass").setAttribute("autocomplete", up ? "new-password" : "current-password");
-  authNote(up ? "Three characters or more, and a password of at least eight."
-              : "Your wizard keeps its level and experience wherever you sign in.");
-}
+const AUTH_HELP = "Your wizard keeps its level and experience wherever you sign in. " +
+                  "New here? Fill the same two boxes and press Sign up.";
 function openAuth(){
   authFrom = (panel === "auth") ? authFrom : panel;
-  setAuthMode("in");
   el("authPass").value = "";
+  authNote(AUTH_HELP);
   show("auth");
 }
-async function authSubmit(){
+async function authSubmit(mode){
   const acct = ACCT();
   if (!acct) return;
+  const up = mode === "up";
   const name = (el("authName").value || "").trim();
   const pass = el("authPass").value || "";
-  el("authGo").disabled = true;
-  authNote(authMode === "up" ? "Creating your wizard\u2026" : "Signing you in\u2026");
-  const res = authMode === "up" ? await acct.register(name, pass) : await acct.signIn(name, pass);
-  el("authGo").disabled = false;
+  // A new wizard is checked here as well as on the server, so the rule is on
+  // screen before the round trip rather than as a rejection after it.
+  const L = (window.RPWA && window.RPWA.limits) || { NAME_MIN: 3, PASS_MIN: 8 };
+  if (up && (name.length < L.NAME_MIN || pass.length < L.PASS_MIN)){
+    authNote(`A new wizard needs a name of at least ${L.NAME_MIN} characters, ` +
+             `and a password of at least ${L.PASS_MIN}.`, "bad");
+    return;
+  }
+  el("authGo").disabled = true; el("authNew").disabled = true;
+  authNote(up ? "Creating your wizard\u2026" : "Signing you in\u2026");
+  const res = up ? await acct.register(name, pass) : await acct.signIn(name, pass);
+  el("authGo").disabled = false; el("authNew").disabled = false;
   if (!res || !res.ok){
     authNote((res && res.error) || "Something went wrong.", "bad");
     return;
@@ -5124,8 +5406,10 @@ async function authSubmit(){
 el("signInBtn").addEventListener("click", openAuth);
 el("signOutBtn").addEventListener("click", () => { if (ACCT()) ACCT().signOut(); });
 el("authBack").addEventListener("click", () => show(authFrom === "auth" ? "home" : authFrom));
-el("authSwap").addEventListener("click", () => setAuthMode(authMode === "up" ? "in" : "up"));
-el("authForm").addEventListener("submit", e => { e.preventDefault(); authSubmit(); });
+el("authNew").addEventListener("click", () => authSubmit("up"));
+// Enter in either box is the same as pressing Sign in, which is what a return
+// key means on a form you have typed a known name and password into.
+el("authForm").addEventListener("submit", e => { e.preventDefault(); authSubmit("in"); });
 
 /* ---- banking a finished match --------------------------------------- */
 
@@ -5395,12 +5679,13 @@ window.RPW = {
     };
     const L = [], R = [];
     for (let i = 0; i <= last; i++){
-      const u = dirAt(i), h = capeHalf(i, last, capeWide(capeMarks(w).n));
+      const u = dirAt(i), h = capeHalf(i, last, capeWide(capeMarks(w).at));
       L.push(rel({ x: P[i].x - u.y * h, y: P[i].y + u.x * h }));
       R.push(rel({ x: P[i].x + u.y * h, y: P[i].y - u.x * h }));
     }
     return {
-      gems: capeMarks(w).n,
+      rung: capeMarks(w).at, emblem: capeMarks(w).emblem, seams: capeMarks(w).seams,
+      tail: capeMarks(w).tail, flare: capeMarks(w).flare,
       nodes: P.map(rel), left: L, right: R,
       segs: P.slice(1).map((p, i) => Math.hypot(p.x - P[i].x, p.y - P[i].y)),
       // the bend at each joint, in radians
@@ -5410,7 +5695,7 @@ window.RPW = {
         if (d < -Math.PI) d += TAU;
         return d;
       }),
-      widths: P.map((p, i) => capeHalf(i, last, capeWide(capeMarks(w).n)) * 2)
+      widths: P.map((p, i) => capeHalf(i, last, capeWide(capeMarks(w).at)) * 2)
     };
   },
   // test hook: land a finishing blow on a seat, so a rig can reach the end of

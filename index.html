@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=40">
+  <link rel="stylesheet" href="src/style.css?v=45">
 </head>
 <body>
 
@@ -80,11 +80,11 @@
           <button id="mpBtn">Multiplayer</button>
         </div>
 
-        <!-- the cloak track: what levelling up is for. Filled by renderPass()
-             in src/game.js from the jewel table in src/account.js. -->
-        <section class="pass" id="pass" aria-label="Cloak jewels">
+        <!-- the cloak ladder: what levelling up is for. Filled by renderPass()
+             in src/game.js from the rung table in src/account.js. -->
+        <section class="pass" id="pass" aria-label="Your cloak">
           <div class="pass-head">
-            <h4>Cloak jewels</h4>
+            <h4>Your cloak</h4>
             <span id="passNext">Sign in to start earning</span>
           </div>
           <ol class="pass-track" id="passTrack"></ol>
@@ -165,7 +165,7 @@
 
       <!-- signing in: one form, two jobs -->
       <div class="panel room" id="authPanel" hidden>
-        <h4 id="authTitle">Sign in</h4>
+        <h4 id="authTitle">Sign in or sign up</h4>
         <form id="authForm" method="post" action="/api/login" autocomplete="on">
           <label class="field" for="authName"><span>Wizard name</span></label>
           <input class="fieldbox" id="authName" name="username" type="text" maxlength="14"
@@ -173,13 +173,15 @@
           <label class="field" for="authPass"><span>Password</span></label>
           <input class="fieldbox" id="authPass" name="password" type="password" maxlength="200"
                  autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
-          <p class="note" id="authNote">Your wizard keeps its level and experience wherever you sign in.</p>
+          <p class="note" id="authNote">Your wizard keeps its level and experience wherever you sign in. New here? Fill the same two boxes and press Sign up.</p>
           <div class="room-actions">
             <button class="go" id="authGo" type="submit">Sign in</button>
+            <button class="go alt" id="authNew" type="button">Sign up</button>
+          </div>
+          <div class="room-actions backrow">
             <button class="back" id="authBack" type="button">Back</button>
           </div>
         </form>
-        <button class="linky" id="authSwap" type="button">New here? Create a wizard</button>
       </div>
 
       <!-- the two post-match panels sit side by side so the end screen fits
@@ -247,8 +249,8 @@
   </details>
 </div>
 
-  <script src="src/account.js?v=40"></script>
-  <script src="src/game.js?v=40"></script>
-  <script src="src/net.js?v=40"></script>
+  <script src="src/account.js?v=45"></script>
+  <script src="src/game.js?v=45"></script>
+  <script src="src/net.js?v=45"></script>
 </body>
 </html>

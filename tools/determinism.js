@@ -7,7 +7,8 @@
  * would drift apart in exactly the same way.
  *
  *   node tools/determinism.js            # a few seeds and modes
- *   SEEDS=20 node tools/determinism.js   # a longer sweep
+ *   SEEDS=20 node tools/determinism.js               # a longer sweep
+ *   SEED_FROM=4 SEEDS=6 node tools/determinism.js  # just seeds 4 to 6
  */
 
 "use strict";
@@ -17,6 +18,12 @@ const path = require("path");
 const vm = require("vm");
 
 const code = fs.readFileSync(path.join(__dirname, "..", "src", "game.js"), "utf8");
+/* The account script comes with it. Without RPWA there is no cloak ladder, so
+   every cape in the rig sat on rung 1 and none of the higher rungs' cloth,
+   seams or tail shapes were ever executed — a crash from level 8 up could pass
+   this whole suite. It touches no seeded RNG and makes no network call unless
+   asked, so loading it changes nothing the simulation can see. */
+const acctCode = fs.readFileSync(path.join(__dirname, "..", "src", "account.js"), "utf8");
 
 function mulberry32(a) {
   return function () {
@@ -95,6 +102,8 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1 
   for (let i = 0; i < 4; i++) els.diffRow.appendChild(fakeEl("d" + i));
 
   vm.createContext(sandbox);
+  sandbox.localStorage = { getItem: () => null, setItem(){}, removeItem(){} };
+  vm.runInContext(acctCode, sandbox, { filename: "account.js" });
   vm.runInContext(code, sandbox, { filename: "game.js" });
 
   const fire = (type, key) => {
@@ -183,10 +192,13 @@ module.exports = { run, boot };
 if (require.main !== module) return;
 
 const SEEDS = +(process.env.SEEDS || 6);
+// SEED_FROM lets the sweep be split across runs — useful when a shell has a
+// shorter patience than the whole suite.
+const SEED_FROM = +(process.env.SEED_FROM || 1);
 const FRAMES = +(process.env.FRAMES || 2400);
 let bad = 0;
 
-for (let seed = 1; seed <= SEEDS; seed++) {
+for (let seed = SEED_FROM; seed <= SEEDS; seed++) {
   const cases = [
     { name: `duel   seed ${seed}`, opts: { seed, diff: 1, frames: FRAMES } },
     { name: `room 4 seed ${seed}`, opts: { seed, diff: 2, room: 4, frames: FRAMES } },

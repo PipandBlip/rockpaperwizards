@@ -48,28 +48,83 @@
      where `earned` comes from. Ids are permanent; renaming one is fine,
      renumbering one is not. */
 
-  /* `shape` is the cut of the stone, and the ladder is ordered by how elaborate
-     it is: a plain bar to begin with, ending in an eight-pointed sigil. Both
-     the cape and the menu's jewel track draw from this one field, so the row of
-     shapes somebody is climbing towards is the row they will actually wear.
-     Shapes are drawn by jewelPath() in src/game.js — adding one here means
-     adding a case there. */
-  const GEMS = [
-    { id: "quartz",   at: 2,  name: "Chipped Quartz",   shape: "bar",      from: "#cfd6ea", to: "#8e9bbf" },
-    { id: "pearl",    at: 4,  name: "River Pearl",      shape: "dot",      from: "#f2f6ff", to: "#a9c4d8" },
-    { id: "amber",    at: 6,  name: "Amber Ember",      shape: "square",   from: "#ffcf7a", to: "#c9701f" },
-    { id: "jade",     at: 9,  name: "Verdant Jade",     shape: "pentagon", from: "#8ef0c0", to: "#1d8f6a" },
-    { id: "sapphire", at: 12, name: "Cobalt Heart",     shape: "triangle", from: "#8fd0ff", to: "#1f4fd8" },
-    { id: "garnet",   at: 15, name: "Crimson Garnet",   shape: "crescent", from: "#ff9aa8", to: "#a5122c" },
-    { id: "amethyst", at: 18, name: "Deep Amethyst",    shape: "hex",      from: "#d7b0ff", to: "#6a2fd0" },
-    { id: "moonstone",at: 22, name: "Moonstone",        shape: "ring",     from: "#eaf2ff", to: "#6f7fb5" },
-    { id: "emberglass",at:26, name: "Emberglass",       shape: "spark",    from: "#ffb36b", to: "#8e1f5e" },
-    { id: "opal",     at: 30, name: "Starlit Opal",     shape: "star",     from: "#b7ffe8", to: "#7b6cff" },
-    { id: "voidstone",at: 35, name: "Voidstone",        shape: "halo",     from: "#7a6cff", to: "#120a2c" },
-    { id: "archmage", at: 40, name: "Archmage's Heart", shape: "sigil",    from: "#7cf2ff", to: "#a97cff" }
-  ];
+  /* The cloak ladder: one rung per level, level 1 to 14.
 
-  // The track as the menu draws it: every tier, whether it is earned, and
+     A cloak is not "how many stones you have" any more. Three things move as
+     you climb, and they move at different rates, which is what stops the middle
+     of the ladder feeling like a slower version of the start:
+
+       emblem  what is set into the hem — a single stud, then two, then three,
+               then a quatrefoil, a hexagon, paired and crowned hexes, a lattice,
+               and finally a cut diamond
+       seams   the pleats running from collar to hem: none at all on plain
+               cloth, fanning out through the middle of the ladder, then
+               thinning again at the top as broad panels take over
+       colour  a FAMILY: one base colour that fades out down the cloth, drained
+               grey to begin with and sage green from level 8, near white at the
+               top rung
+       tail    the silhouette the hem cuts: a shallow chevron on plain cloth, a
+               pointed kite through the middle, a broad rhombus once the cloth
+               turns, and a pair of lobes split by a deep centre notch at the top — with `flare` widening
+               the skirt as it goes, so rank reads from the outline alone even
+               when a cape is too far away to make out its emblem
+
+     Colour is the coarse read — grey, green, pale — and it is meant to be
+     legible across an arena. The ladder past 14 is designed to keep going
+     through blue, then red, then purple: those are three more entries in
+     FAMILY and a `family` field on the new rungs, and nothing else. Until they
+     exist, a wizard above 14 wears the level 14 cloak.
+
+     A family also dresses the WIZARD. The hat cone, its brim and its lit edge
+     all come from the same entry, so a wizard in a green cloak is a green
+     wizard — the rank reads from the whole figure and not just the cloth
+     trailing behind it. Friend and foe are still told apart by the ring and
+     wand glow, which stay the seat's own tint.
+
+     `emblem` values are drawn by emblemPath() in src/game.js — adding one here
+     means adding a case there. The same function draws the cape and the menu
+     tile, so the ladder is a picture of what you will actually be wearing. */
+  /* A family is ONE base colour plus the wizard wearing it.
+
+     The cloth is not a light-to-dark colour ramp — it is a single base colour
+     that FADES OUT down its length: near solid at the shoulders, nearly gone at
+     the hem. That is what makes it read as hanging cloth you can see through
+     rather than a painted shape, and it is why there is no second colour here
+     to drift out of step with the first.
+
+     Everything drawn on top of it — the seams, the hem band, the emblem — is
+     WHITE, at every rung. `panel` is the one exception: the centre wedge is a
+     white overlay for every family except the last, where it is green on white.
+
+     Blue, red and purple slot in here as three more entries and nothing else. */
+  const FAMILY = {
+    //     the cloth   hat cone    brim        lit edge    centre wedge
+    grey: { base:"#3a3a44", hat:"#5e5e68", brim:"#24242b", lit:"#93939f", panel:null },
+    sage: { base:"#2f5f27", hat:"#4f8442", brim:"#22401c", lit:"#8fc582", panel:null },
+    pale: { base:"#dde7d8", hat:"#c2cfbd", brim:"#5a6756", lit:"#f4f8f1", panel:"#2f5f27" }
+  };
+  const GEMS = [
+    { id:"plain",      at:1,  name:"Plain Cloth",     family:"grey", emblem:"stud1",   seams:0, panel:false, tail:"chevron", flare:0.00 },
+    { id:"twin",       at:2,  name:"Twin Studs",      family:"grey", emblem:"stud2",   seams:0, panel:false, tail:"chevron", flare:0.04 },
+    { id:"triad",      at:3,  name:"Three Studs",     family:"grey", emblem:"stud3",   seams:0, panel:false, tail:"chevron", flare:0.08 },
+    { id:"quatrefoil", at:4,  name:"Quatrefoil",      family:"grey", emblem:"quatre",  seams:1, panel:false, tail:"kite",    flare:0.06 },
+    { id:"fanned",     at:5,  name:"Fanned Seams",    family:"grey", emblem:"quatre",  seams:4, panel:false, tail:"kite",    flare:0.10 },
+    { id:"pleated",    at:6,  name:"Pleated Cloth",   family:"grey", emblem:"quatre",  seams:7, panel:false, tail:"rhombus", flare:0.10 },
+    { id:"hexstone",   at:7,  name:"Hexstone",        family:"grey", emblem:"hex1",    seams:6, panel:false, tail:"rhombus", flare:0.14 },
+    { id:"verdant",    at:8,  name:"Verdant Weave",   family:"sage", emblem:"hex1",    seams:7, panel:true,  tail:"rhombus", flare:0.16 },
+    { id:"paired",     at:9,  name:"Paired Hexes",    family:"sage", emblem:"hex2",    seams:7, panel:true,  tail:"rhombus", flare:0.18 },
+    { id:"crowned",    at:10, name:"Crowned Hexes",   family:"sage", emblem:"hex3",    seams:6, panel:true,  tail:"rhombus", flare:0.20 },
+    { id:"lattice",    at:11, name:"Hex Lattice",     family:"sage", emblem:"lattice", seams:5, panel:true,  tail:"rhombus", flare:0.24 },
+    { id:"panelled",   at:12, name:"Broad Panels",    family:"sage", emblem:"lattice", seams:3, panel:true,  tail:"rhombus", flare:0.30 },
+    { id:"mantle",     at:13, name:"Archmage Mantle", family:"sage", emblem:"lattice", seams:3, panel:true,  tail:"rhombus", flare:0.34 },
+    { id:"crown",      at:14, name:"Crowned Mantle",  family:"pale", emblem:"diamond", seams:2, panel:true,  tail:"split",   flare:0.38 }
+  ].map(r => {
+    const f = FAMILY[r.family];
+    // `from` is the one colour the menu tile tints itself with
+    return { ...r, ...f, wedge: r.panel ? (f.panel || "#ffffff") : null, from: f.hat };
+  });
+
+  // The track as the menu draws it: every rung, whether it is earned, and
   // which one is next.
   function track(level){
     const lv = Math.max(1, level | 0);
@@ -83,6 +138,17 @@
     if (next) next.next = true;
     return { rows, nextAt, level: lv };
   }
+
+  /* The cloak somebody at this level is actually wearing: the highest rung they
+     have reached. Above the top rung they keep wearing the top rung, which is
+     what "hold at 14 until more are designed" means in one line. */
+  function cloak(level){
+    const lv = Math.max(1, Math.floor(Number(level)) || 1);
+    let r = GEMS[0];
+    for (const g of GEMS) if (lv >= g.at) r = g;
+    return r;
+  }
+
 
   /* ------------------------------------------------------------- plumbing */
 
@@ -175,6 +241,15 @@
       return { gained: res.gained || 0, leveled: res.leveled || 0, throttled: !!res.throttled, profile };
     }
   };
+
+  /* Mirrors cloudflare/worker/src/accounts.js LIMITS. The sign-up screen checks
+     these before the round trip so the rule is on screen rather than arriving as
+     a rejection — and server/test-accounts.js pins the two copies together, so
+     changing one side alone fails a test rather than shipping a form that
+     accepts what the server will refuse. */
+  A.limits = { NAME_MIN: 3, NAME_MAX: 14, PASS_MIN: 8, PASS_MAX: 200 };
+  A.cloak = cloak;          // the rung a level is actually wearing
+  A.rungs = GEMS.length;    // how long the ladder is
 
   window.RPWA = A;
 })();

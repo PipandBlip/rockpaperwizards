@@ -175,6 +175,27 @@ golden file is what shows the bots still make the same decisions:
 Run it after anything meant to be a pure optimisation. Every change above
 leaves it byte-identical.
 
+## Sign in and sign up are two buttons, not one button and a mode
+
+The screen used to have one **Sign in** button and, underneath it, a link
+reading *New here? Create a wizard*. That link did not go anywhere — it silently
+swapped what the button above it did. So the button you were looking at was not
+always the button you wanted, and nothing on the screen told you which of the
+two states you were in.
+
+Now both actions are buttons, side by side, each doing its own thing when
+pressed, with **Back** on its own row below. There is no `authMode` left to be
+in — `authSubmit(mode)` takes the mode from whichever button called it. Enter in
+either box means Sign in, which is what a return key means on a form you have
+typed a known name and password into.
+
+The sign-up button also checks the name and password lengths before the round
+trip, so a new player reads the rule instead of being bounced by the server. That
+is only an improvement while the two copies of the rule agree, so `src/account.js`
+carries `RPWA.limits` mirroring the worker's `LIMITS`, and
+`server/test-accounts.js` pins them together — changing one side alone fails a
+test rather than shipping a form that accepts what the server will refuse.
+
 ## Why the sign-in page is shaped the way it is
 
 A brand-new domain that suddenly grows a password field is exactly the profile
@@ -220,32 +241,137 @@ Until step 2 is done, `/api/*` returns an error and the game quietly runs
 guest-only — which is also exactly what happens on the single-file `dist/`
 build, where there is no server at all.
 
-## Cloak jewels
+## The cloak ladder
 
-`GEMS` in `src/account.js` is the reward ladder — twelve stones between level 2
-and level 40, each with an id, the level it lands at, a name and its two
-colours. `track(level)` turns it into what the menu draws: every tier, which are
-earned, which is next.
+Levels 1 to 14, one rung each, drawn from Green's reference sheet. A cloak is
+not "how many stones you have" any more — three things move, at different rates,
+which is what stops the middle of the ladder feeling like a slower version of
+the start:
 
-**It is display only right now.** A tier counts as earned purely by having
-reached its level; the server grants nothing and nothing is wearable. That is
-deliberate — the ladder is there so levelling has a visible point, without
-committing to an item system yet.
+| | 1–3 | 4–6 | 7 | 8–11 | 12–13 | 14 |
+|---|---|---|---|---|---|---|
+| **emblem** | 1, 2, 3 studs | quatrefoil | hexagon | hex, 2 hex, 3 hex, lattice | lattice | cut diamond |
+| **seams** | none | 1, 4, 7 | 6 | 7, 7, 6, 5 | 3 | 2 |
+| **family** | grey | grey | grey | sage | sage | pale |
 
-When the jewels become real, the server grants ids from this same list into
-`profile.cosmetics.unlocked` and the only change here is that `earned` reads
-that array instead of comparing levels. **Ids are permanent**: renaming a stone
-is free, renumbering one would move somebody's jewel.
+Seams thin out again at the top on purpose — the reference does the same thing,
+letting broad panels take over from pleats.
 
-Two things the track has to respect, both already handled and both easy to
-undo by accident:
+### A family is one colour, and the fade is alpha
 
-* Each tier's colours reach CSS as custom properties set through the CSSOM, not
-  as a `style=""` attribute — the CSP refuses inline styles (see below).
-* The strip is `width:fit-content; margin-inline:auto`, **not**
-  `justify-content:center`. Centring a flex row that overflows pushes its
-  leading items past the scroll origin where they can never be reached, which
-  is exactly what happens on a phone.
+Each rung names a **family**, and a family is a single base colour plus the
+wizard wearing it:
+
+```js
+grey: { base:"#3a3a44", hat:"#5e5e68", brim:"#24242b", lit:"#93939f", panel:null }
+```
+
+The cloth is **not** a light-to-dark colour ramp. It is that one colour with a
+falling **alpha** down its length — near solid at the shoulders, thinned to 40%
+at the hem:
+
+```js
+grad.addColorStop(0,    rgba(rank.base, .96));
+grad.addColorStop(0.55, rgba(rank.base, .74));
+grad.addColorStop(1,    rgba(rank.base, .40));
+```
+
+That is the difference between cloth you can see through and a shape cut out of
+paper, and it is why there is no second colour here that could drift out of step
+with the first. Two earlier passes got this wrong in opposite directions — a
+light-shouldered ramp that read as cardboard, then a two-colour ramp that read
+as a gradient rather than as fading cloth.
+
+**Everything drawn on top is white**: the seams, the hem band and its edge, the
+emblem. The one exception is the top rung, where the centre wedge is green on an
+almost-white cloak — the single piece of colour on the finished cloth.
+
+The family also dresses the **wizard**. The hat cone, its brim and its lit edge
+come from the same entry, so a wizard in a green cloak is a green wizard and
+rank reads from the whole figure rather than from the cloth trailing behind it.
+
+**So colour belongs to the ladder, not to the seat.** The cape and hat used to be
+blue for friendly and red for foe; that fought the ladder for the same channel,
+so it is gone. Friend and foe are carried by the tint — the ring around the brim,
+the outline, the halo, the wand — which is the channel that was always doing
+that job anyway, and it still separates six wizards standing in one arena.
+
+Past 14 the ladder continues through blue, then red, then purple. That is three
+more entries in `FAMILY` and a `family` field on the new rungs, and nothing
+else. Until they exist a wizard above 14 wears the level 14 cloak.
+
+### The cloth is translucent, and the glow is not shadowBlur
+
+The arena reads through the cape at 70% — that is what makes it feel like
+enchanted cloth rather than cardboard, and the flat ladder colours had briefly
+made it opaque and pasted-on. The glow around the edge is **three strokes of the
+seat's own tint** at falling width and rising alpha:
+
+```js
+ctx.globalAlpha = .12; ctx.lineWidth = 5.5; ctx.stroke();
+ctx.globalAlpha = .26; ctx.lineWidth = 2.8; ctx.stroke();
+ctx.globalAlpha = .85; ctx.lineWidth = 1.1; ctx.stroke();
+```
+
+Not `shadowBlur`. At this size they look the same and the strokes cost almost
+nothing, where shadowBlur is the single most expensive thing this renderer can
+do — it is what had six Archmages running at 13fps, and putting it back on every
+cape would have undone that fix.
+
+### The hem is the loudest signal
+
+The silhouette changes shape as you climb, and it is readable across an arena
+long before an emblem is: a shallow **chevron** on plain cloth, a deep pointed
+**kite**, a broad **rhombus** with tips flared past the body once the cloth
+turns green, and a deeply **split** pair of lobes at the top. Every point is built from
+the tail's own direction and normal, so the shape swings with the cloth rather
+than being painted on flat, and `flare` widens the skirt over the bottom third
+only — a high rung is a broader hem, not a uniformly fatter cape.
+
+### Nothing else can catch a broken rung
+
+Capes are view-only. They touch no seeded RNG and appear in no hash, which is
+what makes them free — and also means the determinism suite, the golden
+fingerprints and the relay tests are all structurally incapable of noticing that
+a rung names an emblem the renderer has never heard of. It would draw the
+fallback stud on every cloak from that rung up, silently, and only on the levels
+nobody has reached yet.
+
+So `server/test-accounts.js` pins the ladder's DATA: fourteen rungs, one per
+level, every rung naming a cloth, a band and an emblem, **every emblem having a
+matching case in `emblemPath()`**, the cloth moving grey → green → pale and
+never back, and level 400 still wearing level 14's cloak. Renaming one emblem in
+the table fails that suite instead of shipping.
+
+And `tools/cape-test.js` pins the RENDERING, one case per rung. This is not
+hypothetical caution: changing the tail silhouette left one call reaching for a
+point that no longer existed, and it crashed the draw loop for every wizard
+above level 7. Nothing in the repo noticed — a browser did. Two things had to
+change so a Node test could:
+
+- **The headless rig never loaded `src/account.js`.** With no `RPWA` there is no
+  ladder, so every cape in every rig sat on rung 1 and the higher rungs' cloth,
+  seams and tail shapes were never executed at all. `boot()` now loads it; it
+  touches no seeded RNG and makes no network call unless asked, and the golden
+  fingerprints are byte-identical either way.
+- **The test drives the real draw loop** with a wizard on every rung, one case
+  each so a failure says "rung 11" rather than "some cape somewhere", plus mixed
+  levels in one arena — which is the shape that actually crashed. Reintroducing
+  that bug fails eleven of its cases, from level 8 up, exactly where the browser
+  found it.
+
+It also checks what the ladder promises rather than just that it runs: the cloth
+never gets narrower as it climbs, the hem goes chevron → kite → rhombus → split
+and never doubles back, and no cloth folds through itself on any rung.
+
+`server/test-accounts.js` covers the family the same way: every rung fully
+dressed (cloth ends, accent, hat, brim, lit), the families running grey → sage →
+pale and never doubling back, **the hat always matching its own cloak's family**
+— a green wizard in a grey hat is exactly the kind of bug that only surfaces in
+a screenshot somebody happens to look at — each family carrying one distinct base colour, and the
+design over the cloth being white at every rung bar the top one's green wedge —
+the rule that makes a single base colour enough, and the one a new family could
+quietly break by bringing its own trim.
 
 ## The cape
 

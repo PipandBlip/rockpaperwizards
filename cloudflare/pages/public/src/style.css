@@ -230,6 +230,13 @@
   .fieldbox:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
   #authForm .note{text-align:left;margin:0 0 12px}
   #authForm{width:100%}
+  /* Sign in and Sign up sit side by side and carry equal weight — one of them
+     is the right answer for you and the page should not be guessing which.
+     Different colours so they never read as the same button twice. */
+  .go.alt{border-color:var(--rive);color:var(--rive)}
+  .go.alt:hover{background:rgba(169,124,255,.12)}
+  .backrow{margin-top:2px}
+  .backrow button{flex:0 0 auto;min-width:120px}
   .linky{background:none;border:0;padding:4px 0 0;cursor:pointer;color:var(--rive);
     font-family:var(--display);font-size:11px;letter-spacing:.06em;text-decoration:underline;
     text-underline-offset:3px}
