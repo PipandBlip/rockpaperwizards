@@ -70,7 +70,8 @@ function fakeEl(id) {
 /* Boot the game in a stubbed DOM and hand back the controls.
    Split out of run() so other rigs — tools/input-test.js — can drive the same
    sandbox instead of keeping a second copy of these stubs in step with this one. */
-function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1 } = {}) {
+function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1,
+                reducedMotion = false } = {}) {
   const els = {};
   const listeners = {};
   let frameCb = null;
@@ -92,7 +93,11 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  sandbox.window.matchMedia = () => ({ matches: false });
+  /* The operating system's "reduce motion" setting. It is a PER-MACHINE
+     preference, so anything the simulation reads from it is a desync between
+     two players whose machines disagree — which is exactly what shipped once.
+     The rig can boot either way so a test can prove the sim ignores it. */
+  sandbox.window.matchMedia = () => ({ matches: !!reducedMotion });
   sandbox.window.addEventListener = (type, fn) => { (listeners[type] ||= []).push(fn); };
   sandbox.addEventListener = sandbox.window.addEventListener;
 
@@ -130,8 +135,8 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1 
   };
 }
 
-function run({ seed, diff, room, frames, every = 30, opts = null, preset = null, seat = 0, humans = 1, idle = false }) {
-  const rig = boot({ seed, diff, room, opts, seat, humans });
+function run({ seed, diff, room, frames, every = 30, opts = null, preset = null, seat = 0, humans = 1, idle = false, reducedMotion = false }) {
+  const rig = boot({ seed, diff, room, opts, seat, humans, reducedMotion });
   /* A fixed layout, started the way an OFFLINE match starts — no NET.active.
      Presets used to be gated on a live network match, which made the arena
      picker do nothing in solo; these runs would have passed anyway and told us
@@ -233,6 +238,22 @@ for (let seed = SEED_FROM; seed <= SEEDS; seed++) {
      bots actually kill things, which is what exercises the kill reward — that
      reward used to heal `you`. Both compared seats must be human ones, or both
      rigs resolve `you` to the same wizard and the case proves nothing. */
+  /* Two machines that disagree about "reduce motion" must still produce the
+     same world. This is not a hypothetical: hit-stop — which scales dt for the
+     WHOLE simulation — used to be skipped for reduce-motion players, so a duel
+     between one machine with it on and one with it off fell out of sync on the
+     first heavy hit, about six seconds in. Every other case in this file boots
+     both halves the same way and could never have seen it. */
+  /* Driven by the BOTS, with no scripted keypresses. That matters: this rig
+     wires Math.random to the same generator the input script draws from, so a
+     run with fewer view-only particles would otherwise get different keys
+     pressed and fail for a reason that has nothing to do with the game. Idle,
+     the only thing that can differ is the simulation itself. */
+  cases.push({
+    name: `reduce-motion ${seed}`,
+    opts: { seed, diff: 2, room: 4, humans: 1, frames: FRAMES, idle: true, reducedMotion: false },
+    other: { reducedMotion: true }
+  });
   cases.push({
     name: `co-op mixed ${seed}`,
     opts: { seed, diff: 1, room: 4, humans: 2, frames: FRAMES, idle: true, seat: 0,

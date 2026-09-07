@@ -1171,8 +1171,19 @@ function impact(x, y, power, color){
   shake = Math.min(shake + (REDUCED ? power*0.25 : power*1.15), 16);
   rings.push({ x, y, r: 5 + power*1.5, max: 26 + power*11, t: 0,
                life: .3 + power*.035, color: color || "#fff", width: 1.4 + power*.5 });
+  /* Hit-stop is SIMULATION, not decoration: it scales dt for the whole world in
+     simStep. It must therefore happen identically on every machine.
+
+     It used to sit behind `!REDUCED` — the operating system's "reduce motion"
+     setting. Two people whose machines disagreed about that ran the same frames
+     with different timesteps, so their worlds parted company on the first heavy
+     hit and the relay stopped the match a few seconds in. Nothing about the
+     network was wrong; the accessibility preference was in the simulation.
+
+     Anything below this line that only affects what is DRAWN may still answer
+     to REDUCED, because no other client depends on it. */
+  if (power >= 3) hitStop = Math.max(hitStop, .035 + power*.007);
   if (power >= 3 && !REDUCED){
-    hitStop = Math.max(hitStop, .035 + power*.007);
     flash = Math.max(flash, Math.min(.42, power*.05));
     flashColor = color || "#fff";
   }
@@ -1610,6 +1621,25 @@ function breakProp(d){
 }
 
 /* ---------------------------------------------------------- draw */
+/* The vignette never changes, so it is built once and blitted after that.
+
+   It used to build a radial gradient and fill the whole canvas EVERY frame,
+   which is a full-screen gradient rasterisation sixty times a second to draw
+   something that is identical every time. Cached, it costs one image blit.
+   Rebuilt only if the arena is resized. */
+let vignetteCv = null, vignetteW = 0, vignetteH = 0;
+function vignette(){
+  if (vignetteCv && vignetteW === W && vignetteH === H) return vignetteCv;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const g = cv.getContext("2d");
+  const vg = g.createRadialGradient(W/2, H/2, H*0.32, W/2, H/2, H*0.92);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(0,0,0,.72)");
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  vignetteCv = cv; vignetteW = W; vignetteH = H;
+  return cv;
+}
 function draw(){
   // --- light layer: fade what was there, then draw this frame's magic on top
   fxc.globalCompositeOperation = "destination-out";
@@ -1683,11 +1713,7 @@ function draw(){
   ctx.drawImage(fx, 0, 0);
   ctx.globalCompositeOperation = "source-over";
 
-  // vignette
-  const vg = ctx.createRadialGradient(W/2,H/2,H*0.32,W/2,H/2,H*0.92);
-  vg.addColorStop(0,"rgba(0,0,0,0)");
-  vg.addColorStop(1,"rgba(0,0,0,.72)");
-  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  ctx.drawImage(vignette(), 0, 0);
   ctx.restore();
 
   // Fog of war. Not a vignette: the lit region is the sight radius MINUS the
@@ -2530,6 +2556,7 @@ function drawBeam(w){
 const CAPE_NODES = 8;
 const CAPE_SEG_MIN = 5.0, CAPE_SEG_MAX = 6.8;   // per-segment length, low rank to high
 const CAPE_RUNGS = 14;                          // rungs on the cloak ladder (src/account.js)
+const CAPE_LAG = 3.2;                           // how far the collar may trail the wizard, in px
 
 /* The cape bends by a bounded amount per segment and no more. This is the
    single rule that keeps it from tying itself in knots.
@@ -2655,18 +2682,28 @@ function capeSeg(rung){
    it is clamped, so the curve can never kink or double back. There is nothing
    left for a solver to fight over.
 
-   Each angle eases towards the one ahead of it with a little inertia, which is
-   what makes the cape lag and then whip round when the wizard turns, and a slow
-   travelling wave rides down the length so it is never quite still.
+   Each angle eases towards the one ahead of it with a little inertia, and it
+   reads that neighbour as it was LAST frame rather than as it has just become.
+   That one detail is what gives the cloth overlapping action: a turn at the
+   shoulders takes several frames to reach the hem instead of snapping the whole
+   chain into line at once, so the cape trails, overshoots and settles from the
+   collar down. Segments also get looser and heavier towards the tip, and the
+   collar itself lags a little behind the wizard, so the cloth is never quite
+   done moving when the wizard is.
 
    VIEW ONLY. No seeded RNG, nothing read back by the simulation, absent from
    RPW.hash(); stepped from real elapsed time in pump(), not the fixed
    simulation step. */
 function makeCape(w, seg){
   const back = w.facing + Math.PI;
-  const c = { seg, a: [], va: [], p: [] };
-  for (let i = 0; i < CAPE_NODES - 1; i++){ c.a.push(back); c.va.push(0); }
-  layCape(c, w.x - Math.cos(w.facing) * 3, w.y - Math.sin(w.facing) * 3);
+  // `prev` is last frame's angles, `ax/ay` the lagging collar, `hang` the eased
+  // rest direction — the three pieces of state that make the cloth overlap
+  // itself rather than move as one board.
+  const c = { seg, a: [], va: [], prev: [], p: [],
+              ax: w.x - Math.cos(w.facing) * 3, ay: w.y - Math.sin(w.facing) * 3,
+              hang: back };
+  for (let i = 0; i < CAPE_NODES - 1; i++){ c.a.push(back); c.va.push(0); c.prev.push(back); }
+  layCape(c, c.ax, c.ay);
   return c;
 }
 // walk the angles out into points
@@ -2701,42 +2738,70 @@ function updateCapes(dt){
     let c = w.cape;
     if (!c || c.seg !== seg || c.a.length !== CAPE_NODES - 1) c = w.cape = makeCape(w, seg);
 
+    /* The collar lags. It chases the wizard's shoulders rather than being nailed
+       to them, so a dash pulls the cloth taut behind and a stop lets it catch
+       up — but the lag is clamped to a few pixels, because a cape that comes
+       off its owner's back is a bug, not follow-through. */
+    const chase = 1 - Math.pow(0.0016, step);
+    c.ax += (ax - c.ax) * chase;
+    c.ay += (ay - c.ay) * chase;
+    const offx = c.ax - ax, offy = c.ay - ay;
+    const off = Math.hypot(offx, offy);
+    if (off > CAPE_LAG){ c.ax = ax + offx / off * CAPE_LAG; c.ay = ay + offy / off * CAPE_LAG; }
+
     // Which way the cloth hangs when nothing is happening: straight out behind.
     // If the wizard is moving, it trails the direction of travel instead — that
-    // is the difference between a cape and a weather vane.
+    // is the difference between a cape and a weather vane. Eased, so a turn
+    // arrives at the collar as a sweep rather than a jump.
     const sp = Math.hypot(w.vx || 0, w.vy || 0);
-    let hang = w.facing + Math.PI;
+    let want0 = w.facing + Math.PI;
     if (sp > 12){
       const drift = Math.atan2(-(w.vy || 0), -(w.vx || 0));
-      hang += angleTo(hang, drift) * Math.min(1, sp / 150) * 0.85;
+      want0 += angleTo(want0, drift) * Math.min(1, sp / 150) * 0.85;
     }
+    c.hang += angleTo(c.hang, want0) * (1 - Math.pow(0.02, step));
 
     const phase = w.seat * 1.7;
     const gust = Math.min(1, sp / 170);
-    // how hard each segment is pulled into line with the one ahead of it, and
-    // how much of last frame's swing it keeps
-    const stiff = 26, damp = Math.pow(0.86, step * 60);
+
+    // last frame's angles are what this frame's segments follow
+    for (let i = 0; i < c.a.length; i++) c.prev[i] = c.a[i];
 
     for (let i = 0; i < c.a.length; i++){
       const k = i / Math.max(1, c.a.length - 1);
+      /* Looser and heavier towards the hem. The collar is stiff and answers the
+         wizard almost at once; the tip is slack, keeps more of its swing, and
+         is still settling when everything above it has stopped. That spread is
+         the whole of the effect — one stiffness for the whole chain is what
+         made it read as a board. */
+      const stiff = 30 - 17 * k;
+      const damp = Math.pow(0.895 - 0.075 * k, step * 60);
       // the wave lives in the TARGET, never in the positions — a wave applied
       // to points can kink the curve, a wave applied to a target cannot
       const wave = Math.sin(t * 2.1 - i * 0.62 + phase) * (0.05 + 0.10 * k) * (0.5 + gust);
-      const lead = i === 0 ? hang : c.a[i - 1];
+      const lead = i === 0 ? c.hang : c.prev[i - 1];
       const want = lead + wave;
 
       c.va[i] = (c.va[i] + angleTo(c.a[i], want) * stiff * step) * damp;
       c.a[i] += c.va[i] * step;
+    }
 
-      // and the rule that makes folding impossible
+    /* The rule that makes folding impossible, applied AFTER the chain has moved
+       and against each segment's neighbour as it now is. Clamping inside the
+       loop above would have compared against last frame's neighbour, which is
+       not the curve anybody actually sees. Front to back, so each clamp is
+       measured against an angle that is already final. */
+    for (let i = 0; i < c.a.length; i++){
+      const lead = i === 0 ? c.hang : c.a[i - 1];
       const rel = angleTo(lead, c.a[i]);
       const cap = Math.min(CAPE_MAX_TURN, seg / capeHalf(i + 1, last, wide));
       if (rel > cap){ c.a[i] = lead + cap; c.va[i] *= 0.4; }
       else if (rel < -cap){ c.a[i] = lead - cap; c.va[i] *= 0.4; }
     }
-    layCape(c, ax, ay);
+    layCape(c, c.ax, c.ay);
   }
 }
+
 
 // Drawn in the wizard's translated (but unrotated) space, so the cloth keeps
 // its own world-space shape instead of turning rigidly with the hat.

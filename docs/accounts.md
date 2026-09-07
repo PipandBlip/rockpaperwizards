@@ -590,6 +590,57 @@ Trees, statues and pillars are baked in at map time and skipped by the per-frame
 draw loop. Only things that can move or break are drawn each frame. The brazier
 flame flickers off `performance.now()` — view time — for the same reason.
 
+## The desync that was an accessibility setting
+
+Two friends could not finish a match: it fell out of sync about seven seconds
+in, every time. Nothing was wrong with the network.
+
+`impact()` set **hit-stop** — a brief slow-down on a heavy hit — behind
+`!REDUCED`:
+
+```js
+if (power >= 3 && !REDUCED){          // was
+  hitStop = Math.max(hitStop, .035 + power*.007);
+  ...
+}
+```
+
+`REDUCED` is `prefers-reduced-motion`, an operating-system accessibility
+preference. And hit-stop is not decoration: `simStep` reads it and scales `dt`
+for the entire world.
+
+```js
+if (hitStop > 0){ hitStop -= dt; dt *= 0.14; }
+```
+
+So two players whose machines disagreed about "reduce motion" ran the same
+frames with **different timesteps**. On the first hit of power 3 or more their
+worlds parted company, and the relay — correctly — stopped the match. One
+player with the setting on was enough to make the game unplayable for both, and
+the two of them would never have found out why.
+
+The fix is one line: hit-stop happens for everyone. The screen shake and the
+colour flash, which are the things reduce-motion is actually for, still answer to
+it, because nothing outside that client depends on them.
+
+It shipped in the very first commit, and nothing in the repo could have caught
+it: every determinism run booted both halves of the comparison the same way, so
+`REDUCED` was equal on both sides by construction. `tools/determinism.js` now
+boots one half with the preference on and the other with it off and requires the
+same world, which fails at frame 180 with the original line restored.
+
+That case is deliberately **bot-driven with no scripted keypresses**. This rig
+wires `Math.random` to the same generator its input script draws from, so a run
+with fewer view-only particles gets different keys pressed — a scripted version
+of this test fails for a reason that has nothing to do with the game. Idle, the
+only thing that can differ is the simulation.
+
+**The general rule this is an instance of:** anything the simulation reads must
+come from the seed or the input stream. Not the clock, not the window size, not
+`Math.random`, and not a per-machine preference. View-only code may read all of
+them freely — that is what `vrand()` is for — but the moment a value crosses
+into `simStep`, it has to be the same on every machine or the match is over.
+
 ## Keeping multiplayer at full speed
 
 Green reported the game feeling laggy online. It was, and not in the way it

@@ -108,4 +108,77 @@ test("no cloth ever folds through itself, on any rung", () => {
   }
 });
 
+console.log("\noverlapping action");
+
+/* Drive a wizard hard one way, then hard the other, and watch where each joint
+   is sideways. In cloth that overlaps itself every joint reaches its extreme
+   LATER than the one above it — a staircase of peak times running from collar
+   to hem. Cloth that moves as one board does not.
+
+   The old chain read each segment's neighbour as it had ALREADY been updated
+   this frame, so a turn crossed the whole length in one step and the top of the
+   cape was effectively nailed to the wizard: joints 1 and 2 peaked at frames 8
+   and 9 and stopped dead, while the tail was still swinging forty frames later.
+   Reading last frame's neighbour instead is what spreads it out. */
+function whipTrace(level, frames = 150){
+  const rig = boot({ seed: 5, diff: 0, room: 2, humans: 1, opts: { mapPreset: "arena" } });
+  rig.RPW.startMatch({ mode: "match", seed: 5, difficulty: 0, total: 2, humans: 1,
+                       seat: 0, levels: [level, level], opts: { mapPreset: "arena" } });
+  for (let i = 0; i < 200; i++) rig.step();       // into the fight
+  rig.fire("keydown", "d");
+  for (let i = 0; i < 70; i++) rig.step();        // run one way
+  rig.fire("keyup", "d"); rig.fire("keydown", "a");
+  const trace = [];
+  for (let i = 0; i < frames; i++){
+    rig.step();
+    const c = rig.RPW.capeOf(0);
+    if (c) trace.push({ lat: c.nodes.map(n => n.lateral), turns: c.turns });
+  }
+  rig.fire("keyup", "a");
+  return trace;
+}
+function peaksOf(trace){
+  const N = trace[0].lat.length, out = [];
+  for (let n = 0; n < N; n++){
+    let at = 0, best = -Infinity;
+    trace.forEach((s, i) => { const v = Math.abs(s.lat[n]); if (v > best){ best = v; at = i; } });
+    out.push({ node: n, at, swing: +best.toFixed(2) });
+  }
+  return out;
+}
+
+test("the collar itself moves — it is not nailed to the wizard", () => {
+  const peaks = peaksOf(whipTrace(11));
+  assert.ok(peaks[0].swing > 0.4,
+    "the cloth's root swung " + peaks[0].swing + "px — it is pinned to the wizard, " +
+    "so the top of the cape can only ever be as rigid as the body");
+});
+
+test("and the swing takes real time to travel down the cloth", () => {
+  /* The tell is the TOP of the chain, not the bottom. A cape pinned at the
+     collar still flaps at the hem, so a lagging tip proves nothing; what says
+     the cloth moves as one board is the upper joints all reaching their extreme
+     within a frame or two of each other. */
+  const peaks = peaksOf(whipTrace(11));
+  const spread = peaks[4].at - peaks[1].at;
+  assert.ok(spread >= 8,
+    `joints 1 to 4 peak at frames ${peaks.slice(1, 5).map(p => p.at).join(", ")} — ` +
+    "the top of the cape is swinging as one piece");
+});
+
+test("and every joint still swings further than the one above it", () => {
+  const peaks = peaksOf(whipTrace(11));
+  for (let i = 2; i < peaks.length; i++)
+    assert.ok(peaks[i].swing >= peaks[i - 1].swing - 0.01,
+      `joint ${i} swings ${peaks[i].swing} but joint ${i - 1} swings ${peaks[i - 1].swing}`);
+});
+
+test("and none of it folds through itself while whipping", () => {
+  for (const lv of [1, 8, 14]){
+    for (const s of whipTrace(lv, 110))
+      for (const t of s.turns)
+        assert.ok(Math.abs(t) <= 0.6, `level ${lv} kinked by ${t} mid-whip`);
+  }
+});
+
 console.log(`\n${pass} passing`);
