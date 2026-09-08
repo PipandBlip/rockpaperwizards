@@ -17,7 +17,11 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const code = fs.readFileSync(path.join(__dirname, "..", "src", "game.js"), "utf8");
+/* RPW_GAME_SRC points the rig at a different copy of the game — the only use is
+   booting an OLD build beside the current one to compare them frame for frame,
+   which is the only honest way to answer "does this look less stiff than it
+   did". Unset, it is exactly the file the site ships. */
+const code = fs.readFileSync(process.env.RPW_GAME_SRC || path.join(__dirname, "..", "src", "game.js"), "utf8");
 /* The account script comes with it. Without RPWA there is no cloak ladder, so
    every cape in the rig sat on rung 1 and none of the higher rungs' cloth,
    seams or tail shapes were ever executed — a crash from level 8 up could pass

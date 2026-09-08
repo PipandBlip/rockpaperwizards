@@ -10,6 +10,8 @@
     "test:input": "node tools/input-test.js",
     "test:coop": "node tools/coop-test.js",
     "test:cape": "node tools/cape-test.js",
+    "test:feel": "node tools/cape-feel.js",
+    "test:strip": "node tools/cape-strip.js",
     "test:relay": "node server/test-relay.js",
     "test:desync": "node tools/desync-parts-test.js",
     "test:golden": "node tools/golden.js tools/golden.expected.txt",

@@ -908,6 +908,100 @@ worker/node parity — and the whole loop was then driven in a real browser unde
 the real CSP with a real relay: two clients, one of them lying about its spells
 from frame 120, and the honest client read back exactly the sentence above.
 
+## The cape was stiff because I got a damping ratio backwards
+
+The capes moved. They lagged, every joint peaked later than the one above it,
+and `tools/cape-test.js` said so in four different ways. They still read as a
+plank on a slow hinge, and the reason was one number with its sign of intent
+reversed.
+
+Each joint is a damped spring towards where its neighbour points. Two numbers
+decide how that reads: the spring rate, and the **damping ratio** — how much of
+a swing survives to become the next swing. Below 1 a joint overshoots its rest
+angle and comes back. At 1 and above it can only creep towards rest and stop.
+
+The intent was "looser towards the hem". What got written was a spring rate
+falling from 30 to 13 — right — and a per-frame damping multiplier falling from
+0.895 to 0.82, which *raises* the damping. Worked back into ratios:
+
+| down the cape | spring | damping ratio |            |
+|---------------|--------|---------------|------------|
+| collar        | 30.0   | 0.61          | underdamped |
+| a quarter     | 25.8   | 0.78          | underdamped |
+| halfway       | 21.5   | 0.99          | on the edge |
+| three-quarter | 17.3   | 1.27          | **cannot overshoot** |
+| the hem       | 13.0   | 1.65          | **cannot overshoot** |
+
+Everything past the middle of every cape in the game was mathematically
+incapable of follow-through. The floppiest-looking part was the one part that
+could not swing past anything, and no amount of driving it harder would have
+changed that.
+
+The damping ratio is now stated as a ratio (`CAPE_ZETA_TOP` 0.88 →
+`CAPE_ZETA_TIP` 0.26) instead of falling out of a per-frame multiplier, because
+a number nobody can read is a number nobody checks.
+
+### And it was never being thrown
+
+The chain followed a rest direction derived from facing and speed. That lets it
+trail; it does not let it be thrown. Every whip and flare a real cape has comes
+from its pivot *accelerating* underneath it — a stop throws the hem forward
+past the body, a hard turn throws it wide — and none of that was modelled.
+
+Now the collar's acceleration is felt as a torque about each joint (the
+component across the segment throws it, the component along it does nothing),
+weighted towards the hem. Acceleration is taken as the gap between the wizard's
+velocity and a smoothed copy of it, which is a usable signal without
+differencing a position twice; it is capped, because a respawn is a teleport and
+not a sprint.
+
+### What the numbers say now
+
+|                                  | before | after |
+|----------------------------------|--------|-------|
+| total bend swing through a whip  | 0.26 rad (15°) | 1.22 rad (70°) |
+| per-joint bend range, collar→hem | flat ~0.25 | 0.17 → 0.43 |
+| hem joints able to overshoot     | none | all |
+| cost, six wizards at rung 14     | 0.78 ms/frame | 0.93 ms/frame |
+
+The first row is the one that matters. A cape whose joints all move while their
+SUM stays fixed is holding one shape and sliding it around — 0.26 rad of total
+variation across six joints is one joint's worth, spread thin. That is what a
+plank looks like from the inside.
+
+### Two things the test suite could not see
+
+**Lag is not fluidity.** Every existing cape test asked about lag, which a plank
+on a hinge also has. The four added in "cloth, not a hinge" ask about the rest:
+that the damping ratio is under 1 everywhere (read from the source the rig
+actually booted — an earlier version of this test read `src/game.js` off disk
+and so cheerfully passed the old build), that the total bend genuinely varies,
+that neighbouring joints stay part of one curve rather than fighting each other,
+and that there is life in it while the wizard stands still. Three of the four
+fail on the shipped build. The fourth is honestly a guard, not a regression
+test, and is labelled as one.
+
+**A fold is not the only way to ruin an outline.** The first attempt at this
+used eleven nodes of 3.5px instead of eight of 5–6.8px, for a smoother curve.
+The hems are drawn by offsetting the spine sideways by the cloth's half-width,
+and the old anti-fold rule capped each joint's bend so the spine's radius never
+fell below that half-width. That is exactly the limit at which the edges do not
+*cross* — and also exactly the limit at which the inside edge's radius reaches
+*zero*, so every point along it lands on the same spot. Shorter segments walked
+right up to it. The cape was drawn with a bite taken out of its collar, and
+every test passed, because they all asked about crossing.
+
+The rule now keeps a real radius on the inside (`CAPE_FOLD_MARGIN`), the
+segments went back to a length that leaves it headroom, and the thing that
+catches it is a spacing measurement: an inside edge that is still a curve keeps
+a real fraction of a segment between its points, and a collapsed one goes to
+zero. Both new tests fail on the version that drew the bite.
+
+`tools/cape-feel.js` is the instrument all of this was read off; `npm run
+test:feel` prints it. `tools/cape-strip.js` draws the silhouette frame by frame
+with the old build beside the new one, because the numbers above were what
+convinced me the last version was fine.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile

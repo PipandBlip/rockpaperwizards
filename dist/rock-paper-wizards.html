@@ -3504,10 +3504,48 @@ function drawBeam(w){
    and a distance constraint stops the cloth stretching. Turning or dashing
    therefore whips it out sideways, and standing still leaves it breathing. */
 
-const CAPE_NODES = 8;
-const CAPE_SEG_MIN = 5.0, CAPE_SEG_MAX = 6.8;   // per-segment length, low rank to high
+const CAPE_NODES = 9;
+const CAPE_SEG_MIN = 4.4, CAPE_SEG_MAX = 5.95;  // per-segment length, low rank to high
 const CAPE_RUNGS = 14;                          // rungs on the cloak ladder (src/account.js)
-const CAPE_LAG = 3.2;                           // how far the collar may trail the wizard, in px
+const CAPE_LAG = 5.0;                           // how far the collar may trail the wizard, in px
+
+/* ------------------------------------------------------------ how it hangs
+
+   Each joint is a damped spring towards where its neighbour points. Two numbers
+   decide whether that reads as cloth or as a plank: the spring rate, and the
+   DAMPING RATIO — how much of a swing survives to become the next swing.
+
+   Below 1 the joint overshoots its rest angle and comes back, once for each
+   swing; at 1 and above it can only creep towards rest and stop. That is the
+   whole difference between follow-through and sluggishness, and it is possible
+   to get it exactly backwards while believing you have made the hem looser.
+
+   This code did. An earlier version dropped the spring rate towards the hem
+   (right) while also raising the damping (wrong), which put every joint past
+   the halfway point of the cape at a ratio above 1. The tip — the part with
+   the least holding it and the most to say — was the one part of the cape that
+   physically could not swing past anything. It lagged, so it passed a test
+   written about lag, and it still looked like a board.
+
+   So the ratio is now stated directly rather than falling out of a per-frame
+   multiplier, and it FALLS towards the hem: the collar answers the wizard
+   crisply and stops, the hem rings three or four times and is still going when
+   everything above it has settled. */
+const CAPE_STIFF_TOP = 38, CAPE_STIFF_TIP = 11;   // spring rate, collar to hem
+const CAPE_ZETA_TOP  = 0.88, CAPE_ZETA_TIP = 0.26; // damping ratio, collar to hem
+
+/* Cloth does not know where its owner is going; it only feels being dragged.
+   Every whip, flare and settle a real cape has comes from the pivot ACCELERATING
+   under it — a stop throws the hem forward past the body, a hard turn throws it
+   wide. Nothing in this file used to model that: the chain followed a rest
+   direction derived from facing and speed, so it could trail, but it could not
+   be thrown. This is the term that throws it. */
+const CAPE_WOB = 0.05;         // how far the cloth ripples across its width
+const CAPE_WOB_WAVE = 2.3;     // radians of that ripple across the WHOLE length
+const CAPE_WOB_MAX = 1 + CAPE_WOB;  // the widest it can ever be, for the fold rule
+const CAPE_SWING = 0.055;      // how hard the pivot's acceleration is felt
+const CAPE_ACC_MAX = 2600;     // px/s^2 — a respawn is a teleport, not a sprint
+const CAPE_ACC_TAU = 0.075;    // seconds; smooths velocity into a usable acceleration
 
 /* The cape bends by a bounded amount per segment and no more. This is the
    single rule that keeps it from tying itself in knots.
@@ -3524,6 +3562,9 @@ const CAPE_LAG = 3.2;                           // how far the collar may trail 
    a self-intersection is arithmetically impossible. What is left is a smooth
    curve that trails, which is what a cape does. */
 const CAPE_MAX_TURN = 0.26;                     // radians per segment, ~15 degrees
+/* How much radius the INSIDE edge must keep. 1.0 is the crossing limit and also
+   the collapse limit; above it the inner edge stays a curve. */
+const CAPE_FOLD_MARGIN = 1.45;
 
 /* Half the cloth's width at node i.
 
@@ -3537,10 +3578,11 @@ const CAPE_MAX_TURN = 0.26;                     // radians per segment, ~15 degr
 /* Half the cloth's width at node i. `flare` widens the SKIRT only — it ramps in
    over the bottom third — so a high rung reads as a broader hem rather than a
    uniformly fatter cape, which is what the reference sheet does as it climbs. */
-function capeHalf(i, last, wide, flare){
+function capeHalf(i, last, wide, flare, wob){
   const k = i / last;
   let w = (8.6 + k * 10.4) * (1 - Math.pow(k, 10) * 0.16);
   if (flare) w *= 1 + flare * Math.pow(Math.max(0, (k - 0.34) / 0.66), 1.6);
+  if (wob && wob[i] != null) w *= wob[i];
   return w * (wide == null ? 1 : wide);
 }
 /* Darken or lighten a #rrggbb by a fraction. The cape uses it to shade its own
@@ -3650,22 +3692,31 @@ function makeCape(w, seg){
   // `prev` is last frame's angles, `ax/ay` the lagging collar, `hang` the eased
   // rest direction — the three pieces of state that make the cloth overlap
   // itself rather than move as one board.
-  const c = { seg, a: [], va: [], prev: [], p: [],
+  const c = { seg, a: [], va: [], prev: [], p: [], wob: [],
               ax: w.x - Math.cos(w.facing) * 3, ay: w.y - Math.sin(w.facing) * 3,
-              hang: back };
+              hang: back, svx: w.vx || 0, svy: w.vy || 0 };
   for (let i = 0; i < CAPE_NODES - 1; i++){ c.a.push(back); c.va.push(0); c.prev.push(back); }
+  for (let i = 0; i < CAPE_NODES; i++) c.wob.push(1);
   layCape(c, c.ax, c.ay);
   return c;
 }
-// walk the angles out into points
+/* Walk the angles out into points, writing into the SAME point objects every
+   frame. Rebuilding the list allocated one small object per node per wizard per
+   frame — sixty-odd short-lived objects a frame at a full table. In the headless
+   rig the saving is inside the noise; this is here because allocation churn in
+   a per-frame path is worth not having, not because it was measured to matter.
+   Nothing outside this function keeps a reference to these points beyond the
+   frame it reads them in. */
 function layCape(c, ax, ay){
-  c.p.length = 0;
+  const n = c.a.length + 1;
+  while (c.p.length < n) c.p.push({ x: 0, y: 0 });
+  if (c.p.length > n) c.p.length = n;
   let x = ax, y = ay;
-  c.p.push({ x, y });
+  c.p[0].x = x; c.p[0].y = y;
   for (let i = 0; i < c.a.length; i++){
     x += Math.cos(c.a[i]) * c.seg;
     y += Math.sin(c.a[i]) * c.seg;
-    c.p.push({ x, y });
+    c.p[i + 1].x = x; c.p[i + 1].y = y;
   }
 }
 // shortest signed way round from a to b
@@ -3682,7 +3733,8 @@ function updateCapes(dt){
   const last = CAPE_NODES - 1;
 
   for (const w of wizards){
-    const rung = capeMarks(w).at;
+    const marks = capeMarks(w);
+    const rung = marks.at, flare = marks.flare || 0;
     const seg = capeSeg(rung), wide = capeWide(rung);
     const ax = w.x - Math.cos(w.facing) * 3, ay = w.y - Math.sin(w.facing) * 3;
 
@@ -3715,25 +3767,51 @@ function updateCapes(dt){
     const phase = w.seat * 1.7;
     const gust = Math.min(1, sp / 170);
 
+    /* What the cloth actually feels: not where the wizard is going, but how
+       hard the collar is being yanked. Smoothing the velocity and taking what
+       the raw velocity is doing AHEAD of that smoothed value is an acceleration
+       without the noise of differencing a position twice. */
+    const vx = w.vx || 0, vy = w.vy || 0;
+    const ease = 1 - Math.exp(-step / CAPE_ACC_TAU);
+    c.svx += (vx - c.svx) * ease;
+    c.svy += (vy - c.svy) * ease;
+    let accx = (vx - c.svx) / CAPE_ACC_TAU, accy = (vy - c.svy) / CAPE_ACC_TAU;
+    const am = Math.hypot(accx, accy);
+    // A respawn moves a wizard across the arena in one frame. That is a
+    // teleport, not a sprint, and a cape that treats it as one turns inside out.
+    if (am > CAPE_ACC_MAX){ accx = accx / am * CAPE_ACC_MAX; accy = accy / am * CAPE_ACC_MAX; }
+
     // last frame's angles are what this frame's segments follow
     for (let i = 0; i < c.a.length; i++) c.prev[i] = c.a[i];
 
     for (let i = 0; i < c.a.length; i++){
       const k = i / Math.max(1, c.a.length - 1);
-      /* Looser and heavier towards the hem. The collar is stiff and answers the
-         wizard almost at once; the tip is slack, keeps more of its swing, and
-         is still settling when everything above it has stopped. That spread is
-         the whole of the effect — one stiffness for the whole chain is what
-         made it read as a board. */
-      const stiff = 30 - 17 * k;
-      const damp = Math.pow(0.895 - 0.075 * k, step * 60);
+      /* Looser towards the hem — and looser means BOTH numbers falling. The
+         collar is stiff and well damped, so it answers the wizard and stops;
+         the hem is slack and barely damped, so it swings past and comes back
+         several times. Raising the damping towards the hem, as this once did,
+         produces the opposite of slack. */
+      const stiff = CAPE_STIFF_TOP + (CAPE_STIFF_TIP - CAPE_STIFF_TOP) * k;
+      const zeta  = CAPE_ZETA_TOP  + (CAPE_ZETA_TIP  - CAPE_ZETA_TOP)  * k;
+      const damp  = Math.exp(-2 * zeta * Math.sqrt(stiff) * step);
       // the wave lives in the TARGET, never in the positions — a wave applied
-      // to points can kink the curve, a wave applied to a target cannot
-      const wave = Math.sin(t * 2.1 - i * 0.62 + phase) * (0.05 + 0.10 * k) * (0.5 + gust);
+      // to points can kink the curve, a wave applied to a target cannot. Two
+      // frequencies that do not divide into one another, so the idle drift
+      // never falls into a visible beat the way a single sine does.
+      const wave = (Math.sin(t * 2.1  - i * 0.42 + phase) * 0.63 +
+                    Math.sin(t * 3.37 - i * 0.23 + phase * 1.7) * 0.37)
+                   * (0.045 + 0.115 * k) * (0.55 + gust);
       const lead = i === 0 ? c.hang : c.prev[i - 1];
       const want = lead + wave;
 
-      c.va[i] = (c.va[i] + angleTo(c.a[i], want) * stiff * step) * damp;
+      c.va[i] += angleTo(c.a[i], want) * stiff * step;
+      /* The pivot's acceleration, felt as a torque about this joint: a segment
+         pointing one way is thrown by the component of that acceleration across
+         it, and not at all by the component along it. Weighted towards the hem,
+         which has the most cloth below it to be thrown. */
+      const nx = -Math.sin(c.a[i]), ny = Math.cos(c.a[i]);
+      c.va[i] -= (accx * nx + accy * ny) / seg * CAPE_SWING * (0.25 + 0.75 * k) * step;
+      c.va[i] *= damp;
       c.a[i] += c.va[i] * step;
     }
 
@@ -3745,9 +3823,44 @@ function updateCapes(dt){
     for (let i = 0; i < c.a.length; i++){
       const lead = i === 0 ? c.hang : c.a[i - 1];
       const rel = angleTo(lead, c.a[i]);
-      const cap = Math.min(CAPE_MAX_TURN, seg / capeHalf(i + 1, last, wide));
-      if (rel > cap){ c.a[i] = lead + cap; c.va[i] *= 0.4; }
-      else if (rel < -cap){ c.a[i] = lead - cap; c.va[i] *= 0.4; }
+      /* Measured against the widest this cloth can ever be — the rung's flare
+         included, and the ripple at its crest. The flare was missing here: a
+         high rung is drawn wider at the hem than this rule assumed, so the one
+         thing that makes folding arithmetically impossible was being computed
+         for a narrower cape than the one on screen.
+
+         The MARGIN matters as much as the rule. Bending until the spine's
+         radius merely equals the cloth's half-width is the limit at which the
+         edges do not CROSS — and it is also the point at which the inside edge
+         has a radius of zero, so every point along it lands on the same spot.
+         The result is not a fold; it is a bite taken out of the cloth, and it
+         passes any test that asks about crossing. Keep a real radius on the
+         inside and the outline stays an outline. */
+      const cap = Math.min(CAPE_MAX_TURN,
+                           seg / (capeHalf(i + 1, last, wide, flare) * CAPE_WOB_MAX * CAPE_FOLD_MARGIN));
+      /* Correct the position always — that is the no-fold guarantee and it is
+         not negotiable. But only take the velocity that is still pushing INTO
+         the limit; a joint already swinging back off the cap is doing exactly
+         what cloth does, and the old blanket cut threw that away too. */
+      if (rel > cap){ c.a[i] = lead + cap; if (c.va[i] > 0) c.va[i] *= -0.18; }
+      else if (rel < -cap){ c.a[i] = lead - cap; if (c.va[i] < 0) c.va[i] *= -0.18; }
+    }
+
+    /* A hem that keeps one exact width is a cut-out. This ripples the cloth
+       ACROSS its width as well as along it — a few percent, travelling down —
+       so the silhouette breathes instead of sliding about rigidly. It is a
+       drawing weight, not a position: it cannot kink the spine or fold it.
+
+       The WAVELENGTH is the whole point and the first attempt got it wrong. At
+       0.74 radians of phase per node, neighbouring nodes were near opposite
+       parts of the wave, so the cloth came out a few percent wider, narrower,
+       wider, narrower down its length — a scalloped polygon rather than a
+       breathing edge, and clearly visible at the size this is drawn. Under
+       half a wave over the whole cape is what reads as cloth. */
+    const wobStep = CAPE_WOB_WAVE / Math.max(1, c.wob.length - 1);
+    for (let i = 0; i < c.wob.length; i++){
+      const k = i / Math.max(1, c.wob.length - 1);
+      c.wob[i] = 1 + Math.sin(t * 2.6 - i * wobStep + phase) * CAPE_WOB * k * (0.6 + 0.5 * gust);
     }
     layCape(c, c.ax, c.ay);
   }
@@ -3796,7 +3909,7 @@ function drawCape(w){
      Every point is built from the tail's own direction and normal, so the shape
      travels and swings with the cloth instead of being painted on flat. */
   const tailPts = (f, kind) => {
-    const u = dirAt(last), h = capeHalf(last, last, wide, flare) * f;
+    const u = dirAt(last), h = capeHalf(last, last, wide, flare, c.wob) * f;
     const T = P[last], nx = -u.y, ny = u.x;
     const at = (along, side) => ({ x: T.x + u.x * h * along + nx * h * side,
                                    y: T.y + u.y * h * along + ny * h * side });
@@ -3813,7 +3926,7 @@ function drawCape(w){
   const edges = f => {
     const L = [], R = [];
     for (let i = 0; i <= last; i++){
-      const u = dirAt(i), h = capeHalf(i, last, wide, flare) * f;
+      const u = dirAt(i), h = capeHalf(i, last, wide, flare, c.wob) * f;
       L.push({ x: P[i].x - u.y * h, y: P[i].y + u.x * h });
       R.push({ x: P[i].x + u.y * h, y: P[i].y - u.x * h });
     }
@@ -3917,7 +4030,7 @@ function drawCape(w){
       const t = rank.seams === 1 ? 0 : (k / (rank.seams - 1)) * 2 - 1;   // -1..1
       ctx.beginPath();
       for (let i = 0; i <= last; i++){
-        const u = dirAt(i), h = capeHalf(i, last, wide, flare) * t * 0.82;
+        const u = dirAt(i), h = capeHalf(i, last, wide, flare, c.wob) * t * 0.82;
         const x = P[i].x - u.y * h, y = P[i].y + u.x * h;
         if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
       }
@@ -5808,7 +5921,8 @@ window.RPW = {
     };
     const L = [], R = [];
     for (let i = 0; i <= last; i++){
-      const u = dirAt(i), h = capeHalf(i, last, capeWide(capeMarks(w).at));
+      const u = dirAt(i), h = capeHalf(i, last, capeWide(capeMarks(w).at),
+                                       capeMarks(w).flare || 0, c.wob);
       L.push(rel({ x: P[i].x - u.y * h, y: P[i].y + u.x * h }));
       R.push(rel({ x: P[i].x + u.y * h, y: P[i].y - u.x * h }));
     }
