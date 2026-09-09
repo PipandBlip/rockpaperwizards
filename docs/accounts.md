@@ -1002,6 +1002,106 @@ test:feel` prints it. `tools/cape-strip.js` draws the silhouette frame by frame
 with the old build beside the new one, because the numbers above were what
 convinced me the last version was fine.
 
+## Playing it on a phone
+
+A phone opening the site now gets thumb sticks; a desktop gets exactly what it
+always got. The switch is `pointer: coarse` **and** a non-zero
+`maxTouchPoints`, overridable with `?touch=1` or `?touch=0` — detection is a
+guess, and a guess you cannot override is a bug report nobody can act on. On a
+desktop nothing is created, no pointer listener is registered, `drawPad()`
+returns on its first line, and no CSS rule below `html.touch` can reach the
+page.
+
+### The controls are the keyboard, wearing different clothes
+
+The obvious mobile port is a grid of buttons. Six 48px targets under one thumb
+is how a phone player loses every duel to a laptop.
+
+So the right thumb gets a **stick**, and the six spells sit in sectors around
+it, arranged to copy the keyboard exactly — y u i across the top, h j k across
+the bottom — so learning one teaches the other:
+
+              Spark      Rive     Hexstone          y   u   i
+                   \      |      /
+                    \     |     /
+              Ward ——     ●     —— Grasp            h   j   k
+                          |
+                        Beam
+
+Push and let go quickly and you get a quick cast; push and hold and it charges,
+firing when you let the stick go.
+
+That is not a special case anybody had to write. **Engaging a sector presses
+that spell's key and releasing lifts it**, so a flick is a short hold and a hold
+is a long one, and `applyMask()`'s existing press-edge/release-edge handling
+does the rest. Which is the whole point of the design:
+
+- Touch sets the same `keys[]` and `tapped[]` entries a keyboard sets.
+- `localMask()` reads them the way it always has.
+- The twelve-bit mask that goes on the wire is **indistinguishable** from a
+  desktop player's.
+
+So the simulation, the netcode and the relay never learn that phones exist,
+determinism is untouched, and a phone can duel a laptop. The input mask being
+purely digital — eight-way movement, six spell bits, dash, target cycle, and no
+aim angle anywhere, because aiming is automatic — is what made that possible.
+An analog aim would have needed a wider mask and a protocol change.
+
+Two details worth keeping:
+
+- **The spell locks once the stick engages.** Letting the sector follow the
+  thumb sounds helpful and is not: sliding across a boundary mid-charge would
+  fire the spell you were charging and begin one you never asked for, which
+  reads as the game casting at random. One push, one spell.
+- **The charge ring tells the truth.** Beam and Grasp have `maxChg: 0` — Beam
+  is a channel you hold open, Grasp is something you are carrying. Neither gets
+  a charge sweep it does not have; they get a breathing ring instead. Drawing a
+  progress bar for a quantity that does not exist is inventing a number.
+
+Dash is a double tap on the movement stick, which dashes the way the stick is
+already pointing — exactly what `tryDash()` reads off the mask. Target cycle and
+pause are the two small buttons.
+
+### Landscape only, and it says so
+
+The arena is 960x620. In portrait that is a strip across the top third of a
+phone, and a player who can see less of the fight than their opponent is not
+playing the same game. Portrait gets a rotate screen instead, and the pad stops
+taking input while it is up.
+
+### Two layout bugs worth remembering
+
+**`display` beats `hidden`.** `.rotate` sets `display:flex`, which outranks the
+UA stylesheet's `[hidden]{display:none}` — so `el.hidden = true` left the rotate
+screen sitting over the game in landscape, blocking every touch, while the
+JavaScript state said it was hidden. The assertions all passed; a screenshot is
+what caught it. This is the second time this exact trap has cost this project a
+working screen — the Rounds and Lives sliders were the first. **Any author rule
+that sets `display` must restate the hidden case.**
+
+**A percentage height inside a percentage height is nothing.** `.stage` had
+`height:100%` and its only child `canvas#game` had `height:100%`: the parent
+asks the child, the child asks the parent, and both settle on zero. The arena
+collapsed to its two border pixels. The stage takes its height from `flex:1`
+with `min-height:0` now.
+
+### What is checked, and where
+
+`tools/touch-test.js` (in `npm test`, no browser) checks the arithmetic that can
+be quietly wrong: every angle maps to exactly one spell, all six own an even
+sixth of the circle, each sector is centred on its own label rather than
+straddling it, the eight directions press the right keys, and no push ever
+presses two opposing keys. It also asserts the headless rig is **not** detected
+as a touch device.
+
+`tools/phone-check.js` (`npm run test:phone`, needs playwright and a served
+copy) drives a real browser with a real touchscreen profile: a desktop context
+gets no pad and no touch class, the arena uses most of the screen, pushing the
+stick moves the right way, holding charges and releasing casts — proven by mana,
+since `cast()` spends `cost * (1 + level)`, so a hold must cost measurably more
+than a flick of the same spell — a double tap dashes, and portrait shows the
+rotate screen and stops accepting input.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile

@@ -453,6 +453,80 @@
   }
   @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important}}
 
+  /* ======================================================= touch controls
+
+     Everything below is inert until the game adds `touch` to <html>. A desktop
+     never gets that class, so none of these rules can reach it — the pad and
+     the rotate screen keep their `hidden` attribute and the layout above is
+     exactly what it always was.
+
+     The pad is DRAWN ON, never clicked. It is pointer-events:none and the
+     sticks are hit-tested in window coordinates by the game, which means a
+     full-screen overlay can sit above the arena without ever swallowing a tap
+     meant for a menu button underneath it. */
+  .pad[hidden]{display:none}
+  .pad{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40}
+  /* `display:flex` here beats the UA stylesheet's [hidden]{display:none}, so
+     setting el.hidden = true would leave this screen sitting over the game in
+     landscape with nothing to say why. The same trap already cost this project
+     the Rounds and Lives sliders once. Any author rule that sets display must
+     restate the hidden case. */
+  .rotate[hidden]{display:none}
+  .rotate{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(70% 70% at 50% 45%, rgba(13,10,24,.96), rgba(6,4,12,.99));
+    text-align:center;padding:24px}
+  .rotate-inner{max-width:22em;display:flex;flex-direction:column;align-items:center;gap:14px}
+  .rotate h2{font-family:var(--serif,serif);font-size:20px;margin:0;color:var(--chalk)}
+  .rotate p{margin:0;font-size:12px;line-height:1.6;color:var(--muted)}
+  /* a phone, turning */
+  .rotate-phone{width:44px;height:72px;border:2px solid var(--muted);border-radius:8px;
+    animation:rotate-hint 2.4s ease-in-out infinite}
+  @keyframes rotate-hint{
+    0%,30%{transform:rotate(0deg)}
+    55%,80%{transform:rotate(-90deg)}
+    100%{transform:rotate(0deg)}
+  }
+
+  /* On a phone the page is the game: no scrolling, no rubber-banding, no
+     double-tap zoom fighting the sticks. */
+  html.touch, html.touch body{height:100%;overflow:hidden;overscroll-behavior:none}
+  html.touch body{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none}
+  /* dvh, so the arena does not sit under the browser's own chrome */
+  html.touch .shell{max-width:none;height:100vh;height:100dvh;gap:2px;padding:2px 4px}
+  html.touch header.crest{display:none}
+  html.touch .roundlabel{margin-top:0}
+
+  /* Fit the arena to the height that is left, so it lands in the middle of the
+     screen with clear gutters either side. That is where the sticks go: on a
+     phone-shaped screen they sit BESIDE the arena rather than on top of it.
+
+     The stage takes its height from `flex`, NOT from height:100%. A percentage
+     height on a flex item whose only child is also height:100% is circular —
+     the child asks the parent, the parent asks the child, and both settle on
+     nothing. That collapsed the whole arena to its two border pixels. */
+  html.touch .stage{flex:1 1 auto;min-height:0;width:auto;align-self:center;
+    display:flex;align-items:center;justify-content:center}
+  html.touch canvas#game{width:auto;height:100%;max-width:100%;object-fit:contain}
+  html.touch .rails{display:none}
+  /* The reference book and the cloak track are a desk-sized read. On a phone
+     the page IS the arena — the menu inside the curtain carries everything a
+     player needs to start a duel. */
+  /* The reference strip names the six spells and their costs. So does the
+     spell stick, in the same colours, without spending a sixth of a phone
+     screen on it. */
+  html.touch details.manual, html.touch .pass, html.touch #book{display:none}
+
+  /* A short landscape screen has no room for the full menu furniture, so the
+     panels scroll inside the arena rather than pushing the page taller. */
+  html.touch .curtain{padding:10px 14px;gap:6px;overflow-y:auto}
+  html.touch .panel{gap:6px}
+
+  /* Landscape is the playable orientation; portrait gets the rotate screen and
+     the pad is pointless there. */
+  @media (orientation:portrait){
+    html.touch .pad{display:none}
+  }
+
 </style>
 </head>
 <body>
@@ -689,6 +763,21 @@
     </div>
   </details>
 </div>
+
+  <!-- Touch controls. Both of these stay hidden and inert unless the game
+       decides it is running on a touch device; a desktop never sees them and
+       never registers a pointer listener. The pad is drawn on, never clicked:
+       it is pointer-events:none and the sticks are hit-tested in window
+       coordinates, so it can never swallow a tap meant for a menu. -->
+  <canvas id="pad" class="pad" hidden aria-hidden="true"></canvas>
+  <div id="rotate" class="rotate" hidden>
+    <div class="rotate-inner">
+      <div class="rotate-phone" aria-hidden="true"></div>
+      <h2>Turn your phone sideways</h2>
+      <p>The arena is wider than it is tall. Hold your phone in landscape and
+         the duel begins.</p>
+    </div>
+  </div>
 
   <script>
 /* Rock, Paper, Wizards — the signed-in wizard.
@@ -5784,6 +5873,7 @@ function pump(now){
   skipped = 0;
   updateCapes(real);
   draw();
+  drawPad();
 }
 function frame(now){
   pump(now);
@@ -5833,6 +5923,326 @@ function desyncNote(d){
   return "What stopped matching: " + list + at + ".";
 }
 
+/* ============================================================ touch controls
+
+   A phone has no keyboard, and this game asks for eight-way movement, six
+   spells that charge while held, a dash and a target cycle. The temptation is
+   a grid of little buttons; six 48px targets under one thumb is how you lose
+   every duel to someone on a keyboard.
+
+   So the right thumb gets a STICK, not buttons. The six spells sit in sectors
+   around it, laid out to mirror the keyboard exactly — y u i across the top,
+   h j k across the bottom — and the direction you push chooses which one.
+   Push and let go quickly and you get a quick cast; push and hold and it
+   charges, and it fires when you let the stick go.
+
+   That last part is not a special case: it is precisely what the keyboard
+   already does. Engaging a sector presses that spell's key and releasing lifts
+   it, so a flick is a short hold and a hold is a long one. Which means NONE of
+   this reaches the simulation. Touch sets the same `keys[]` and `tapped[]`
+   entries a keyboard sets, `localMask()` reads them the way it always has, and
+   the bit mask that goes over the wire is indistinguishable from a desktop
+   player's. Determinism, the netcode and the relay never learn that phones
+   exist, and a phone can duel a laptop.
+
+   Everything here is behind TOUCH. On a desktop nothing is created, no
+   listener is registered, and drawPad() returns on its first line. */
+
+const TOUCH = (() => {
+  try {
+    if (typeof window === "undefined" || !window.matchMedia || !window.navigator) return false;
+    // An explicit choice always wins: detection is a guess, and a guess that
+    // cannot be overridden is a bug report you can do nothing with. Handy for
+    // testing the phone layout on a desktop, too.
+    const q = String(window.location && window.location.search || "");
+    if (/[?&]touch=1/.test(q)) return true;
+    if (/[?&]touch=0/.test(q)) return false;
+    return window.matchMedia("(pointer: coarse)").matches &&
+           (window.navigator.maxTouchPoints || 0) > 0;
+  } catch (e) { return false; }
+})();
+
+/* Where the spells sit around the stick. Sector s spans [s*60, s*60+60) degrees
+   measured clockwise from due right, so its centre is s*60+30 — and the six
+   centres land on the eight-way diagonals and the vertical, which is what makes
+   them findable by thumb without looking.
+
+       upper-left  y      up  u      upper-right  i        <- keyboard top row
+       lower-left  h    down  j      lower-right  k        <- keyboard bottom row  */
+const PAD_SECTOR = [5, 4, 3, 0, 1, 2];      // sector index -> SPELLS index
+const PAD_ANGLE = [30, 90, 150, 210, 270, 330];
+
+const padPtr = { move: null, cast: null };  // pointerId -> which stick owns it
+let padCtx = null, padEl = null, padLastTap = 0, padDash = 0;
+
+function padLayout(){
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const R = Math.max(42, Math.min(76, Math.min(vw, vh) * 0.21));
+  const m = R + 10;
+  return { vw, vh, R,
+           move:  { x: m, y: vh - m },
+           cast:  { x: vw - m, y: vh - m },
+           aim:   { x: vw - m, y: vh - m - R - 26, r: 19 },
+           pause: { x: 24, y: 24, r: 17 } };
+}
+function padHit(p, cx, cy, r){
+  const dx = p.clientX - cx, dy = p.clientY - cy;
+  return dx * dx + dy * dy <= r * r;
+}
+// Angle from a stick's centre, clockwise from due right, 0..360.
+function padAngle(dx, dy){
+  let a = Math.atan2(dy, dx) * 180 / Math.PI;
+  return (a + 360) % 360;
+}
+
+/* ------- the movement stick: eight directions, spelled as the same four keys */
+/* Which of the eight directions a push means, as the four keys a keyboard would
+   have held down. Pure, and separate from the pressing, so it can be checked
+   without a pointer, a canvas or a phone. */
+function padDirKeys(deg){
+  const dir = Math.round(((deg % 360) + 360) % 360 / 45) % 8;   // 0 right, 2 down, 4 left, 6 up
+  return { right: dir === 7 || dir === 0 || dir === 1,
+           down:  dir === 1 || dir === 2 || dir === 3,
+           left:  dir === 3 || dir === 4 || dir === 5,
+           up:    dir === 5 || dir === 6 || dir === 7 };
+}
+/* Which spell a push means. Same deal: the sector maths is the part that can be
+   wrong in a way nobody notices until a duel goes badly. */
+function padSpellAt(deg){
+  return PAD_SECTOR[Math.floor((((deg % 360) + 360) % 360) / 60) % 6];
+}
+function padMove(dx, dy, R){
+  const dead = R * 0.30;
+  const P = PAD1;
+  if (Math.hypot(dx, dy) < dead){
+    keys[P.up] = keys[P.down] = keys[P.left] = keys[P.right] = false;
+    return;
+  }
+  const k = padDirKeys(padAngle(dx, dy));
+  keys[P.right] = k.right; keys[P.down] = k.down; keys[P.left] = k.left; keys[P.up] = k.up;
+}
+function padMoveOff(){
+  const P = PAD1;
+  keys[P.up] = keys[P.down] = keys[P.left] = keys[P.right] = false;
+}
+
+/* ------- the spell stick: push to pick, hold to charge, let go to cast
+
+   The spell is LOCKED once the stick engages. Letting the sector follow the
+   thumb sounds helpful and is not: sliding across a boundary mid-charge would
+   fire the spell you were charging and start another one you did not ask for,
+   which in a duel reads as the game casting at random. One push, one spell. */
+function padCastEngage(st, idx){
+  if (st.idx === idx) return;
+  padCastRelease(st);
+  st.idx = idx;
+  const k = SPELLS[idx].key;
+  keys[k] = true;
+  tapped[k] = true;        // survive to the next sampled step even on a fast flick
+}
+function padCastRelease(st){
+  if (st.idx == null) return;
+  keys[SPELLS[st.idx].key] = false;
+  st.idx = null;
+}
+
+function padDown(e){
+  if (!padPlaying()) return;
+  const L = padLayout();
+  if (padHit(e, L.move.x, L.move.y, L.R * 1.5) && e.clientX < L.vw / 2){
+    padPtr.move = { id: e.pointerId, ox: L.move.x, oy: L.move.y, dx: 0, dy: 0 };
+    // Two taps on the movement stick is a dash, and it dashes the way the stick
+    // is already pointing — which is exactly what tryDash() reads off the mask.
+    const now = performance.now();
+    if (now - padLastTap < 320){ tapped[PAD1.dash] = true; padDash = now; }
+    padLastTap = now;
+    e.preventDefault();
+    return;
+  }
+  if (padHit(e, L.aim.x, L.aim.y, L.aim.r + 8)){ tapped["tab"] = true; e.preventDefault(); return; }
+  if (padHit(e, L.pause.x, L.pause.y, L.pause.r + 8)){
+    if (!NET.active && (phase === "fight" || phase === "paused")) togglePause();
+    e.preventDefault();
+    return;
+  }
+  if (padHit(e, L.cast.x, L.cast.y, L.R * 1.5) && e.clientX > L.vw / 2){
+    padPtr.cast = { id: e.pointerId, ox: L.cast.x, oy: L.cast.y, dx: 0, dy: 0, idx: null };
+    e.preventDefault();
+  }
+}
+function padMoveEvt(e){
+  const L = padLayout();
+  const m = padPtr.move, c = padPtr.cast;
+  if (m && m.id === e.pointerId){
+    m.dx = e.clientX - m.ox; m.dy = e.clientY - m.oy;
+    padMove(m.dx, m.dy, L.R);
+    e.preventDefault();
+  }
+  if (c && c.id === e.pointerId){
+    c.dx = e.clientX - c.ox; c.dy = e.clientY - c.oy;
+    const d = Math.hypot(c.dx, c.dy);
+    if (d < L.R * 0.32) padCastRelease(c);          // back to the middle: let it go
+    else padCastEngage(c, padSpellAt(padAngle(c.dx, c.dy)));
+    e.preventDefault();
+  }
+}
+function padUp(e){
+  const m = padPtr.move, c = padPtr.cast;
+  if (m && m.id === e.pointerId){ padPtr.move = null; padMoveOff(); }
+  if (c && c.id === e.pointerId){ padCastRelease(c); padPtr.cast = null; }
+}
+// A match that is not running should not be holding keys down for you.
+function padPlaying(){ return TOUCH && phase !== "menu" && !padPortrait(); }
+function padPortrait(){
+  return typeof window !== "undefined" && window.innerHeight > window.innerWidth;
+}
+function padClear(){
+  padMoveOff();
+  if (padPtr.cast) padCastRelease(padPtr.cast);
+  padPtr.move = padPtr.cast = null;
+}
+
+/* ------------------------------------------------------------------ drawing */
+function padResize(){
+  if (!padEl) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  padEl.width = Math.round(window.innerWidth * dpr);
+  padEl.height = Math.round(window.innerHeight * dpr);
+  padCtx = padEl.getContext("2d");
+  padCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+function padRing(g, x, y, r, from, to, color, width){
+  g.beginPath();
+  g.arc(x, y, r, from, to);
+  g.strokeStyle = color; g.lineWidth = width; g.lineCap = "round";
+  g.stroke();
+}
+/* How full the ring is, and what it means. Beam and Grasp have no charge level
+   at all — Beam is a channel you hold open and Grasp is something you are
+   carrying — so neither gets a charge sweep it does not have. Showing one would
+   be inventing a number. */
+function padCharge(w, idx){
+  if (!w || idx == null) return null;
+  const s = SPELLS[idx];
+  if (s.id === "beam") return w.beamOn ? { kind: "channel", lvl: 1 } : null;
+  if (s.id === "grasp") return w.held ? { kind: "hold", lvl: 1 } : null;
+  if (w.charge !== idx || !s.maxChg) return null;
+  return { kind: "charge", lvl: clamp(w.chargeT / s.maxChg, 0, 1) };
+}
+function drawPad(){
+  if (!TOUCH || !padCtx) return;
+  const g = padCtx, L = padLayout();
+  g.clearRect(0, 0, L.vw, L.vh);
+  if (!padPlaying()) return;
+  const w = you;
+
+  /* --- movement stick --- */
+  const m = padPtr.move;
+  g.globalAlpha = m ? 0.85 : 0.5;
+  padRing(g, L.move.x, L.move.y, L.R, 0, TAU, "#3b3357", 2);
+  let kx = L.move.x, ky = L.move.y;
+  if (m){
+    const d = Math.hypot(m.dx, m.dy) || 1, cl = Math.min(d, L.R * 0.62);
+    kx += m.dx / d * cl; ky += m.dy / d * cl;
+  }
+  g.beginPath(); g.arc(kx, ky, L.R * 0.34, 0, TAU);
+  g.fillStyle = "rgba(140,130,190,.30)"; g.fill();
+  g.strokeStyle = "#8b81a8"; g.lineWidth = 1.5; g.stroke();
+
+  /* --- spell stick --- */
+  const c = padPtr.cast;
+  g.globalAlpha = c ? 0.95 : 0.62;
+  padRing(g, L.cast.x, L.cast.y, L.R, 0, TAU, "#3b3357", 2);
+
+  // the six names, in their own colours, dimmed when the mana is not there
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.font = "600 " + Math.round(L.R * 0.19) + "px ui-monospace, monospace";
+  for (let s = 0; s < 6; s++){
+    const idx = PAD_SECTOR[s], sp = SPELLS[idx];
+    const a = PAD_ANGLE[s] * Math.PI / 180;
+    const tx = L.cast.x + Math.cos(a) * L.R * 0.70, ty = L.cast.y + Math.sin(a) * L.R * 0.70;
+    const poor = w && w.mana < sp.cost * 0.95;
+    if (c && c.idx === idx){
+      g.globalAlpha = 1;
+      g.beginPath();
+      g.moveTo(L.cast.x, L.cast.y);
+      g.arc(L.cast.x, L.cast.y, L.R, (PAD_ANGLE[s] - 30) * Math.PI / 180,
+                                     (PAD_ANGLE[s] + 30) * Math.PI / 180);
+      g.closePath();
+      g.fillStyle = rgba(sp.color, 0.16); g.fill();
+    }
+    g.globalAlpha = poor ? 0.3 : (c && c.idx === idx ? 1 : 0.8);
+    g.fillStyle = sp.color;
+    g.fillText(sp.name, tx, ty);
+  }
+
+  // the charge ring, and only when there is really something to show
+  const ch = padCharge(w, c && c.idx);
+  if (ch){
+    const sp = SPELLS[c.idx];
+    g.globalAlpha = 1;
+    padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, "rgba(60,52,90,.55)", 4);
+    if (ch.kind === "charge"){
+      padRing(g, L.cast.x, L.cast.y, L.R * 1.14, -Math.PI / 2,
+              -Math.PI / 2 + TAU * ch.lvl, sp.color, 4);
+    } else {
+      // a channel or a carried stone: full ring, breathing, no fake level
+      g.globalAlpha = 0.55 + 0.35 * Math.sin(performance.now() / 140);
+      padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, sp.color, 4);
+    }
+  }
+
+  // knob
+  g.globalAlpha = c ? 0.95 : 0.62;
+  let sx = L.cast.x, sy = L.cast.y;
+  if (c){
+    const d = Math.hypot(c.dx, c.dy) || 1, cl = Math.min(d, L.R * 0.62);
+    sx += c.dx / d * cl; sy += c.dy / d * cl;
+  }
+  g.beginPath(); g.arc(sx, sy, L.R * 0.30, 0, TAU);
+  g.fillStyle = "rgba(140,130,190,.30)"; g.fill();
+  g.strokeStyle = "#8b81a8"; g.lineWidth = 1.5; g.stroke();
+
+  /* --- the two small buttons --- */
+  g.globalAlpha = 0.6;
+  padRing(g, L.aim.x, L.aim.y, L.aim.r, 0, TAU, "#3b3357", 2);
+  g.font = "600 " + Math.round(L.aim.r * 0.9) + "px ui-monospace, monospace";
+  g.fillStyle = "#8b81a8"; g.fillText("⊕", L.aim.x, L.aim.y + 1);
+  if (!NET.active){
+    padRing(g, L.pause.x, L.pause.y, L.pause.r, 0, TAU, "#3b3357", 2);
+    g.fillStyle = "#8b81a8";
+    g.font = "600 " + Math.round(L.pause.r * 0.8) + "px ui-monospace, monospace";
+    g.fillText(phase === "paused" ? "▶" : "‖", L.pause.x, L.pause.y + 1);
+  }
+  g.globalAlpha = 1;
+}
+
+/* Portrait is not a playable shape for a 960x620 arena, so say so plainly
+   rather than letterboxing the fight into a strip. */
+function padOrient(){
+  if (!TOUCH) return;
+  const rot = el("rotate");
+  const portrait = padPortrait();
+  if (rot) rot.hidden = !portrait;
+  if (portrait) padClear();
+  padResize();
+}
+if (TOUCH && typeof document !== "undefined"){
+  document.documentElement.classList.add("touch");
+  padEl = el("pad");
+  if (padEl){
+    padEl.hidden = false;
+    padResize();
+    window.addEventListener("pointerdown", padDown, { passive: false });
+    window.addEventListener("pointermove", padMoveEvt, { passive: false });
+    window.addEventListener("pointerup", padUp);
+    window.addEventListener("pointercancel", padUp);
+    window.addEventListener("resize", padOrient);
+    window.addEventListener("orientationchange", padOrient);
+    padOrient();
+  }
+}
+
 // handed to src/net.js so the network layer can drive a match without
 // reaching into the simulation's internals
 window.RPW = {
@@ -5876,6 +6286,21 @@ window.RPW = {
   frameNow: () => simFrame,
   // test hook: what the last desync report actually said
   lastDesync: () => lastDesync,
+  // test hooks for the touch pad: what it thinks it is, and where it puts things.
+  // padAt() is pure and works on a desktop too, so the sector and direction
+  // maths can be checked by the headless suite rather than only in a browser.
+  touch: () => TOUCH,
+  padAt: (deg) => ({ spell: SPELLS[padSpellAt(deg)].key,
+                     name: SPELLS[padSpellAt(deg)].name,
+                     dirs: padDirKeys(deg) }),
+  padInfo: () => ({
+    on: TOUCH, playing: padPlaying(), portrait: padPortrait(),
+    layout: TOUCH ? padLayout() : null,
+    move: padPtr.move ? { dx: padPtr.move.dx, dy: padPtr.move.dy } : null,
+    cast: padPtr.cast ? { dx: padPtr.cast.dx, dy: padPtr.cast.dy, idx: padPtr.cast.idx } : null,
+    sectors: PAD_SECTOR.map((i, s) => ({ deg: PAD_ANGLE[s], key: SPELLS[i].key, name: SPELLS[i].name })),
+    charge: padCharge(you, padPtr.cast && padPtr.cast.idx)
+  }),
   desyncNote,
   startMatch(opts){
     // The game type rides in the sanitised opts rather than as its own protocol

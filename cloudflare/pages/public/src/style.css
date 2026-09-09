@@ -437,3 +437,77 @@
     .rails .plate{flex:1 1 46%}
   }
   @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important}}
+
+  /* ======================================================= touch controls
+
+     Everything below is inert until the game adds `touch` to <html>. A desktop
+     never gets that class, so none of these rules can reach it — the pad and
+     the rotate screen keep their `hidden` attribute and the layout above is
+     exactly what it always was.
+
+     The pad is DRAWN ON, never clicked. It is pointer-events:none and the
+     sticks are hit-tested in window coordinates by the game, which means a
+     full-screen overlay can sit above the arena without ever swallowing a tap
+     meant for a menu button underneath it. */
+  .pad[hidden]{display:none}
+  .pad{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40}
+  /* `display:flex` here beats the UA stylesheet's [hidden]{display:none}, so
+     setting el.hidden = true would leave this screen sitting over the game in
+     landscape with nothing to say why. The same trap already cost this project
+     the Rounds and Lives sliders once. Any author rule that sets display must
+     restate the hidden case. */
+  .rotate[hidden]{display:none}
+  .rotate{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(70% 70% at 50% 45%, rgba(13,10,24,.96), rgba(6,4,12,.99));
+    text-align:center;padding:24px}
+  .rotate-inner{max-width:22em;display:flex;flex-direction:column;align-items:center;gap:14px}
+  .rotate h2{font-family:var(--serif,serif);font-size:20px;margin:0;color:var(--chalk)}
+  .rotate p{margin:0;font-size:12px;line-height:1.6;color:var(--muted)}
+  /* a phone, turning */
+  .rotate-phone{width:44px;height:72px;border:2px solid var(--muted);border-radius:8px;
+    animation:rotate-hint 2.4s ease-in-out infinite}
+  @keyframes rotate-hint{
+    0%,30%{transform:rotate(0deg)}
+    55%,80%{transform:rotate(-90deg)}
+    100%{transform:rotate(0deg)}
+  }
+
+  /* On a phone the page is the game: no scrolling, no rubber-banding, no
+     double-tap zoom fighting the sticks. */
+  html.touch, html.touch body{height:100%;overflow:hidden;overscroll-behavior:none}
+  html.touch body{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none}
+  /* dvh, so the arena does not sit under the browser's own chrome */
+  html.touch .shell{max-width:none;height:100vh;height:100dvh;gap:2px;padding:2px 4px}
+  html.touch header.crest{display:none}
+  html.touch .roundlabel{margin-top:0}
+
+  /* Fit the arena to the height that is left, so it lands in the middle of the
+     screen with clear gutters either side. That is where the sticks go: on a
+     phone-shaped screen they sit BESIDE the arena rather than on top of it.
+
+     The stage takes its height from `flex`, NOT from height:100%. A percentage
+     height on a flex item whose only child is also height:100% is circular —
+     the child asks the parent, the parent asks the child, and both settle on
+     nothing. That collapsed the whole arena to its two border pixels. */
+  html.touch .stage{flex:1 1 auto;min-height:0;width:auto;align-self:center;
+    display:flex;align-items:center;justify-content:center}
+  html.touch canvas#game{width:auto;height:100%;max-width:100%;object-fit:contain}
+  html.touch .rails{display:none}
+  /* The reference book and the cloak track are a desk-sized read. On a phone
+     the page IS the arena — the menu inside the curtain carries everything a
+     player needs to start a duel. */
+  /* The reference strip names the six spells and their costs. So does the
+     spell stick, in the same colours, without spending a sixth of a phone
+     screen on it. */
+  html.touch details.manual, html.touch .pass, html.touch #book{display:none}
+
+  /* A short landscape screen has no room for the full menu furniture, so the
+     panels scroll inside the arena rather than pushing the page taller. */
+  html.touch .curtain{padding:10px 14px;gap:6px;overflow-y:auto}
+  html.touch .panel{gap:6px}
+
+  /* Landscape is the playable orientation; portrait gets the rotate screen and
+     the pad is pointless there. */
+  @media (orientation:portrait){
+    html.touch .pad{display:none}
+  }

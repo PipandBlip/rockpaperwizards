@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=51">
+  <link rel="stylesheet" href="src/style.css?v=52">
 </head>
 <body>
 
@@ -249,8 +249,23 @@
   </details>
 </div>
 
-  <script src="src/account.js?v=51"></script>
-  <script src="src/game.js?v=51"></script>
-  <script src="src/net.js?v=51"></script>
+  <!-- Touch controls. Both of these stay hidden and inert unless the game
+       decides it is running on a touch device; a desktop never sees them and
+       never registers a pointer listener. The pad is drawn on, never clicked:
+       it is pointer-events:none and the sticks are hit-tested in window
+       coordinates, so it can never swallow a tap meant for a menu. -->
+  <canvas id="pad" class="pad" hidden aria-hidden="true"></canvas>
+  <div id="rotate" class="rotate" hidden>
+    <div class="rotate-inner">
+      <div class="rotate-phone" aria-hidden="true"></div>
+      <h2>Turn your phone sideways</h2>
+      <p>The arena is wider than it is tall. Hold your phone in landscape and
+         the duel begins.</p>
+    </div>
+  </div>
+
+  <script src="src/account.js?v=52"></script>
+  <script src="src/game.js?v=52"></script>
+  <script src="src/net.js?v=52"></script>
 </body>
 </html>
