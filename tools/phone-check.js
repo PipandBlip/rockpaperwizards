@@ -54,6 +54,23 @@ const LAND = Object.assign({}, phone, {
     ok("and the pad and rotate screen stay out of its way",
        d.padHidden === true && d.rotateShown === false, JSON.stringify(d));
     ok("and its spell reference is still there", d.bookShown === true, JSON.stringify(d));
+    const man = await p.evaluate(() => {
+      const shown = sel => {
+        const e = document.querySelector(sel);
+        return !!e && getComputedStyle(e).display !== "none";
+      };
+      return { open: document.getElementById("manual").open,
+               steps: document.querySelectorAll(".steps>li").length,
+               key: shown("p.by-key"), touch: shown("p.by-touch"),
+               badges: [...document.querySelectorAll(".spells kbd")]
+                         .filter(k => getComputedStyle(k).display !== "none").length };
+    });
+    ok("its manual is still open in the page", man.open === true, JSON.stringify(man.open));
+    ok("with the three steps it always had", man.steps === 3, "found " + man.steps);
+    ok("a desktop is told about keys, not sticks",
+       man.key === true && man.touch === false, JSON.stringify(man));
+    ok("and keeps the key badge on every spell", man.badges === 6,
+       man.badges + " of 6 spell badges are visible — a keyboard player needs those");
     await ctx.close();
   }
 
@@ -227,6 +244,105 @@ const LAND = Object.assign({}, phone, {
   await touch("touchEnd", 0, 0);
   ok("sweeping the stick around inside the ring does not dash",
      swept > 0.99, "the ring dropped to " + swept + " — a plain direction change spent the dash");
+
+  /* ---- How to play, as a bar under the arena that opens into a sheet */
+  const bar = await p.evaluate(() => {
+    const m = document.getElementById("manual");
+    const sum = m.querySelector("summary").getBoundingClientRect();
+    const stage = document.querySelector(".stage").getBoundingClientRect();
+    return { open: m.open, y: sum.y, h: sum.height, bottom: sum.bottom,
+             stageBottom: stage.bottom, vh: innerHeight,
+             steps: document.querySelectorAll(".steps>li").length,
+             // textContent, not innerText: the manual starts shut on a phone and
+             // innerText renders nothing inside a closed <details>
+             text: document.querySelector(".manual-body").textContent.replace(/\s+/g, " ").trim() };
+  });
+  ok("the How to play bar sits under the arena and on the screen",
+     bar.open === false && bar.y >= bar.stageBottom - 1 && bar.bottom <= bar.vh + 1 && bar.h > 12,
+     JSON.stringify({ y: bar.y, h: bar.h, bottom: bar.bottom, stageBottom: bar.stageBottom, vh: bar.vh }));
+  ok("and it starts shut, so it never eats the arena",
+     bar.open === false, JSON.stringify(bar.open));
+  ok("and still has its three steps here", bar.steps === 3, "found " + bar.steps);
+
+  /* Steps one and two name controls, so each device must be shown its own and
+     only its own. A phone told to press Shift is a phone told a lie. */
+  const words = await p.evaluate(() => {
+    const shown = sel => {
+      const e = document.querySelector(sel);
+      return !!e && getComputedStyle(e).display !== "none";
+    };
+    const vis = [...document.querySelectorAll(".spells kbd")]
+                  .filter(k => getComputedStyle(k).display !== "none").length;
+    return { key: shown("p.by-key"), touch: shown("p.by-touch"), badges: vis,
+             spells: document.querySelector(".spells").textContent.replace(/\s+/g, " ").trim(),
+             stated: (document.querySelector(".dash-cd") || {}).textContent,
+             cd: window.RPW.padInfo().dash.cd,
+             /* `.steps .step-txt b` is the step-title rule, counter and all, so
+                a <b> anywhere in this prose becomes a numbered heading in the
+                middle of a sentence. It did. These two catch that shape of bug
+                for anything added to a step in future. */
+             cdDisplay: getComputedStyle(document.querySelector(".dash-cd")).display,
+             cdCounter: getComputedStyle(document.querySelector(".dash-cd"), "::before").content };
+  });
+  ok("a phone is told about sticks, not keys",
+     words.touch === true && words.key === false, JSON.stringify(words));
+  ok("and step three drops the key badges", words.badges === 0,
+     words.badges + " spell key badges are still visible on a phone");
+  ok("but keeps every spell and what it does",
+     ["Spark", "Rive", "Hexstone", "Ward", "Beam", "Grasp"].every(n => words.spells.includes(n)) &&
+     words.spells.includes("shield") && words.spells.includes("missile"),
+     words.spells.slice(0, 200));
+  /* The manual states the dash cooldown as a number. Numbers written into prose
+     go stale silently, so this one is checked against the constant. */
+  ok("the cooldown the manual states is the cooldown the game uses",
+     Number(words.stated) === words.cd,
+     "the manual says " + words.stated + "s and DASH_CD is " + words.cd + "s");
+  ok("and it reads as part of the sentence, not as a step heading",
+     words.cdDisplay === "inline" && (words.cdCounter === "none" || words.cdCounter === "normal"),
+     "the cooldown figure renders as display:" + words.cdDisplay +
+     " with ::before content " + words.cdCounter +
+     " — the step-title rule has caught it");
+
+  /* Opening it mid-fight must let go of the sticks: the sheet covers the whole
+     screen, so scrolling it would otherwise be a thumb dragging the wizard. */
+  await touch("touchStart", L.move.x, L.move.y);
+  await touch("touchMove", out(0.5).x, out(0.5).y);
+  await p.waitForTimeout(80);
+  const walking = await me();
+  await p.tap("#manual summary");
+  await p.waitForTimeout(120);
+  const held = await me();
+  await touch("touchEnd", 0, 0);
+  ok("the wizard was walking before the manual opened",
+     walking.mx !== 0 || walking.my !== 0, JSON.stringify(walking));
+  ok("and opening the manual lets go of the stick",
+     held.mx === 0 && held.my === 0,
+     "the wizard is still being told to move " + JSON.stringify({mx: held.mx, my: held.my}));
+
+  const sheet = await p.evaluate(() => {
+    const m = document.getElementById("manual");
+    const body = m.querySelector(".manual-body");
+    const r = body.getBoundingClientRect();
+    return { open: m.open, w: Math.round(r.width), h: Math.round(r.height),
+             vh: innerHeight, vw: innerWidth,
+             scrollable: body.scrollHeight > body.clientHeight + 8,
+             playing: window.RPW.padInfo().playing };
+  });
+  ok("it opens as a sheet over the whole screen",
+     sheet.open === true && sheet.h >= sheet.vh - 2 && sheet.w >= sheet.vw - 2,
+     JSON.stringify(sheet));
+  ok("which scrolls, because the manual is taller than a phone",
+     sheet.scrollable === true, JSON.stringify(sheet));
+  ok("and the sticks stop taking input while it is up",
+     sheet.playing === false, JSON.stringify(sheet));
+
+  await p.tap("#manual summary");
+  await p.waitForTimeout(200);
+  const shut = await p.evaluate(() => ({
+    open: document.getElementById("manual").open,
+    playing: window.RPW.padInfo().playing }));
+  ok("tapping it again shuts it and hands the game back",
+     shut.open === false && shut.playing === true, JSON.stringify(shut));
 
   /* ---- portrait says so instead of playing */
   await p.setViewportSize({ width: LAND.viewport.height, height: LAND.viewport.width });

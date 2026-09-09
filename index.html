@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=54">
+  <link rel="stylesheet" href="src/style.css?v=55">
 </head>
 <body>
 
@@ -204,7 +204,7 @@
 
   <!-- How to play. Three steps to start, with a picture slot on each: drop a PNG
        at the path shown in the empty slot and it appears automatically. -->
-  <details class="manual" open>
+  <details class="manual" id="manual" open>
     <summary>How to play</summary>
     <div class="manual-body">
 
@@ -214,7 +214,12 @@
           <li>
             <div class="step-txt">
               <b>Move, dash, and let the wand aim</b>
-              <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move, <kbd>Shift</kbd> to dash. Your wizard will auto target enemies, but you can press <kbd>Tab</kbd> to cycle targets in multiplayer modes.</p>
+              <!-- Steps one and two are the only places the manual names a
+                   control, so they are the only places it has to be told twice.
+                   A phone has no Shift key; a desktop has no outer ring. Step
+                   three is the same on both, minus the key badges. -->
+              <p class="by-key"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move, <kbd>Shift</kbd> to dash. Your wizard will auto target enemies, but you can press <kbd>Tab</kbd> to cycle targets in multiplayer modes.</p>
+              <p class="by-touch">Move with the left stick. Dash by touching the outer ring with the left stick &mdash; <span class="dash-cd">3</span> second cooldown. Your wizard auto targets enemies; the <em>&#8853;</em> button cycles targets in multiplayer modes.</p>
             </div>
             <figure class="shot"><img src="assets/help/move.png" alt="Moving and aiming" loading="lazy">
               <figcaption>Moving and aiming<span>assets/help/move.png</span></figcaption></figure>
@@ -222,7 +227,8 @@
           <li>
             <div class="step-txt">
               <b>Cast spells, tap or charge</b>
-              <p>Cast spells with <kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd>. Tap it to cast a quick spell, or hold the spell to increase its power.</p>
+              <p class="by-key">Cast spells with <kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd>. Tap it to cast a quick spell, or hold the spell to increase its power.</p>
+              <p class="by-touch">Cast spells with the right stick. Charge up a spell with a long hold.</p>
             </div>
             <figure class="shot"><img src="assets/help/cast.png" alt="Charging a spell" loading="lazy">
               <figcaption>Charging a spell<span>assets/help/cast.png</span></figcaption></figure>
@@ -231,12 +237,12 @@
             <div class="step-txt">
               <b>Know your spells</b>
               <ul class="spells">
-                <li><kbd>Y</kbd> <em>Spark</em> — fast and cheap spell.</li>
-                <li><kbd>U</kbd> <em>Rive</em> — one missile, or five when full charge.</li>
-                <li><kbd>I</kbd> <em>Hexstone</em> — plows through weaker spells and the Ward.</li>
-                <li><kbd>H</kbd> <em>Ward</em> — create a shield against weaker spells.</li>
-                <li><kbd>J</kbd> <em>Beam</em> — slow charge, but powerful beam. Can be resisted with counter beam.</li>
-                <li><kbd>K</kbd> <em>Grasp</em> — hold to carry objects as a shield, or throw as a weapon.</li>
+                <li><kbd class="by-key">Y</kbd> <em>Spark</em> — fast and cheap spell.</li>
+                <li><kbd class="by-key">U</kbd> <em>Rive</em> — one missile, or five when full charge.</li>
+                <li><kbd class="by-key">I</kbd> <em>Hexstone</em> — plows through weaker spells and the Ward.</li>
+                <li><kbd class="by-key">H</kbd> <em>Ward</em> — create a shield against weaker spells.</li>
+                <li><kbd class="by-key">J</kbd> <em>Beam</em> — slow charge, but powerful beam. Can be resisted with counter beam.</li>
+                <li><kbd class="by-key">K</kbd> <em>Grasp</em> — hold to carry objects as a shield, or throw as a weapon.</li>
               </ul>
             </div>
             <figure class="shot"><img src="assets/help/spells.png" alt="Two beams colliding" loading="lazy">
@@ -264,8 +270,8 @@
     </div>
   </div>
 
-  <script src="src/account.js?v=54"></script>
-  <script src="src/game.js?v=54"></script>
-  <script src="src/net.js?v=54"></script>
+  <script src="src/account.js?v=55"></script>
+  <script src="src/game.js?v=55"></script>
+  <script src="src/net.js?v=55"></script>
 </body>
 </html>

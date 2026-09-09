@@ -5103,8 +5103,18 @@ function padUp(e){
   if (m && m.id === e.pointerId){ padPtr.move = null; padMoveOff(); padArmed = false; }
   if (c && c.id === e.pointerId){ padCastRelease(c); padPtr.cast = null; }
 }
-// A match that is not running should not be holding keys down for you.
-function padPlaying(){ return TOUCH && phase !== "menu" && !padPortrait(); }
+/* A match that is not running should not be holding keys down for you — and
+   neither should a manual you are reading. The How to play sheet covers the
+   whole screen on a phone, so scrolling it would otherwise be a thumb dragging
+   the movement stick. */
+function padManualOpen(){
+  const d = typeof document !== "undefined" && document.getElementById
+          ? document.getElementById("manual") : null;
+  return !!(d && d.open);
+}
+function padPlaying(){
+  return TOUCH && phase !== "menu" && !padPortrait() && !padManualOpen();
+}
 function padPortrait(){
   return typeof window !== "undefined" && window.innerHeight > window.innerWidth;
 }
@@ -5281,6 +5291,14 @@ function padOrient(){
 }
 if (TOUCH && typeof document !== "undefined"){
   document.documentElement.classList.add("touch");
+  /* The manual is open by default on a desktop, where it is a page section you
+     scroll past. On a phone it is a sheet over the arena, so it starts shut. */
+  const man = el("manual");
+  if (man){
+    man.open = false;
+    // opening it mid-fight must let go of whatever the thumbs were holding
+    man.addEventListener("toggle", () => { if (man.open) padClear(); });
+  }
   padEl = el("pad");
   if (padEl){
     padEl.hidden = false;
@@ -5354,12 +5372,13 @@ window.RPW = {
   padInfo: () => ({
     on: TOUCH, playing: padPlaying(), portrait: padPortrait(),
     layout: TOUCH ? padLayout() : null,
+    manual: padManualOpen(),
     move: padPtr.move ? { dx: padPtr.move.dx, dy: padPtr.move.dy } : null,
     cast: padPtr.cast ? { dx: padPtr.cast.dx, dy: padPtr.cast.dy, idx: padPtr.cast.idx } : null,
     sectors: PAD_SECTOR.map((i, s) => ({ deg: PAD_ANGLE[s], key: SPELLS[i].key, name: SPELLS[i].name })),
     charge: padCharge(you, padPtr.cast && padPtr.cast.idx),
     dash: { ready: you ? clamp(1 - (you.dashCool || 0) / DASH_CD, 0, 1) : 1,
-            rim: PAD_DASH_RIM, armed: padArmed }
+            cd: DASH_CD, rim: PAD_DASH_RIM, armed: padArmed }
   }),
   desyncNote,
   startMatch(opts){

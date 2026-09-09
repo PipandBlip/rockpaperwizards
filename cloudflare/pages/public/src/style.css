@@ -499,7 +499,62 @@
   /* The reference strip names the six spells and their costs. So does the
      spell stick, in the same colours, without spending a sixth of a phone
      screen on it. */
-  html.touch details.manual, html.touch .pass, html.touch #book{display:none}
+  html.touch .pass, html.touch #book{display:none}
+
+  /* ------------------------------------------------- How to play, on a phone
+
+     The manual stays, because a player who cannot find out what Hexstone does
+     is playing a worse game. But the page is exactly one screen tall here and
+     the arena fills it, so the manual cannot live in the flow: the SUMMARY is a
+     slim bar under the arena, and opening it lifts the body out into a
+     scrollable sheet over the top of everything.
+
+     Steps one and two name controls, so they are told twice: `.by-key` for a
+     keyboard, `.by-touch` for thumbs. Step three is the same list on both —
+     only its key badges are keyboard-only, because "Y" means nothing to a
+     thumb but the spell it names means everything.
+
+     Note the element on each selector. Written as a bare descendant rule,
+     `li .by-touch` also matched the step paragraphs — they live inside <li> —
+     and rendered them inline, running two steps together with no break. */
+  .by-touch{display:none}
+  html.touch p.by-touch{display:block}
+  html.touch p.by-key,
+  html.touch .spells kbd.by-key{display:none}
+  /* the spell list carries its own indent once the badges are gone */
+  html.touch .spells{padding-left:2px;list-style:none}
+  /* The cooldown figure is a SPAN and not a <b> on purpose: `.steps .step-txt b`
+     is the step-title rule, counter and all, so a <b> anywhere in this text
+     turns into a numbered heading mid-sentence. */
+  .dash-cd{font-family:var(--mono);color:var(--spark)}
+
+  html.touch details.manual{flex:0 0 auto;border:0;border-top:1px solid var(--edge);
+    border-radius:0;background:transparent}
+  html.touch details.manual summary{padding:5px 10px;font-size:10px;letter-spacing:.2em;
+    text-align:center;color:var(--muted)}
+  /* Opening it must not shove the arena off the screen, so the body leaves the
+     flow entirely and becomes a sheet. */
+  html.touch details.manual[open] .manual-body{
+    position:fixed;left:0;right:0;top:0;bottom:0;z-index:70;
+    margin:0;padding:16px 18px 26px;
+    background:radial-gradient(80% 70% at 50% 0%, rgba(23,19,38,.99), rgba(6,4,12,.995));
+    overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;
+    display:block}
+  /* and it needs its own way out, since the summary is now behind it */
+  html.touch details.manual[open] summary{
+    position:fixed;top:0;left:0;right:0;z-index:71;
+    padding:9px 10px;background:#120e22;border-bottom:1px solid var(--edge);
+    color:var(--chalk)}
+  html.touch details.manual[open] .manual-body{padding-top:42px}
+  html.touch .manual-body{font-size:13.5px}
+  html.touch .steps{grid-template-columns:1fr;gap:16px}
+  /* One step per row, and the picture sits BESIDE its words rather than above
+     them: full-width screenshots turn three steps into a very long scroll on a
+     412px-tall screen. */
+  html.touch .steps>li{flex-direction:row;align-items:flex-start;gap:12px}
+  html.touch .step-txt{flex:1 1 auto;min-width:0;order:1}
+  html.touch .shot{flex:0 0 34%;max-width:190px;order:2;margin:0}
+  html.touch .shot figcaption{font-size:9.5px}
 
   /* A short landscape screen has no room for the full menu furniture, so the
      panels scroll inside the arena rather than pushing the page taller. */

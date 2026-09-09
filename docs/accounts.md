@@ -1120,6 +1120,39 @@ asks the child, the child asks the parent, and both settle on zero. The arena
 collapsed to its two border pixels. The stage takes its height from `flex:1`
 with `min-height:0` now.
 
+### How to play, on a phone
+
+The manual is still there, because a player who cannot find out what Hexstone
+does is playing a worse game. But the page is exactly one screen tall on a
+phone and the arena fills it, so the manual cannot live in the flow: the
+`<summary>` is a slim bar under the arena, and opening it lifts the body out of
+the flow entirely into a fixed, scrollable sheet over everything. No JavaScript
+does the toggling — `<details>` already does, which keeps it working under a
+CSP with no inline script.
+
+**Only the steps that name a control are told twice.** Steps one and two are
+the only places the manual says how to do anything, so they carry both wordings
+— `.by-key` for a keyboard, `.by-touch` for thumbs — and CSS shows whichever
+the device is. A phone told to press Shift is a phone told a lie.
+
+Step three is the same list on both. Only its key badges are keyboard-only:
+"Y" means nothing to a thumb, but the spell it names means everything, and
+"Hexstone plows through weaker spells and the Ward" is as true on glass as on a
+keyboard. Keeping the split to the two steps that need it keeps the number of
+places the same sentence can drift down to two.
+
+The phone copy is deliberately terse — "Move with the left stick. Dash by
+touching the outer ring with the left stick — 3 second cooldown." — and that
+"3" is checked against `DASH_CD`. A number written into prose goes stale in
+silence.
+
+**Opening it lets go of the sticks.** The sheet covers the whole screen, so
+without that, scrolling the manual would be a thumb dragging the movement stick
+and the wizard would walk into a wall while you read about walking.
+`padPlaying()` is false while it is open, and a `toggle` listener calls
+`padClear()` so nothing stays held down. There is a test that walks the wizard,
+opens the manual mid-stride and asserts the wizard stopped being told to move.
+
 ### What is checked, and where
 
 `tools/touch-test.js` (in `npm test`, no browser) checks the arithmetic that can
@@ -1141,7 +1174,24 @@ since `cast()` spends `cost * (1 + level)`, so a hold must cost measurably more
 than a flick of the same spell — pushing out to the ring dashes and empties it,
 walking the stick partway out does not, sweeping it right round inside the ring
 does not, and holding it against the ring through a full cooldown does not dash
-a second time. Portrait shows the rotate screen and stops accepting input.
+a second time. Portrait shows the rotate screen and stops accepting input. The
+How to play bar sits under the arena and on screen, starts shut, opens into a
+scrollable full-screen sheet, freezes the sticks while it is up, releases a
+stick that was mid-walk, hands the game back when shut, shows the stick wording
+and not the key wording (and the reverse on a desktop), drops the six key badges
+while keeping every spell and its description, and states a cooldown that
+matches `DASH_CD`.
+
+Two mechanical notes for anyone editing that file or those steps. Reading the
+manual's text needs `textContent` rather than `innerText`: it starts shut on a
+phone and `innerText` renders nothing inside a closed `<details>`, so an earlier
+version of that check compared an empty string and passed for the wrong reason.
+And `.steps .step-txt b` is the step-title rule, counter and all — so a `<b>`
+anywhere in a step's prose becomes a numbered heading in the middle of a
+sentence. The cooldown figure is a `<span>` for that reason, and there is a test
+asserting it still renders inline with no counter. That is the third time a bare
+element selector inside `.steps` has caught something new; check what the block
+already claims before adding an element to it.
 
 Two things that cost time in that file and are worth knowing before editing it:
 the arena preset puts a prop immediately beside the left spawn, so a dash
