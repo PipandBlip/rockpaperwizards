@@ -98,56 +98,85 @@ test("no push ever presses two opposite keys, which would cancel to standing sti
   }
 });
 
-console.log("\nthe dash stutter");
+console.log("\nthe dash");
 
-/* The gesture is: shove the stick one way, ease off, shove it the same way
-   again. The whole risk is that ordinary play trips it — swinging the stick
-   between directions must NOT dash, or the game spends your cooldown for you. */
+/* Dash is: push the stick out to its outer ring. The rules that matter are the
+   arming ones, and they exist because of what went wrong twice before —
+   a gesture that fires when you did not ask spends a cooldown you were saving,
+   and a gesture you have to discover is a gesture nobody uses.
 
-test("two shoves the same way, close together, ask for a dash", () => {
-  RPW.padStutterReset();
-  assert.strictEqual(RPW.padShove(0, 1.0), false, "the first shove is not a dash");
-  assert.strictEqual(RPW.padShove(0, 0.2), false, "easing off is not a dash");
-  assert.strictEqual(RPW.padShove(0, 1.0), true, "the second shove is");
+   padPush(fraction, ready) drives it directly and says what happened. */
+
+test("pushing the stick out to the ring dashes", () => {
+  RPW.padDashReset();
+  assert.strictEqual(RPW.padPush(0.2), "armed", "coming inside arms it");
+  assert.strictEqual(RPW.padPush(0.95), "dash");
 });
 
-test("holding the stick out is one shove, not a stream of them", () => {
-  RPW.padStutterReset();
-  RPW.padShove(90, 1.0);
-  for (let i = 0; i < 30; i++)
-    assert.strictEqual(RPW.padShove(90, 1.0), false,
-      "holding the stick at full stretch dashed on repeat " + i);
+test("ordinary movement never reaches it", () => {
+  RPW.padDashReset();
+  RPW.padPush(0.2);
+  // everything from the movement deadzone up to just short of the ring is
+  // ordinary walking, and none of it may dash
+  for (const f of [0.31, 0.45, 0.6, 0.7, 0.8, 0.9])
+    assert.notStrictEqual(RPW.padPush(f), "dash",
+      `holding the stick at ${f} of the radius dashed — that is normal movement`);
 });
 
-test("swinging between directions never dashes — the stick never eases off", () => {
-  RPW.padStutterReset();
-  RPW.padShove(0, 1.0);
-  for (let deg = 0; deg <= 360; deg += 10)
-    assert.strictEqual(RPW.padShove(deg, 1.0), false,
-      "sweeping the stick to " + deg + "deg dashed without being asked");
+test("resting against the ring spends one dash, not a stream of them", () => {
+  RPW.padDashReset();
+  RPW.padPush(0.2);
+  assert.strictEqual(RPW.padPush(1.0), "dash");
+  for (let i = 0; i < 40; i++)
+    assert.strictEqual(RPW.padPush(1.0), "held",
+      "holding at the ring dashed again on repeat " + i);
 });
 
-test("a stutter in a different direction is not a stutter", () => {
-  RPW.padStutterReset();
-  RPW.padShove(0, 1.0);
-  RPW.padShove(0, 0.2);
-  assert.strictEqual(RPW.padShove(180, 1.0), false,
-    "shoving the opposite way should start a new gesture, not finish the old one");
+test("and it only counts again after coming back inside", () => {
+  RPW.padDashReset();
+  RPW.padPush(0.2);
+  RPW.padPush(1.0);
+  assert.strictEqual(RPW.padPush(0.8), "inside",
+    "easing back only to 0.8 must not re-arm — that is still a held push");
+  assert.strictEqual(RPW.padPush(1.0), "held", "so the ring does nothing yet");
+  assert.strictEqual(RPW.padPush(0.5), "armed", "0.5 is far enough back in");
+  assert.strictEqual(RPW.padPush(1.0), "dash", "and then the ring works again");
 });
 
-test("a slow second shove is a new gesture, not a dash", () => {
-  RPW.padStutterReset();
-  RPW.padShove(0, 1.0, 0);
-  RPW.padShove(0, 0.2, 100);
-  assert.strictEqual(RPW.padShove(0, 1.0, 900), false,
-    "900ms apart is two separate pushes, not one stutter");
+test("a fresh touch starts disarmed, so grabbing the stick wide cannot dash", () => {
+  // padDashReset() is what a pointerdown does: whatever the thumb lands on,
+  // it has to come inside once before the ring means anything
+  RPW.padDashReset();
+  assert.strictEqual(RPW.padPush(1.2), "held",
+    "landing a thumb outside the ring dashed on contact");
+  assert.strictEqual(RPW.padPush(0.4), "armed");
+  assert.strictEqual(RPW.padPush(1.0), "dash");
 });
 
-test("easing only halfway does not re-arm, so a wobble cannot dash", () => {
-  RPW.padStutterReset();
-  RPW.padShove(0, 1.0);
-  RPW.padShove(0, 0.62);          // between IN and OUT: a wobble, not a release
-  assert.strictEqual(RPW.padShove(0, 1.0), false, "a wobble at full stretch dashed");
+test("on cooldown the ring does nothing, and does not save the dash for later", () => {
+  RPW.padDashReset();
+  RPW.padPush(0.2);
+  assert.strictEqual(RPW.padPush(1.0, false), "cooldown", "it should refuse while recharging");
+  assert.strictEqual(RPW.padPush(1.0, true), "held",
+    "and refusing must still consume the push — otherwise the dash fires by " +
+    "itself the moment the cooldown returns, with the thumb never moving");
+  RPW.padPush(0.4);
+  assert.strictEqual(RPW.padPush(1.0, true), "dash");
+});
+
+test("the ring the player sees is the ring the code triggers on", () => {
+  /* drawPad() scales the knob's travel against padInfo().dash.rim so that the
+     knob's edge meets the drawn ring at exactly the magnitude that dashes. If
+     the trigger and the reported rim ever drift apart, the gesture happens
+     somewhere other than where the player can see it. */
+  const rim = RPW.padInfo().dash.rim;
+  assert.ok(rim > 0.5 && rim <= 1, "the rim is at " + rim + " of the radius, which is not a rim");
+  RPW.padDashReset(); RPW.padPush(0.2);
+  assert.notStrictEqual(RPW.padPush(rim - 0.02), "dash",
+    "a push just short of the reported rim dashed");
+  RPW.padDashReset(); RPW.padPush(0.2);
+  assert.strictEqual(RPW.padPush(rim + 0.01), "dash",
+    "a push just past the reported rim did not dash");
 });
 
 console.log(`\n${pass} passing`);

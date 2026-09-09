@@ -5973,55 +5973,59 @@ const PAD_SECTOR = [5, 4, 3, 0, 1, 2];      // sector index -> SPELLS index
 const PAD_ANGLE = [30, 90, 150, 210, 270, 330];
 
 const padPtr = { move: null, cast: null };  // pointerId -> which stick owns it
-let padCtx = null, padEl = null, padDashAt = 0;
+let padCtx = null, padEl = null;
 
 /* ------------------------------------------------------------- the dash
 
-   Dash is a STUTTER of the movement stick: shove it one way, ease off, shove
-   it the same way again. Your thumb never leaves the glass, which matters,
-   because the moment you want to dash is the moment you are already moving.
+   Dash is: push the stick out until it touches its outer ring. It goes the way
+   you pushed, and only if the cooldown has come back.
 
-   It is read off the stick's MAGNITUDE with hysteresis rather than off taps.
-   A push registers when the stick passes OUT, and it can only register again
-   after the stick has fallen back inside IN — so holding the stick out, however
-   hard, is one push and not a stream of them. Two pushes close together in
-   nearly the same direction is a dash.
+   Two earlier attempts were worse. A double tap made you lift your thumb at the
+   exact moment you were trying to move. A stutter — shove, ease off, shove
+   again — kept the thumb down but was fiddly, and it fought the game: movement
+   here is DIGITAL, eight directions on or off, so there is no reason at all not
+   to rest the stick at full stretch, and a gesture built out of magnitude has to
+   fight that. The rim is the honest version of the same idea. It is one motion,
+   it is visible on the stick, and reaching it is a decision.
 
-   Reading magnitude rather than taps also means a lift-and-retap chains through
-   the same path for free, so the old double tap still dashes.
+   The ring is armed by coming back INSIDE it. So resting against the rim spends
+   one dash and no more, and a thumb that starts a touch already out past the rim
+   — grabbing for the stick and landing wide — cannot dash until it has been
+   inside once. A dash you did not ask for is worse than one you have to ask for
+   twice. */
+const PAD_DASH_RIM = 0.92;     // fraction of the stick's radius that counts as the ring
+const PAD_DASH_REARM = 0.70;   // and how far back inside it must come to count again
+let padArmed = false;          // a fresh touch is NOT armed; see above
+let padDashAt = 0, padDenyAt = 0;
 
-   Ordinary play does not trip it: swinging the stick from one direction to
-   another keeps the magnitude high the whole way, and never falls back inside
-   IN to re-arm. You have to actually let go. */
-const PAD_DASH_OUT = 0.78;      // fraction of the stick's radius that counts as a shove
-const PAD_DASH_IN = 0.50;       // and how far back it must fall before the next one counts
-const PAD_DASH_MS = 300;        // how close together the two shoves must be
-const PAD_DASH_ARC = 55;        // and how nearly the same direction, in degrees
-let padArmed = true, padPush = null;
+/* Returns what happened, which is what makes this testable: the arming rules
+   and the cooldown gate are the whole of the behaviour, and neither needs a
+   pointer, a canvas or a real second to check.
 
-function padGap(a, b){ const d = Math.abs(((a - b) % 360 + 360) % 360); return Math.min(d, 360 - d); }
-/* Returns true on the frame a dash is asked for. Pure of drawing, and it only
-   ever sets the same key the shift key sets. */
-function padStutter(deg, mag, R, at){
-  if (mag < R * PAD_DASH_IN){ padArmed = true; return false; }
-  if (mag < R * PAD_DASH_OUT || !padArmed) return false;
+   `ready` is passed in rather than read from the world so a test can drive the
+   cooldown branch directly. tryDash() remains the authority on whether a dash
+   actually happens; this only decides whether to ASK, and what to show. */
+function padRimDash(mag, R, ready, at){
+  if (mag < R * PAD_DASH_REARM){ padArmed = true; return "armed"; }
+  if (mag < R * PAD_DASH_RIM) return "inside";
+  if (!padArmed) return "held";
   padArmed = false;
   const now = at != null ? at
             : (typeof performance !== "undefined" ? performance.now() : Date.now());
-  if (padPush && now - padPush.t < PAD_DASH_MS && padGap(deg, padPush.deg) < PAD_DASH_ARC){
-    tapped[PAD1.dash] = true;   // exactly what a tap of shift does
-    padDashAt = now;            // so the ring can flash
-    padPush = null;             // one dash per stutter, not a machine gun
-    return true;
-  }
-  padPush = { t: now, deg };
-  return false;
+  if (!ready){ padDenyAt = now; return "cooldown"; }
+  tapped[PAD1.dash] = true;    // exactly what a tap of shift does
+  padDashAt = now;
+  return "dash";
 }
 
 function padLayout(){
   const vw = window.innerWidth, vh = window.innerHeight;
   const R = Math.max(42, Math.min(76, Math.min(vw, vh) * 0.21));
-  const m = R + 10;
+  /* The rings the sticks wear — dash cooldown on the left, spell charge on the
+     right — are drawn OUTSIDE the stick at 1.14 of its radius, so the margin
+     has to clear those and not just the stick. Clearing only R put both rings
+     a few pixels off the edge of the screen. */
+  const m = R * 1.14 + 10;
   return { vw, vh, R,
            move:  { x: m, y: vh - m },
            cast:  { x: vw - m, y: vh - m },
@@ -6096,13 +6100,14 @@ function padMoveUpdate(ptr, x, y, L){
   ptr.dx = x - ptr.ox; ptr.dy = y - ptr.oy;
   const mag = Math.hypot(ptr.dx, ptr.dy);
   padMove(ptr.dx, ptr.dy, L.R);
-  if (mag > 0.001) padStutter(padAngle(ptr.dx, ptr.dy), mag, L.R);
+  padRimDash(mag, L.R, !you || (you.dashCool || 0) <= 0);
 }
 function padDown(e){
   if (!padPlaying()) return;
   const L = padLayout();
   if (padHit(e, L.move.x, L.move.y, L.R * 1.5) && e.clientX < L.vw / 2){
     padPtr.move = { id: e.pointerId, ox: L.move.x, oy: L.move.y, dx: 0, dy: 0 };
+    padArmed = false;      // grabbing the stick is not a dash, wherever it lands
     padMoveUpdate(padPtr.move, e.clientX, e.clientY, L);
     e.preventDefault();
     return;
@@ -6135,7 +6140,7 @@ function padMoveEvt(e){
 }
 function padUp(e){
   const m = padPtr.move, c = padPtr.cast;
-  if (m && m.id === e.pointerId){ padPtr.move = null; padMoveOff(); padArmed = true; }
+  if (m && m.id === e.pointerId){ padPtr.move = null; padMoveOff(); padArmed = false; }
   if (c && c.id === e.pointerId){ padCastRelease(c); padPtr.cast = null; }
 }
 // A match that is not running should not be holding keys down for you.
@@ -6145,7 +6150,7 @@ function padPortrait(){
 }
 function padClear(){
   padMoveOff();
-  padArmed = true; padPush = null;
+  padArmed = false;
   if (padPtr.cast) padCastRelease(padPtr.cast);
   padPtr.move = padPtr.cast = null;
 }
@@ -6207,16 +6212,34 @@ function drawPad(){
       padRing(g, L.move.x, L.move.y, L.R * 1.14, 0, TAU, "#ffffff", 3);
     }
   }
-  g.globalAlpha = m ? 0.85 : 0.5;
-  padRing(g, L.move.x, L.move.y, L.R, 0, TAU, "#3b3357", 2);
+  /* The ring is the dash, so it has to look like a thing you can reach: it
+     lights in the wizard's tint while the dash is available, and the knob's
+     travel is scaled so its EDGE meets the ring at exactly the magnitude that
+     triggers one. A control whose gesture you cannot see is a control nobody
+     finds — the first version clamped the knob at 0.62 of the radius, so the
+     rim it was supposed to touch was permanently out of reach. */
+  const KNOB = 0.34;
+  const mag = m ? Math.hypot(m.dx, m.dy) : 0;
+  const atRim = mag >= L.R * PAD_DASH_RIM;
+  const live = ready >= 1;
+  const deny = Math.max(0, 1 - (performance.now() - padDenyAt) / 300);
+  g.globalAlpha = m ? 0.95 : (live ? 0.7 : 0.45);
+  padRing(g, L.move.x, L.move.y, L.R, 0, TAU,
+          deny > 0 ? "#ff4d5e"
+                   : live ? ((w && w.tint) || "#8b81a8") : "#3b3357",
+          atRim && live ? 3.2 : 2);
   let kx = L.move.x, ky = L.move.y;
-  if (m){
-    const d = Math.hypot(m.dx, m.dy) || 1, cl = Math.min(d, L.R * 0.62);
-    kx += m.dx / d * cl; ky += m.dy / d * cl;
+  if (m && mag > 0.001){
+    // [0 .. rim] of real travel maps to [0 .. R-knob] of drawn travel
+    const cl = Math.min(mag, L.R * PAD_DASH_RIM) * ((1 - KNOB) / PAD_DASH_RIM);
+    kx += m.dx / mag * cl; ky += m.dy / mag * cl;
   }
-  g.beginPath(); g.arc(kx, ky, L.R * 0.34, 0, TAU);
-  g.fillStyle = "rgba(140,130,190,.30)"; g.fill();
-  g.strokeStyle = "#8b81a8"; g.lineWidth = 1.5; g.stroke();
+  g.beginPath(); g.arc(kx, ky, L.R * KNOB, 0, TAU);
+  g.fillStyle = atRim && live ? rgba((w && w.tint) || "#8b81a8", 0.34)
+                              : "rgba(140,130,190,.30)";
+  g.fill();
+  g.strokeStyle = atRim && live ? ((w && w.tint) || "#8b81a8") : "#8b81a8";
+  g.lineWidth = 1.5; g.stroke();
 
   /* --- spell stick --- */
   const c = padPtr.cast;
@@ -6359,11 +6382,12 @@ window.RPW = {
   // padAt() is pure and works on a desktop too, so the sector and direction
   // maths can be checked by the headless suite rather than only in a browser.
   touch: () => TOUCH,
-  // drive the dash gesture directly: a direction, how far out the stick is as a
-  // fraction of its radius, and optionally a clock, so the timing rules can be
-  // checked without a pointer or a real second passing
-  padShove: (deg, frac, at) => padStutter(deg, frac * 100, 100, at),
-  padStutterReset: () => { padArmed = true; padPush = null; },
+  // drive the dash gesture directly: how far out the stick is as a fraction of
+  // its radius, and whether the cooldown is back. Returns what happened —
+  // "armed", "inside", "held", "cooldown" or "dash" — so the arming rules and
+  // the cooldown gate can be checked without a pointer or a canvas.
+  padPush: (frac, ready) => padRimDash(frac * 100, 100, ready !== false),
+  padDashReset: () => { padArmed = false; },
   padAt: (deg) => ({ spell: SPELLS[padSpellAt(deg)].key,
                      name: SPELLS[padSpellAt(deg)].name,
                      dirs: padDirKeys(deg) }),
@@ -6375,7 +6399,7 @@ window.RPW = {
     sectors: PAD_SECTOR.map((i, s) => ({ deg: PAD_ANGLE[s], key: SPELLS[i].key, name: SPELLS[i].name })),
     charge: padCharge(you, padPtr.cast && padPtr.cast.idx),
     dash: { ready: you ? clamp(1 - (you.dashCool || 0) / DASH_CD, 0, 1) : 1,
-            armed: padArmed, push: !!padPush }
+            rim: PAD_DASH_RIM, armed: padArmed }
   }),
   desyncNote,
   startMatch(opts){

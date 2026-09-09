@@ -144,44 +144,89 @@ const LAND = Object.assign({}, phone, {
      hold.spent > flick.spent + 2,
      `flick spent ${flick.spent}, hold spent ${hold.spent} — the charge is not reaching the cast`);
 
-  /* ---- stutter the movement stick to dash, thumb never leaving the glass */
-  await p.waitForTimeout(2200);                     // let any earlier dash come back
+  /* ---- push the stick out to its ring to dash
+
+     On a fresh match, because by now the wizard has been walked into a corner
+     and shot at a wall: a dash that fires while wedged against a prop moves
+     nobody, which is indistinguishable from a dash that never fired. Ask the
+     question somewhere the answer can be seen. */
+  await p.evaluate(() => window.RPW.startMatch({
+    mode: "match", seed: 5, difficulty: 0, total: 2, humans: 1, seat: 0,
+    levels: [11, 11], opts: { mapPreset: "arena" } }));
+  await p.waitForFunction(() => window.RPW.phase() === "fight", null, { timeout: 20000 });
+  await p.waitForTimeout(400);
   const dashBefore = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
   ok("the dash ring is full when the dash is ready", dashBefore > 0.99, "ready=" + dashBefore);
 
-  const out = f => ({ x: L.move.x + L.R * f, y: L.move.y });
+  /* Find a direction with room in it before measuring a dash.
+
+     A dash into a wall moves nobody, which looks exactly like a dash that never
+     fired — and the arena preset happens to put a prop immediately beside the
+     left spawn point, so both "push right" and "push towards the middle" walk
+     straight into it. So probe: walk briefly each way and take the first
+     direction the wizard actually travels in. */
+  let aim = null;
+  for (const deg of [180, 270, 90, 225, 315, 0]){
+    const a = deg * Math.PI / 180;
+    const t = { x: L.move.x + Math.cos(a) * L.R * 0.5, y: L.move.y + Math.sin(a) * L.R * 0.5 };
+    const s0 = await me();
+    await touch("touchStart", L.move.x, L.move.y);
+    await touch("touchMove", t.x, t.y);
+    await p.waitForTimeout(140);
+    const s1 = await me();
+    await touch("touchEnd", 0, 0);
+    if (Math.hypot(s1.x - s0.x, s1.y - s0.y) > 12){ aim = a; break; }
+  }
+  ok("the wizard has somewhere to walk", aim !== null,
+     "every direction was blocked, so a dash cannot be measured here");
+  if (aim === null) aim = Math.PI;
+  const out = f => ({ x: L.move.x + Math.cos(aim) * L.R * f,
+                      y: L.move.y + Math.sin(aim) * L.R * f });
   const p0 = await me();
   await touch("touchStart", L.move.x, L.move.y);
-  await touch("touchMove", out(0.9).x, out(0.9).y);   // shove
-  await p.waitForTimeout(60);
-  await touch("touchMove", out(0.25).x, out(0.25).y); // ease off, thumb still down
-  await p.waitForTimeout(40);
-  await touch("touchMove", out(0.9).x, out(0.9).y);   // shove again
+  await touch("touchMove", out(0.4).x, out(0.4).y);   // walking
+  await p.waitForTimeout(50);
+  const walkRing = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
+  await touch("touchMove", out(1.0).x, out(1.0).y);   // out to the ring
   await p.waitForTimeout(150);
   const p1 = await me();
   const dashMid = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
   await touch("touchEnd", 0, 0);
-  ok("stuttering the movement stick dashes",
-     (p1.x - p0.x) > 45, `moved ${(p1.x - p0.x).toFixed(1)}px in 150ms — a dash should outrun a walk`);
+  ok("walking the stick partway out does not dash", walkRing > 0.99,
+     "the ring dropped to " + walkRing + " during ordinary movement");
+  const travelled = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+  ok("pushing it out to the ring dashes",
+     travelled > 45, `moved ${travelled.toFixed(1)}px in 150ms — a dash should outrun a walk`);
   ok("and the ring empties when it goes on cooldown",
      dashMid < 0.4, "ring reads " + dashMid + " right after dashing");
 
-  /* the negative case matters more than the positive one: if ordinary movement
-     dashes, the game spends a cooldown the player was saving */
-  await p.waitForTimeout(3200);
-  const q0 = await me();
+  /* Resting against the ring must not dash on repeat, and must not fire again
+     by itself the moment the cooldown returns — the thumb has to come back in. */
   await touch("touchStart", L.move.x, L.move.y);
-  for (let deg = 0; deg <= 360; deg += 30){          // sweep the stick right round
-    const t = { x: L.move.x + Math.cos(deg * Math.PI / 180) * L.R * 0.9,
-                y: L.move.y + Math.sin(deg * Math.PI / 180) * L.R * 0.9 };
+  await touch("touchMove", out(0.5).x, out(0.5).y);   // inside: this re-arms
+  await p.waitForTimeout(40);
+  await touch("touchMove", out(1.0).x, out(1.0).y);   // and out to the ring again
+  await p.waitForTimeout(3600);                       // hold there through the cooldown
+  const restRing = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
+  await touch("touchEnd", 0, 0);
+  ok("holding against the ring does not dash again on its own",
+     restRing > 0.99,
+     "the ring read " + restRing + " after holding at the rim through a full cooldown — " +
+     "a dash fired with the thumb never moving");
+
+  /* And a plain direction change at walking distance is never a dash. */
+  await p.waitForTimeout(400);
+  await touch("touchStart", L.move.x, L.move.y);
+  for (let deg = 0; deg <= 360; deg += 30){
+    const t = { x: L.move.x + Math.cos(deg * Math.PI / 180) * L.R * 0.7,
+                y: L.move.y + Math.sin(deg * Math.PI / 180) * L.R * 0.7 };
     await touch("touchMove", t.x, t.y);
     await p.waitForTimeout(25);
   }
   const swept = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
   await touch("touchEnd", 0, 0);
-  ok("but sweeping the stick around does not dash",
+  ok("sweeping the stick around inside the ring does not dash",
      swept > 0.99, "the ring dropped to " + swept + " — a plain direction change spent the dash");
-  void q0;
 
   /* ---- portrait says so instead of playing */
   await p.setViewportSize({ width: LAND.viewport.height, height: LAND.viewport.width });

@@ -1058,32 +1058,42 @@ Two details worth keeping:
   a charge sweep it does not have; they get a breathing ring instead. Drawing a
   progress bar for a quantity that does not exist is inventing a number.
 
-### Dash is a stutter, not a button
+### Dash is the outer ring
 
-Dash is a **stutter of the movement stick**: shove it one way, ease off, shove
-it the same way again. The thumb never leaves the glass, which matters, because
-the moment you want to dash is the moment you are already moving. It dashes the
-way the stick is pointing, which is exactly what `tryDash()` reads off the mask.
+Dash is: push the stick out until it touches its outer ring. It goes the way you
+pushed, and only if the cooldown has come back.
 
-It is read off the stick's MAGNITUDE with hysteresis, not off taps. A shove
-registers when the stick passes 0.78 of its radius, and cannot register again
-until the stick has fallen back inside 0.50 — so holding the stick out, however
-hard, is one shove and not a stream of them. Two shoves within 300ms and 55
-degrees of each other is a dash. Reading magnitude rather than taps means a
-lift-and-retap chains through the same path for free, so a double tap dashes too.
+Two earlier versions were worse, and both failed for the same underlying reason.
+A double tap made you lift your thumb at the exact moment you were trying to
+move. A stutter — shove, ease off, shove again — kept the thumb down but was
+fiddly to perform, and it fought the game: movement here is **digital**, eight
+directions on or off, so there is no reason at all not to rest the stick at full
+stretch, and a gesture built out of magnitude has to fight that habit. The rim
+is the honest version of the same idea. One motion, visible on the stick, and
+reaching it is a decision rather than a flourish.
 
-The negative case is the one that matters: **swinging the stick between
-directions must not dash**, or the game spends a cooldown the player was saving.
-It cannot, because a swing keeps the magnitude high the whole way round and
-never falls back inside the re-arm threshold. There is a test that sweeps the
-stick through a full circle and asserts the dash is still there afterwards, and
-another that wobbles between the two thresholds without releasing.
+The trigger is 0.92 of the stick's radius, and it re-arms only after the stick
+comes back inside 0.70. Two consequences worth stating:
 
-The cooldown rides on the stick as a ring that fills as it recovers and closes
-in the wizard's own tint when the dash is back — a fresh dash flashes it white,
-so the gesture is acknowledged even when the wizard is at the edge of where the
-thumb is looking. It reads `1 - dashCool / DASH_CD`, the same number the
-desktop's dash card uses, so the two cannot disagree.
+- **Resting against the ring spends one dash and no more.** Without the re-arm
+  rule, a thumb parked at the rim would fire a dash by itself the instant the
+  cooldown returned, with nothing having moved.
+- **A fresh touch starts disarmed.** Grabbing for the stick and landing wide of
+  the rim cannot dash; the thumb has to be inside once first. A dash you did not
+  ask for is worse than one you have to ask for twice.
+
+Being refused on cooldown still consumes the push, for the same reason: a
+refusal that stayed armed would fire later on its own.
+
+The cooldown is the ring itself. It fills as the dash recovers and lights in the
+wizard's own tint when it is available, so "the ring is live" and "the ring is
+the button" are the same fact. A refused push pulses it red. It reads
+`1 - dashCool / DASH_CD`, the same number the desktop's dash card uses.
+
+The knob's travel is scaled so its EDGE meets the ring at exactly the magnitude
+that triggers a dash. The first version clamped the knob at 0.62 of the radius,
+which put the rim it was supposed to touch permanently out of reach — a control
+whose gesture you cannot see is a control nobody finds.
 
 Target cycle and pause are the two small buttons.
 
@@ -1117,18 +1127,29 @@ be quietly wrong: every angle maps to exactly one spell, all six own an even
 sixth of the circle, each sector is centred on its own label rather than
 straddling it, the eight directions press the right keys, and no push ever
 presses two opposing keys. It also drives the dash gesture directly through
-`RPW.padShove(deg, fraction, clock)` — a seam that takes its own clock, so the
-timing rules are checked without a pointer or a real second passing — and
-asserts the headless rig is **not** detected as a touch device.
+`RPW.padPush(fraction, ready)`, which returns what happened — `armed`, `inside`,
+`held`, `cooldown` or `dash` — so the arming rules and the cooldown gate are
+checked without a pointer or a canvas, including the boundary against the rim
+value the drawing scales itself by. And it asserts the headless rig is **not**
+detected as a touch device.
 
 `tools/phone-check.js` (`npm run test:phone`, needs playwright and a served
 copy) drives a real browser with a real touchscreen profile: a desktop context
 gets no pad and no touch class, the arena uses most of the screen, pushing the
 stick moves the right way, holding charges and releasing casts — proven by mana,
 since `cast()` spends `cost * (1 + level)`, so a hold must cost measurably more
-than a flick of the same spell — a stutter dashes and empties the ring, sweeping
-the stick right round does not, and portrait shows the rotate screen and stops
-accepting input.
+than a flick of the same spell — pushing out to the ring dashes and empties it,
+walking the stick partway out does not, sweeping it right round inside the ring
+does not, and holding it against the ring through a full cooldown does not dash
+a second time. Portrait shows the rotate screen and stops accepting input.
+
+Two things that cost time in that file and are worth knowing before editing it:
+the arena preset puts a prop immediately beside the left spawn, so a dash
+measured in a fixed direction can fire and move nobody — which looks exactly
+like a dash that never fired, and it sent me looking for a restart bug that did
+not exist (menu starts and fresh rounds are fine; only the direction was wrong).
+It probes for open ground now. And the rings the sticks wear are drawn outside
+the sticks, so the layout margin has to clear the RINGS, not the sticks.
 
 ## What is not built yet
 
