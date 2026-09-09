@@ -35,6 +35,25 @@ const WARD_COS = 0.2, WARD_R = 40;
 // the wall with it. WARD_FADE is how long a full wall takes to bleed out on its
 // own with nothing hitting it.
 const WARD_BLOCKS = { spark:1, rive:1 };
+/* Is this a touch device? Declared HERE, at the top, rather than beside the rest
+   of the pad code at the bottom: fitCurtain() and show() both consult it, both
+   are defined hundreds of lines above the pad, and a `const` read before its
+   declaration has run is a ReferenceError rather than undefined. Detection
+   itself only needs `window`, so it costs nothing to settle early. */
+const TOUCH = (() => {
+  try {
+    if (typeof window === "undefined" || !window.matchMedia || !window.navigator) return false;
+    // An explicit choice always wins: detection is a guess, and a guess that
+    // cannot be overridden is a bug report you can do nothing with. Handy for
+    // testing the phone layout on a desktop, too.
+    const q = String(window.location && window.location.search || "");
+    if (/[?&]touch=1/.test(q)) return true;
+    if (/[?&]touch=0/.test(q)) return false;
+    return window.matchMedia("(pointer: coarse)").matches &&
+           (window.navigator.maxTouchPoints || 0) > 0;
+  } catch (e) { return false; }
+})();
+
 const KEYMAP = {"y":0,"u":1,"i":2,"h":3,"j":4,"k":5};
 const KEYMAP2 = {"1":0,"2":1,"3":2,"4":3,"5":4,"6":5};   // player two, top row or numpad
 // Input is sampled once per simulation step into a bit mask. Local play reads the
@@ -4106,6 +4125,13 @@ function fitCurtain(){
   if (!curtainInner || !curtainEl) return;
   curtainInner.style.transform = "";
   curtainInner.style.height = "";
+  /* Not on a phone. Scaling content down with a transform does not change its
+     layout, so a centred panel spills as far above its box as below it — and
+     nothing can be scrolled to above zero, which is how a title ended up
+     permanently off the top of the menu. The phone menu is a top-anchored
+     scroller instead (see html.touch .curtain), which needs this to keep its
+     hands off. */
+  if (TOUCH) return;
   if (curtainEl.hidden || curtainEl.clientHeight < 80) return;   // nothing to measure yet
   const avail = curtainEl.clientHeight - 36;                     // the 18px padding, top and bottom
   const need = curtainInner.scrollHeight;
@@ -4179,6 +4205,9 @@ function show(which){
   panel = which;
   musicFor("lobby");   // any menu, including the one a finished match drops you on
   scheduleFit();
+  // A phone menu scrolls, so a tall panel can leave it parked halfway down;
+  // the next panel would then open on its own middle.
+  if (TOUCH && curtainEl) curtainEl.scrollTop = 0;
   for (const k in PANEL) PANEL[k].hidden = (k !== which);
   // the last match's report and round counter are not part of any menu — navigating
   // anywhere clears them, and renderStats() puts the report back after a match ends
@@ -4908,19 +4937,6 @@ function desyncNote(d){
    Everything here is behind TOUCH. On a desktop nothing is created, no
    listener is registered, and drawPad() returns on its first line. */
 
-const TOUCH = (() => {
-  try {
-    if (typeof window === "undefined" || !window.matchMedia || !window.navigator) return false;
-    // An explicit choice always wins: detection is a guess, and a guess that
-    // cannot be overridden is a bug report you can do nothing with. Handy for
-    // testing the phone layout on a desktop, too.
-    const q = String(window.location && window.location.search || "");
-    if (/[?&]touch=1/.test(q)) return true;
-    if (/[?&]touch=0/.test(q)) return false;
-    return window.matchMedia("(pointer: coarse)").matches &&
-           (window.navigator.maxTouchPoints || 0) > 0;
-  } catch (e) { return false; }
-})();
 
 /* Where the spells sit around the stick. Sector s spans [s*60, s*60+60) degrees
    measured clockwise from due right, so its centre is s*60+30 — and the six

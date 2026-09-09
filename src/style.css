@@ -528,8 +528,10 @@
      turns into a numbered heading mid-sentence. */
   .dash-cd{font-family:var(--mono);color:var(--spark)}
 
+  /* Above the menu, or the full-screen curtain covers the one control that is
+     supposed to sit under it and How to play becomes untappable on a phone. */
   html.touch details.manual{flex:0 0 auto;border:0;border-top:1px solid var(--edge);
-    border-radius:0;background:transparent}
+    border-radius:0;background:#0b0816;position:relative;z-index:55}
   html.touch details.manual summary{padding:5px 10px;font-size:10px;letter-spacing:.2em;
     text-align:center;color:var(--muted)}
   /* Opening it must not shove the arena off the screen, so the body leaves the
@@ -556,10 +558,34 @@
   html.touch .shot{flex:0 0 34%;max-width:190px;order:2;margin:0}
   html.touch .shot figcaption{font-size:9.5px}
 
-  /* A short landscape screen has no room for the full menu furniture, so the
-     panels scroll inside the arena rather than pushing the page taller. */
-  html.touch .curtain{padding:10px 14px;gap:6px;overflow-y:auto}
+  /* ------------------------------------------------------- the menu, on a phone
+
+     The menu was a panel inside the arena's picture frame, and on a phone in
+     landscape that frame is about 250px tall — less than the menu needs. What
+     you got was a title scrolled off the top of its own box and no way to reach
+     it, because the old fit trick SCALED the content with a transform: a
+     transform does not change layout, so centred content spills equally above
+     and below, and nothing can scroll above zero.
+
+     So on a phone the menu is a SCREEN, not a panel: fixed to the viewport,
+     anchored to the top, scrolling honestly when it has more to say than fits.
+     Sitting above the pad also means the thumb sticks can never show through a
+     menu, whatever the game thinks it is doing behind it. */
+  html.touch .curtain{position:fixed;inset:0;z-index:50;
+    justify-content:flex-start;align-items:center;
+    /* breathing room at the top on a taller screen, none to spare on a short
+       one — a short screen needs every pixel for the panel itself */
+    padding:clamp(10px,7vh,44px) 16px 18px;gap:8px;overflow-y:auto;
+    -webkit-overflow-scrolling:touch;touch-action:pan-y;
+    background:radial-gradient(80% 70% at 50% 0%, rgba(19,15,34,.97), rgba(6,4,12,.99))}
+  /* margin:auto on the children is what centred them vertically; top-anchored
+     now, or the first thing in a tall panel is the thing you cannot see */
+  html.touch .curtain>*{margin:0 auto;flex:0 0 auto}
+  html.touch .curtain h2{font-size:clamp(17px,3.4vh,26px);letter-spacing:.06em}
+  html.touch .curtain p{font-size:12.5px;line-height:1.45;max-width:52ch}
+  html.touch #curtainText{font-size:12px;color:#a99fc8}
   html.touch .panel{gap:6px}
+  html.touch .whoami{margin-bottom:2px}
 
   /* Landscape is the playable orientation; portrait gets the rotate screen and
      the pad is pointless there. */

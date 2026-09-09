@@ -1120,6 +1120,47 @@ asks the child, the child asks the parent, and both settle on zero. The arena
 collapsed to its two border pixels. The stage takes its height from `flex:1`
 with `min-height:0` now.
 
+### The menu had to become a screen
+
+The first real-phone screenshots showed every menu title sliced off at the top,
+and no way to scroll up to it. The emulator had never shown it, for one reason:
+a phone in Chrome landscape gives up most of its height to the URL bar. A
+Pixel 7 profile in Playwright is 839x412; the same phone in real Chrome is
+about 915x300. The menu lived inside the arena's picture frame, and at that
+height the frame is roughly 250px tall — less than the menu needs.
+
+What made it unreachable rather than merely cramped was `fitCurtain()`. It
+shrank overlong content with `transform: scale(k)`, and a transform does not
+change layout: the box stays its original size and the scaled content spills
+equally above and below it. Nothing can be scrolled to above zero, so the title
+sat outside the box forever. The scale also had a 0.55 floor, so past a certain
+amount of content it stopped helping at all.
+
+On a phone the menu is now a **screen** rather than a panel: fixed to the
+viewport, anchored to the top, scrolling honestly when it has more to say than
+fits, and `fitCurtain()` returns early on touch so it keeps its hands off. Every
+panel change resets `scrollTop`, or a tall panel leaves the next one opening on
+its own middle.
+
+Two things fell out of it:
+
+- **It sits above the pad** (z-index 50 against the pad's 40), so thumb sticks
+  can never show through a menu whatever the game believes it is doing behind
+  it.
+- **The How to play bar had to be raised above it** (z-index 55), or a
+  full-screen curtain buries the one control that is meant to sit under it and
+  the manual becomes untappable on the menu. There is a hit test for exactly
+  that: `elementFromPoint` on the middle of the bar has to come back as the bar.
+
+`TOUCH` also moved to the top of `src/game.js`. `fitCurtain()` and `show()` both
+consult it and both are defined hundreds of lines above the pad code, and a
+`const` read before its declaration has run is a ReferenceError, not
+`undefined`.
+
+`tools/phone-check.js` now sweeps 915x411, 915x300 and 915x260 and checks every
+panel's title is inside its box and every panel opens at the top. That sweep
+fails nine times on the build that shipped before it.
+
 ### How to play, on a phone
 
 The manual is still there, because a player who cannot find out what Hexstone

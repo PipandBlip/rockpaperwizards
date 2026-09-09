@@ -245,6 +245,59 @@ const LAND = Object.assign({}, phone, {
   ok("sweeping the stick around inside the ring does not dash",
      swept > 0.99, "the ring dropped to " + swept + " — a plain direction change spent the dash");
 
+  /* ---- the menu, on a short landscape screen
+
+     This is the one real phones caught and the emulator did not: a phone in
+     Chrome landscape has the URL bar eating the top, leaving barely 300px of
+     height, and the menu used to be a panel inside the arena's ~250px picture
+     frame. Titles ended up above the top of their own box, where no amount of
+     scrolling could reach them, because the old fit trick scaled content with
+     a transform instead of laying it out smaller. */
+  // one comfortable size and the two that actually broke: a phone in Chrome
+  // landscape with the URL bar showing is around 300px tall, sometimes less
+  for (const [vw, vh] of [[915, 411], [915, 300], [915, 260]]){
+    await p.setViewportSize({ width: vw, height: vh });
+    await p.waitForTimeout(200);
+    // short timeouts: a click that cannot land must fail fast, not sit out the
+    // default 30 seconds and push the whole suite past anyone's patience
+    const tap = async sel => { try { await p.click(sel, { timeout: 1200 }); } catch (e) {} };
+    for (const [btn, name] of [[null, "home"], ["#mpBtn", "multiplayer"],
+                               ["#joinBtn", "join"], ["#soloBtn", "solo"]]){
+      if (btn) {
+        if (name === "solo"){ await tap("#joinBack"); await tap("#mpBack"); }
+        await tap(btn);
+        await p.waitForTimeout(120);
+      }
+      const m = await p.evaluate(() => {
+        const cur = document.getElementById("curtain");
+        const cr = cur.getBoundingClientRect();
+        const t = document.getElementById("curtainTitle").getBoundingClientRect();
+        return { cutBy: Math.round(cr.top - t.top), scroll: cur.scrollTop,
+                 reachable: cur.scrollHeight - cur.clientHeight >= 0 };
+      });
+      ok(`the ${name} title is not cut off at ${vw}x${vh}`, m.cutBy <= 0,
+         `the title starts ${m.cutBy}px above the top of the menu, which no scroll can reach`);
+      ok(`and the ${name} menu opens at the top at ${vw}x${vh}`, m.scroll === 0,
+         "it opened already scrolled to " + m.scroll);
+    }
+    await tap("#soloBack");
+    await p.waitForTimeout(100);
+  }
+  await p.setViewportSize(LAND.viewport);
+  await p.waitForTimeout(200);
+
+  /* The full-screen menu must not bury the one control that lives under it. */
+  const barUnder = await p.evaluate(() => {
+    const sum = document.querySelector("#manual summary");
+    const r = sum.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return { onTop: !!(hit && (hit === sum || sum.contains(hit))),
+             hit: hit ? (hit.id || hit.className || hit.tagName) : null };
+  });
+  ok("How to play is still tappable with the menu up",
+     barUnder.onTop === true,
+     "a tap on the bar would land on " + barUnder.hit + " instead");
+
   /* ---- How to play, as a bar under the arena that opens into a sheet */
   const bar = await p.evaluate(() => {
     const m = document.getElementById("manual");
