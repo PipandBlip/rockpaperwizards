@@ -71,6 +71,22 @@ const LAND = Object.assign({}, phone, {
        man.key === true && man.touch === false, JSON.stringify(man));
     ok("and keeps the key badge on every spell", man.badges === 6,
        man.badges + " of 6 spell badges are visible — a keyboard player needs those");
+
+    /* The held-Spark repeat is a phone affordance. A keyboard holding Y must
+       still CHARGE it, or the change has quietly altered the desktop game. */
+    await p.evaluate(() => window.RPW.startMatch({
+      mode: "match", seed: 5, difficulty: 0, total: 2, humans: 1, seat: 0,
+      levels: [11, 11], opts: { mapPreset: "arena" } }));
+    await p.waitForFunction(() => window.RPW.phase() === "fight", null, { timeout: 20000 });
+    await p.waitForTimeout(300);
+    await p.keyboard.down("y");
+    await p.waitForTimeout(500);
+    const charging = await p.evaluate(() => window.RPW.where()[0]);
+    await p.keyboard.up("y");
+    ok("a keyboard holding Spark still charges it rather than repeating",
+       charging.charge === 0,
+       "the local wizard reports charge " + charging.charge +
+       " after half a second on Y — a desktop should be mid-charge, not re-firing");
     await ctx.close();
   }
 
@@ -160,6 +176,41 @@ const LAND = Object.assign({}, phone, {
   ok("and a hold casts a bigger spell than a flick",
      hold.spent > flick.spent + 2,
      `flick spent ${flick.spent}, hold spent ${hold.spent} — the charge is not reaching the cast`);
+
+  /* ---- held Spark repeats; held Rive does not
+
+     Counted by watching mana: every cast spends some, so a run of downward
+     steps is a run of casts. Spark held should fire several times over a second;
+     Rive held should charge the whole time and fire exactly once, on release. */
+  const casts = async (deg, holdMs) => {
+    await p.evaluate(() => window.RPW.startMatch({
+      mode: "match", seed: 5, difficulty: 0, total: 2, humans: 1, seat: 0,
+      levels: [11, 11], opts: { mapPreset: "arena" } }));
+    await p.waitForFunction(() => window.RPW.phase() === "fight", null, { timeout: 20000 });
+    await p.waitForTimeout(300);
+    const t = at(deg, 0.85);
+    await touch("touchStart", L.cast.x, L.cast.y);
+    await touch("touchMove", t.x, t.y);
+    let last = (await me()).mana, drops = 0;
+    const until = Date.now() + holdMs;
+    while (Date.now() < until){
+      await p.waitForTimeout(25);
+      const m = (await me()).mana;
+      if (m < last - 4) drops++;      // a cast, not regen
+      last = m;
+    }
+    await touch("touchEnd", 0, 0);
+    await p.waitForTimeout(200);
+    const after = (await me()).mana;
+    if (after < last - 4) drops++;     // the cast on release, if there was one
+    return drops;
+  };
+  const sparkShots = await casts(210, 1100);   // upper-left sector = Spark
+  const riveShots  = await casts(270, 1100);   // straight up = Rive
+  ok("holding Spark fires it again and again",
+     sparkShots >= 3, "only " + sparkShots + " Spark casts in 1.1s of holding");
+  ok("and holding Rive still charges one big one instead",
+     riveShots <= 1, riveShots + " Rive casts in 1.1s — it is repeating when it should charge");
 
   /* ---- push the stick out to its ring to dash
 

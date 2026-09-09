@@ -179,4 +179,21 @@ test("the ring the player sees is the ring the code triggers on", () => {
     "a push just past the reported rim did not dash");
 });
 
+console.log("\nheld Spark repeats");
+
+test("the repeating spell is Spark, and only Spark", () => {
+  const r = RPW.padInfo().rapid;
+  assert.strictEqual(r.spell, "y",
+    "the auto-repeat is wired to '" + r.spell + "' — Spark is the cheap fast one " +
+    "and the only one whose whole use is mashing it");
+  assert.ok(r.hold > 0.03 && r.hold < 0.2,
+    "a " + r.hold + "s hold between shots is outside anything that reads as rapid fire");
+});
+
+test("it is idle when nothing is held", () => {
+  const r = RPW.padInfo().rapid;
+  assert.strictEqual(r.engaged, false);
+  assert.strictEqual(r.releasing, false);
+});
+
 console.log(`\n${pass} passing`);

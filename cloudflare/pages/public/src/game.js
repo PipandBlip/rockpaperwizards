@@ -4856,6 +4856,10 @@ function pump(now){
   if (waiting) acc = Math.min(acc, STEP * 2);
   else if (acc > STEP * MAX_BACKLOG) acc = STEP * MAX_BACKLOG;
 
+  /* Held-Spark repeat lives ABOVE the draw-skip return: it is input, and input
+     a busy frame quietly drops is input the player will swear they gave. */
+  padRapid(real);
+
   if (bg) return;
   syncHUD();
   if (!waiting && acc >= STEP && skipped < MAX_SKIP){ skipped++; return; }
@@ -5062,11 +5066,58 @@ function padCastEngage(st, idx){
   const k = SPELLS[idx].key;
   keys[k] = true;
   tapped[k] = true;        // survive to the next sampled step even on a fast flick
+  padFireT = 0; padFiring = false;
 }
 function padCastRelease(st){
   if (st.idx == null) return;
   keys[SPELLS[st.idx].key] = false;
   st.idx = null;
+  padFireT = 0; padFiring = false;
+}
+
+/* ------------------------------------------------- Spark, held, on a phone
+
+   Spark is the cheap fast one, and on a keyboard you use it by mashing Y. A
+   thumb on a stick cannot mash: to fire twice you have to push out, come back
+   inside, and push out again. So on a phone, holding the Spark sector repeats
+   it instead of charging it.
+
+   This is INPUT SYNTHESIS, not a rule change. The pad lets the key go and
+   presses it again, which is the same stream of press and release edges a
+   desktop player produces by hand. `applyMask()` sees nothing unusual, the
+   twelve-bit mask on the wire is identical, and the simulation and the relay
+   never learn that a thumb was involved. Nothing here can desync a match.
+
+   It is also not free. Each Spark costs 9 mana against a 17/s regen — and the
+   regen drops to 6/s while a spell is charging — so a full bar buys about
+   eleven in a burst and then the rate settles near one a second. Mana does the
+   balancing, which is why this needed no cooldown of its own.
+
+   The re-press waits for `castLock` to clear rather than running on a fixed
+   period: `beginCharge()` returns early while that lock is up, so a press
+   timed inside it is silently swallowed and every other shot goes missing. */
+const PAD_RAPID = 0;             // SPELLS index that repeats when held (Spark)
+const PAD_RAPID_HOLD = 0.075;    // seconds held before it lets go and fires
+let padFireT = 0, padFiring = false;
+
+function padRapid(step){
+  const c = padPtr.cast;
+  if (!TOUCH || !c || c.idx !== PAD_RAPID || !you || you.dead){
+    padFireT = 0; padFiring = false;
+    return "idle";
+  }
+  const k = SPELLS[PAD_RAPID].key;
+  if (!padFiring){
+    padFireT += step;
+    if (padFireT < PAD_RAPID_HOLD) return "hold";
+    keys[k] = false;             // the release edge is what casts
+    padFiring = true; padFireT = 0;
+    return "fire";
+  }
+  if ((you.castLock || 0) > 0) return "locked";
+  keys[k] = true; tapped[k] = true;
+  padFiring = false; padFireT = 0;
+  return "press";
 }
 
 /* Where the thumb is, what that means, and whether it just asked for a dash.
@@ -5137,6 +5188,7 @@ function padPortrait(){
 function padClear(){
   padMoveOff();
   padArmed = false;
+  padFireT = 0; padFiring = false;
   if (padPtr.cast) padCastRelease(padPtr.cast);
   padPtr.move = padPtr.cast = null;
 }
@@ -5394,7 +5446,10 @@ window.RPW = {
     sectors: PAD_SECTOR.map((i, s) => ({ deg: PAD_ANGLE[s], key: SPELLS[i].key, name: SPELLS[i].name })),
     charge: padCharge(you, padPtr.cast && padPtr.cast.idx),
     dash: { ready: you ? clamp(1 - (you.dashCool || 0) / DASH_CD, 0, 1) : 1,
-            cd: DASH_CD, rim: PAD_DASH_RIM, armed: padArmed }
+            cd: DASH_CD, rim: PAD_DASH_RIM, armed: padArmed },
+    rapid: { spell: SPELLS[PAD_RAPID].key, hold: PAD_RAPID_HOLD,
+             engaged: !!(padPtr.cast && padPtr.cast.idx === PAD_RAPID),
+             releasing: padFiring }
   }),
   desyncNote,
   startMatch(opts){

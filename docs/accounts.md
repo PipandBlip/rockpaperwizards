@@ -1161,6 +1161,42 @@ consult it and both are defined hundreds of lines above the pad code, and a
 panel's title is inside its box and every panel opens at the top. That sweep
 fails nine times on the build that shipped before it.
 
+### Held Spark repeats, on a phone only
+
+Spark is the cheap fast one, and on a keyboard you use it by mashing Y. A thumb
+on a stick cannot mash: firing twice means pushing out, coming back inside the
+deadzone, and pushing out again. So on a phone, holding the Spark sector repeats
+it rather than charging it.
+
+The important part is what this is **not**. It is input synthesis: the pad lets
+the key go and presses it again, which is the same stream of press and release
+edges a desktop player produces by hand. `applyMask()` sees nothing unusual, the
+twelve-bit mask on the wire is identical, and neither the simulation nor the
+relay learns a thumb was involved. It cannot desync a match, and it needed no
+protocol change. Every other option — a rule inside `beginCharge`, a per-device
+fire rate — would have put a device difference inside the lockstep simulation,
+which is the one place a device difference must never be.
+
+It needed no cooldown either, because mana already is one. Each Spark costs 9
+against a 17/s regen, and the regen drops to 6/s while a spell is charging.
+Measured on a phone profile, holding Spark gives **twelve shots in the first two
+seconds** — about what a full bar buys — and then settles to roughly one a
+second. The burst is real and the sustain is not.
+
+Two details that would each have broken it:
+
+- The re-press waits for `castLock` to clear rather than running on a fixed
+  period. `beginCharge()` returns early while that lock is up, so a press timed
+  inside Spark's 70ms lock is swallowed and every other shot goes missing.
+- `padRapid()` is called ABOVE `pump()`'s draw-skip return. Below it, a busy
+  frame drops the repeat, and dropped input is input the player will swear they
+  gave.
+
+`tools/phone-check.js` holds Spark for a second and counts casts by watching
+mana step down, holds Rive the same way and requires exactly one, and — the
+guard that matters — holds Y on a **desktop** context and asserts the wizard is
+mid-charge rather than re-firing.
+
 ### How to play, on a phone
 
 The manual is still there, because a player who cannot find out what Hexstone
