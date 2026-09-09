@@ -144,20 +144,44 @@ const LAND = Object.assign({}, phone, {
      hold.spent > flick.spent + 2,
      `flick spent ${flick.spent}, hold spent ${hold.spent} — the charge is not reaching the cast`);
 
-  /* ---- double tap the movement stick to dash */
-  await p.waitForTimeout(400);
+  /* ---- stutter the movement stick to dash, thumb never leaving the glass */
+  await p.waitForTimeout(2200);                     // let any earlier dash come back
+  const dashBefore = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
+  ok("the dash ring is full when the dash is ready", dashBefore > 0.99, "ready=" + dashBefore);
+
+  const out = f => ({ x: L.move.x + L.R * f, y: L.move.y });
   const p0 = await me();
   await touch("touchStart", L.move.x, L.move.y);
-  await touch("touchMove", L.move.x + L.R * 0.8, L.move.y);
-  await p.waitForTimeout(80);
-  await touch("touchEnd", 0, 0);
-  await touch("touchStart", L.move.x, L.move.y);
-  await touch("touchMove", L.move.x + L.R * 0.8, L.move.y);
-  await p.waitForTimeout(160);
+  await touch("touchMove", out(0.9).x, out(0.9).y);   // shove
+  await p.waitForTimeout(60);
+  await touch("touchMove", out(0.25).x, out(0.25).y); // ease off, thumb still down
+  await p.waitForTimeout(40);
+  await touch("touchMove", out(0.9).x, out(0.9).y);   // shove again
+  await p.waitForTimeout(150);
   const p1 = await me();
+  const dashMid = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
   await touch("touchEnd", 0, 0);
-  ok("a double tap on the movement stick dashes",
-     (p1.x - p0.x) > 45, `moved ${(p1.x - p0.x).toFixed(1)}px in 160ms — a dash should outrun a walk`);
+  ok("stuttering the movement stick dashes",
+     (p1.x - p0.x) > 45, `moved ${(p1.x - p0.x).toFixed(1)}px in 150ms — a dash should outrun a walk`);
+  ok("and the ring empties when it goes on cooldown",
+     dashMid < 0.4, "ring reads " + dashMid + " right after dashing");
+
+  /* the negative case matters more than the positive one: if ordinary movement
+     dashes, the game spends a cooldown the player was saving */
+  await p.waitForTimeout(3200);
+  const q0 = await me();
+  await touch("touchStart", L.move.x, L.move.y);
+  for (let deg = 0; deg <= 360; deg += 30){          // sweep the stick right round
+    const t = { x: L.move.x + Math.cos(deg * Math.PI / 180) * L.R * 0.9,
+                y: L.move.y + Math.sin(deg * Math.PI / 180) * L.R * 0.9 };
+    await touch("touchMove", t.x, t.y);
+    await p.waitForTimeout(25);
+  }
+  const swept = (await p.evaluate(() => window.RPW.padInfo())).dash.ready;
+  await touch("touchEnd", 0, 0);
+  ok("but sweeping the stick around does not dash",
+     swept > 0.99, "the ring dropped to " + swept + " — a plain direction change spent the dash");
+  void q0;
 
   /* ---- portrait says so instead of playing */
   await p.setViewportSize({ width: LAND.viewport.height, height: LAND.viewport.width });

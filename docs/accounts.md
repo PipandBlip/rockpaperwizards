@@ -1058,9 +1058,34 @@ Two details worth keeping:
   a charge sweep it does not have; they get a breathing ring instead. Drawing a
   progress bar for a quantity that does not exist is inventing a number.
 
-Dash is a double tap on the movement stick, which dashes the way the stick is
-already pointing — exactly what `tryDash()` reads off the mask. Target cycle and
-pause are the two small buttons.
+### Dash is a stutter, not a button
+
+Dash is a **stutter of the movement stick**: shove it one way, ease off, shove
+it the same way again. The thumb never leaves the glass, which matters, because
+the moment you want to dash is the moment you are already moving. It dashes the
+way the stick is pointing, which is exactly what `tryDash()` reads off the mask.
+
+It is read off the stick's MAGNITUDE with hysteresis, not off taps. A shove
+registers when the stick passes 0.78 of its radius, and cannot register again
+until the stick has fallen back inside 0.50 — so holding the stick out, however
+hard, is one shove and not a stream of them. Two shoves within 300ms and 55
+degrees of each other is a dash. Reading magnitude rather than taps means a
+lift-and-retap chains through the same path for free, so a double tap dashes too.
+
+The negative case is the one that matters: **swinging the stick between
+directions must not dash**, or the game spends a cooldown the player was saving.
+It cannot, because a swing keeps the magnitude high the whole way round and
+never falls back inside the re-arm threshold. There is a test that sweeps the
+stick through a full circle and asserts the dash is still there afterwards, and
+another that wobbles between the two thresholds without releasing.
+
+The cooldown rides on the stick as a ring that fills as it recovers and closes
+in the wizard's own tint when the dash is back — a fresh dash flashes it white,
+so the gesture is acknowledged even when the wizard is at the edge of where the
+thumb is looking. It reads `1 - dashCool / DASH_CD`, the same number the
+desktop's dash card uses, so the two cannot disagree.
+
+Target cycle and pause are the two small buttons.
 
 ### Landscape only, and it says so
 
@@ -1091,16 +1116,19 @@ with `min-height:0` now.
 be quietly wrong: every angle maps to exactly one spell, all six own an even
 sixth of the circle, each sector is centred on its own label rather than
 straddling it, the eight directions press the right keys, and no push ever
-presses two opposing keys. It also asserts the headless rig is **not** detected
-as a touch device.
+presses two opposing keys. It also drives the dash gesture directly through
+`RPW.padShove(deg, fraction, clock)` — a seam that takes its own clock, so the
+timing rules are checked without a pointer or a real second passing — and
+asserts the headless rig is **not** detected as a touch device.
 
 `tools/phone-check.js` (`npm run test:phone`, needs playwright and a served
 copy) drives a real browser with a real touchscreen profile: a desktop context
 gets no pad and no touch class, the arena uses most of the screen, pushing the
 stick moves the right way, holding charges and releasing casts — proven by mana,
 since `cast()` spends `cost * (1 + level)`, so a hold must cost measurably more
-than a flick of the same spell — a double tap dashes, and portrait shows the
-rotate screen and stops accepting input.
+than a flick of the same spell — a stutter dashes and empties the ring, sweeping
+the stick right round does not, and portrait shows the rotate screen and stops
+accepting input.
 
 ## What is not built yet
 

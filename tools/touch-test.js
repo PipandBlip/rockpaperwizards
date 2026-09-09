@@ -98,4 +98,56 @@ test("no push ever presses two opposite keys, which would cancel to standing sti
   }
 });
 
+console.log("\nthe dash stutter");
+
+/* The gesture is: shove the stick one way, ease off, shove it the same way
+   again. The whole risk is that ordinary play trips it — swinging the stick
+   between directions must NOT dash, or the game spends your cooldown for you. */
+
+test("two shoves the same way, close together, ask for a dash", () => {
+  RPW.padStutterReset();
+  assert.strictEqual(RPW.padShove(0, 1.0), false, "the first shove is not a dash");
+  assert.strictEqual(RPW.padShove(0, 0.2), false, "easing off is not a dash");
+  assert.strictEqual(RPW.padShove(0, 1.0), true, "the second shove is");
+});
+
+test("holding the stick out is one shove, not a stream of them", () => {
+  RPW.padStutterReset();
+  RPW.padShove(90, 1.0);
+  for (let i = 0; i < 30; i++)
+    assert.strictEqual(RPW.padShove(90, 1.0), false,
+      "holding the stick at full stretch dashed on repeat " + i);
+});
+
+test("swinging between directions never dashes — the stick never eases off", () => {
+  RPW.padStutterReset();
+  RPW.padShove(0, 1.0);
+  for (let deg = 0; deg <= 360; deg += 10)
+    assert.strictEqual(RPW.padShove(deg, 1.0), false,
+      "sweeping the stick to " + deg + "deg dashed without being asked");
+});
+
+test("a stutter in a different direction is not a stutter", () => {
+  RPW.padStutterReset();
+  RPW.padShove(0, 1.0);
+  RPW.padShove(0, 0.2);
+  assert.strictEqual(RPW.padShove(180, 1.0), false,
+    "shoving the opposite way should start a new gesture, not finish the old one");
+});
+
+test("a slow second shove is a new gesture, not a dash", () => {
+  RPW.padStutterReset();
+  RPW.padShove(0, 1.0, 0);
+  RPW.padShove(0, 0.2, 100);
+  assert.strictEqual(RPW.padShove(0, 1.0, 900), false,
+    "900ms apart is two separate pushes, not one stutter");
+});
+
+test("easing only halfway does not re-arm, so a wobble cannot dash", () => {
+  RPW.padStutterReset();
+  RPW.padShove(0, 1.0);
+  RPW.padShove(0, 0.62);          // between IN and OUT: a wobble, not a release
+  assert.strictEqual(RPW.padShove(0, 1.0), false, "a wobble at full stretch dashed");
+});
+
 console.log(`\n${pass} passing`);

@@ -4933,7 +4933,50 @@ const PAD_SECTOR = [5, 4, 3, 0, 1, 2];      // sector index -> SPELLS index
 const PAD_ANGLE = [30, 90, 150, 210, 270, 330];
 
 const padPtr = { move: null, cast: null };  // pointerId -> which stick owns it
-let padCtx = null, padEl = null, padLastTap = 0, padDash = 0;
+let padCtx = null, padEl = null, padDashAt = 0;
+
+/* ------------------------------------------------------------- the dash
+
+   Dash is a STUTTER of the movement stick: shove it one way, ease off, shove
+   it the same way again. Your thumb never leaves the glass, which matters,
+   because the moment you want to dash is the moment you are already moving.
+
+   It is read off the stick's MAGNITUDE with hysteresis rather than off taps.
+   A push registers when the stick passes OUT, and it can only register again
+   after the stick has fallen back inside IN — so holding the stick out, however
+   hard, is one push and not a stream of them. Two pushes close together in
+   nearly the same direction is a dash.
+
+   Reading magnitude rather than taps also means a lift-and-retap chains through
+   the same path for free, so the old double tap still dashes.
+
+   Ordinary play does not trip it: swinging the stick from one direction to
+   another keeps the magnitude high the whole way, and never falls back inside
+   IN to re-arm. You have to actually let go. */
+const PAD_DASH_OUT = 0.78;      // fraction of the stick's radius that counts as a shove
+const PAD_DASH_IN = 0.50;       // and how far back it must fall before the next one counts
+const PAD_DASH_MS = 300;        // how close together the two shoves must be
+const PAD_DASH_ARC = 55;        // and how nearly the same direction, in degrees
+let padArmed = true, padPush = null;
+
+function padGap(a, b){ const d = Math.abs(((a - b) % 360 + 360) % 360); return Math.min(d, 360 - d); }
+/* Returns true on the frame a dash is asked for. Pure of drawing, and it only
+   ever sets the same key the shift key sets. */
+function padStutter(deg, mag, R, at){
+  if (mag < R * PAD_DASH_IN){ padArmed = true; return false; }
+  if (mag < R * PAD_DASH_OUT || !padArmed) return false;
+  padArmed = false;
+  const now = at != null ? at
+            : (typeof performance !== "undefined" ? performance.now() : Date.now());
+  if (padPush && now - padPush.t < PAD_DASH_MS && padGap(deg, padPush.deg) < PAD_DASH_ARC){
+    tapped[PAD1.dash] = true;   // exactly what a tap of shift does
+    padDashAt = now;            // so the ring can flash
+    padPush = null;             // one dash per stutter, not a machine gun
+    return true;
+  }
+  padPush = { t: now, deg };
+  return false;
+}
 
 function padLayout(){
   const vw = window.innerWidth, vh = window.innerHeight;
@@ -5006,16 +5049,21 @@ function padCastRelease(st){
   st.idx = null;
 }
 
+/* Where the thumb is, what that means, and whether it just asked for a dash.
+   Shared by the first touch and every move after it, so putting a thumb down
+   already off-centre counts as a shove exactly like sliding there would. */
+function padMoveUpdate(ptr, x, y, L){
+  ptr.dx = x - ptr.ox; ptr.dy = y - ptr.oy;
+  const mag = Math.hypot(ptr.dx, ptr.dy);
+  padMove(ptr.dx, ptr.dy, L.R);
+  if (mag > 0.001) padStutter(padAngle(ptr.dx, ptr.dy), mag, L.R);
+}
 function padDown(e){
   if (!padPlaying()) return;
   const L = padLayout();
   if (padHit(e, L.move.x, L.move.y, L.R * 1.5) && e.clientX < L.vw / 2){
     padPtr.move = { id: e.pointerId, ox: L.move.x, oy: L.move.y, dx: 0, dy: 0 };
-    // Two taps on the movement stick is a dash, and it dashes the way the stick
-    // is already pointing — which is exactly what tryDash() reads off the mask.
-    const now = performance.now();
-    if (now - padLastTap < 320){ tapped[PAD1.dash] = true; padDash = now; }
-    padLastTap = now;
+    padMoveUpdate(padPtr.move, e.clientX, e.clientY, L);
     e.preventDefault();
     return;
   }
@@ -5034,8 +5082,7 @@ function padMoveEvt(e){
   const L = padLayout();
   const m = padPtr.move, c = padPtr.cast;
   if (m && m.id === e.pointerId){
-    m.dx = e.clientX - m.ox; m.dy = e.clientY - m.oy;
-    padMove(m.dx, m.dy, L.R);
+    padMoveUpdate(m, e.clientX, e.clientY, L);
     e.preventDefault();
   }
   if (c && c.id === e.pointerId){
@@ -5048,7 +5095,7 @@ function padMoveEvt(e){
 }
 function padUp(e){
   const m = padPtr.move, c = padPtr.cast;
-  if (m && m.id === e.pointerId){ padPtr.move = null; padMoveOff(); }
+  if (m && m.id === e.pointerId){ padPtr.move = null; padMoveOff(); padArmed = true; }
   if (c && c.id === e.pointerId){ padCastRelease(c); padPtr.cast = null; }
 }
 // A match that is not running should not be holding keys down for you.
@@ -5058,6 +5105,7 @@ function padPortrait(){
 }
 function padClear(){
   padMoveOff();
+  padArmed = true; padPush = null;
   if (padPtr.cast) padCastRelease(padPtr.cast);
   padPtr.move = padPtr.cast = null;
 }
@@ -5096,8 +5144,29 @@ function drawPad(){
   if (!padPlaying()) return;
   const w = you;
 
-  /* --- movement stick --- */
+  /* --- movement stick, wearing the dash cooldown as a ring ---
+
+     The desktop reads dash readiness off its HUD card. A phone has no HUD card
+     and the stick is the only thing the thumb is looking at, so the ring goes
+     there: it fills as the cooldown runs down and closes when the dash is back.
+     Same number the card uses, so the two can never disagree. */
   const m = padPtr.move;
+  const ready = w ? clamp(1 - (w.dashCool || 0) / DASH_CD, 0, 1) : 1;
+  g.globalAlpha = 1;
+  padRing(g, L.move.x, L.move.y, L.R * 1.14, 0, TAU, "rgba(60,52,90,.55)", 4);
+  if (ready > 0.001){
+    // a fresh dash flashes the ring, so the gesture is acknowledged even when
+    // the wizard is off the edge of the thumb's attention
+    const flash = Math.max(0, 1 - (performance.now() - padDashAt) / 260);
+    g.globalAlpha = ready >= 1 ? 0.9 : 0.75;
+    padRing(g, L.move.x, L.move.y, L.R * 1.14, -Math.PI / 2,
+            -Math.PI / 2 + TAU * ready,
+            ready >= 1 ? (w && w.tint) || "#8b81a8" : "#5b5182", 4);
+    if (flash > 0){
+      g.globalAlpha = flash * 0.8;
+      padRing(g, L.move.x, L.move.y, L.R * 1.14, 0, TAU, "#ffffff", 3);
+    }
+  }
   g.globalAlpha = m ? 0.85 : 0.5;
   padRing(g, L.move.x, L.move.y, L.R, 0, TAU, "#3b3357", 2);
   let kx = L.move.x, ky = L.move.y;
@@ -5250,6 +5319,11 @@ window.RPW = {
   // padAt() is pure and works on a desktop too, so the sector and direction
   // maths can be checked by the headless suite rather than only in a browser.
   touch: () => TOUCH,
+  // drive the dash gesture directly: a direction, how far out the stick is as a
+  // fraction of its radius, and optionally a clock, so the timing rules can be
+  // checked without a pointer or a real second passing
+  padShove: (deg, frac, at) => padStutter(deg, frac * 100, 100, at),
+  padStutterReset: () => { padArmed = true; padPush = null; },
   padAt: (deg) => ({ spell: SPELLS[padSpellAt(deg)].key,
                      name: SPELLS[padSpellAt(deg)].name,
                      dirs: padDirKeys(deg) }),
@@ -5259,7 +5333,9 @@ window.RPW = {
     move: padPtr.move ? { dx: padPtr.move.dx, dy: padPtr.move.dy } : null,
     cast: padPtr.cast ? { dx: padPtr.cast.dx, dy: padPtr.cast.dy, idx: padPtr.cast.idx } : null,
     sectors: PAD_SECTOR.map((i, s) => ({ deg: PAD_ANGLE[s], key: SPELLS[i].key, name: SPELLS[i].name })),
-    charge: padCharge(you, padPtr.cast && padPtr.cast.idx)
+    charge: padCharge(you, padPtr.cast && padPtr.cast.idx),
+    dash: { ready: you ? clamp(1 - (you.dashCool || 0) / DASH_CD, 0, 1) : 1,
+            armed: padArmed, push: !!padPush }
   }),
   desyncNote,
   startMatch(opts){
