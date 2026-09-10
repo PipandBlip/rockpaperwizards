@@ -1472,7 +1472,7 @@ Deploy the worker before Pages, as usual. It is safe in that order: an old
 worker sanitising a new client's `"60.abc"` down to `"60"` just restores the old
 behaviour, which is where we already were.
 
-### And then remove the reason it could happen — attempted, NOT yet in effect
+### And then remove the reason it could happen — this part does NOT work
 
 The fingerprint detects a mismatch. It does not prevent one, and being told to
 hard-refresh is still an interruption. So `/src/*` was given a revalidating
@@ -1481,32 +1481,44 @@ cache rule in `cloudflare/pages/public/_headers`:
     /src/*
       Cache-Control: public, max-age=0, must-revalidate
 
-**Check the live headers before believing this worked.** After the deploy,
-`/src/game.js` still comes back with
+**It has no effect.** Cloudflare Pages ignores `Cache-Control` from `_headers`
+for its static assets, whatever the documentation's example implies. Everything
+else in that file works — the CSP is served on both domains — so the file is
+deployed and read; it is this directive specifically that is dropped.
 
-    cache-control: public, max-age=14400, must-revalidate
+Getting to that took two wrong answers, and the second is the instructive one.
 
-which is Cloudflare Pages' default for non-HTML assets, i.e. the rule is not
-being applied. The `_headers` file itself IS being consumed — the CSP in it is
-served, and `/_headers` returns the SPA fallback rather than the file, both of
-which say Pages is reading it as configuration. So either the edited file did
-not make it into the Pages build output, or Pages is not honouring
-`Cache-Control` from `_headers` for its own static assets. Cloudflare's own
-documentation shows a `Cache-Control` example under "Configure custom browser
-cache behavior", so it is supposed to work — which points at the deploy.
+My first note said "the rule isn't landing" and guessed at an undeployed file.
+Hermes then checked both domains, found `/src/game.js` served `max-age=0` on
+`pages.dev` and `max-age=14400` on `blipgaming.ca`, and concluded the rule lands
+on Pages' own domain and is overridden by a zone-level cache setting on the
+custom one. That is a reasonable read of those two numbers, and it is wrong.
 
-If it turns out Pages genuinely ignores it, the documented route is a Pages
-Function: `_headers` is explicitly not applied to Function responses, so a
-`functions/src/_middleware.js` that calls `next()` and rewrites the header takes
-precedence. That has not been done, because putting a Function in front of the
-game's own scripts is a real change and it should not be made to work around
-something that might simply be an undeployed file.
+The measurement that settles it samples a path the rule does **not** cover:
 
-Nothing is broken in the meantime: this half was only ever the belt to the
-fingerprint's braces. A stale copy is still caught and announced before the
-match starts. But the claim "`/src/*` now revalidates" was written into a
-handoff note before anyone looked at a live response header, and it was not
-true. Check the header, not the file.
+                    /src/game.js   /assets/audio/*   /favicon.svg   /
+    blipgaming.ca         14400             14400          14400    0
+    pages.dev                 0                 0              0    0
+
+The value tracks the **surface**, not the rule. Everything non-HTML is four
+hours on the custom domain and zero on `pages.dev`, whether `/src/*` covers it
+or not. `pages.dev` was never honouring the rule — it serves `max-age=0` for
+everything, which happens to be the value the rule asks for. Sampling only
+inside the rule's scope made a coincidence look like a confirmation, and sent us
+looking for a zone cache rule that does not exist.
+
+That is this session's recurring failure in its purest form: a green result that
+proves nothing reads exactly like one that proves everything. The fix is always
+the same — include the case that can tell the hypotheses apart. Here that is one
+extra fetch of a file the rule was never supposed to touch.
+
+**Nothing needs doing about it.** This half was only ever the belt to the
+fingerprint's braces: a stale copy is still caught and announced before the
+match starts, and the version tag moving each deploy handles the ordinary case.
+If the four-hour window is ever worth closing, the levers are a Cache Rule on
+the zone or a Pages Function — `_headers` is explicitly not applied to Function
+responses — and a Function in front of the game's own scripts is more risk than
+this problem currently justifies.
 
 ### What is checked
 

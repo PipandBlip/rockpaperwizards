@@ -32,12 +32,27 @@
 # These four files total well under 300KB and revalidate to a 304. The audio and
 # the pictures, which cannot affect the simulation, keep the long cache.
 #
-# NOT CONFIRMED IN PRODUCTION. After deploying this, /src/game.js still returned
-# Pages' default `max-age=14400`. The CSP above IS applied, so the file is being
-# read — but this rule is not landing. Before trusting it, fetch the live file
-# and look at the response header. If Pages really will not honour it here, the
-# documented route is a Pages Function (_headers does not apply to Function
-# responses), i.e. functions/src/_middleware.js rewriting Cache-Control.
+# THIS RULE DOES NOTHING. Kept only so the next person does not re-add it.
+#
+# Measured on the live deployment, fetching files INSIDE this rule and OUTSIDE
+# it as a control:
+#
+#   blipgaming.ca   /src/game.js  14400   /assets/audio/*  14400   /favicon.svg  14400
+#   pages.dev       /src/game.js      0   /assets/audio/*      0   /favicon.svg      0
+#
+# The value tracks the SURFACE, not the rule: everything non-HTML is 4h on the
+# custom domain and 0 on pages.dev, whether this rule covers it or not. Pages
+# ignores Cache-Control from _headers for its static assets. (Everything else in
+# this file works — the CSP above is served on both domains — so the file is
+# deployed and read; it is this directive specifically that is dropped.)
+#
+# Sampling only /src/* makes pages.dev look like the rule is working. It is not:
+# check a path the rule does NOT cover before believing it.
+#
+# If the four-hour window is ever worth closing, the levers are a Cache Rule on
+# the zone, or a Pages Function (_headers does not apply to Function responses).
+# Neither is needed today: the build fingerprint catches a mismatched client and
+# says so before the match starts.
 /src/*
   Cache-Control: public, max-age=0, must-revalidate
 
