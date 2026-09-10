@@ -5468,8 +5468,8 @@ window.RPW = {
     el("curtain").hidden = false;
     show("mp");
     if (reason === "build"){
-      el("curtainTitle").textContent = "You are on different versions";
-      el("curtainText").textContent = "Your game and your opponent's are not running the same build, so they were never going to agree about the arena. Both of you reload the page — a hard refresh, Ctrl+Shift+R or Cmd+Shift+R — and host again.";
+      el("curtainTitle").textContent = "You are running different copies";
+      el("curtainText").textContent = "Your game and the other player's are not the same build, so they were never going to agree about the arena. Usually one browser is still holding an older copy of the game it saved earlier — the version number can look identical and the code underneath still differ. Both of you do a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac) and host again.";
     } else if (reason === "dropped"){
       el("curtainTitle").textContent = "You dropped out";
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";

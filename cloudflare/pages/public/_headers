@@ -19,6 +19,21 @@
   Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin
 
+# The game's own code, and why it is not cached hard.
+#
+# index.html is always revalidated, so the ?v= it points at is always the
+# current one. src/*.js used to be handed out with four hours of browser cache
+# on top of that, on the reasoning that the ?v= makes the URL unique per deploy.
+# It only does when somebody remembers to change it. Reuse a version — or hold a
+# copy from before one — and two players end up running different programs while
+# both truthfully reporting the same version. The match starts and comes apart a
+# few seconds later, looking exactly like a bad connection. It is not one.
+#
+# These four files total well under 300KB and revalidate to a 304. The audio and
+# the pictures, which cannot affect the simulation, keep the long cache.
+/src/*
+  Cache-Control: public, max-age=0, must-revalidate
+
 # Never let an account response sit in a cache.
 /api/*
   Cache-Control: no-store

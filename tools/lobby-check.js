@@ -137,8 +137,16 @@ const ok = (name, cond, extra) => {
      nothing to show. That is the harness, not the game — a host looking at
      their own lobby is looking at it. */
   await A.bringToFront();
+  /* The round trip is measured by a 2s keepalive and painted by a 1s beat —
+     and Chromium thaws a background tab's timers lazily, so neither fires on a
+     fixed schedule the moment the tab comes back. Wait for the condition
+     (readout visible with a real number), not a fixed sleep: the assertion is
+     about what the lobby eventually shows, not about how quickly it may do it. */
   await A.waitForFunction(() => window.RPW.NET.rtt() > 0, null, { timeout: 15000 });
-  await A.waitForTimeout(1200);
+  await A.waitForFunction(() => {
+    const t = document.getElementById("pingTag");
+    return t && !t.hidden && /[1-9]\d*ms/.test(t.textContent);
+  }, null, { timeout: 15000 });
   const ping = await A.evaluate(() => {
     const t = document.getElementById("pingTag");
     const st = document.getElementById("stage").getBoundingClientRect();
@@ -164,7 +172,10 @@ const ok = (name, cond, extra) => {
   /* ---- and it survives into the match, which is where it matters most */
   await A.click("#startRoom");
   await A.waitForFunction(() => window.RPW.phase() !== "menu", null, { timeout: 15000 });
-  await A.waitForTimeout(2200);
+  await A.waitForFunction(() => {
+    const t = document.getElementById("pingTag");
+    return t && !t.hidden && /[1-9]\d*ms/.test(t.textContent);
+  }, null, { timeout: 15000 });
   const live = await A.evaluate(() => {
     const t = document.getElementById("pingTag");
     const st = document.getElementById("stage").getBoundingClientRect();

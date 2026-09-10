@@ -739,7 +739,7 @@
           <button data-diff="3" class="lv3">Escalation<em>Endless</em></button>
         </fieldset>
         <div class="opts arenapick">
-          <div class="rrow full"><span>Level</span><div class="seg" id="segSoloPreset"></div></div>
+          <div class="rrow full"><span>Arena</span><div class="seg" id="segSoloPreset"></div></div>
         </div>
         <div class="choices">
           <button class="go" id="goBtn">Begin the duel</button>
@@ -770,7 +770,7 @@
           <div class="rrow full"><span>Bot skill</span><div class="seg" id="segBotLvl"></div></div>
         </div>
         <div class="opts arenapick">
-          <div class="rrow full"><span>Level</span><div class="seg" id="segPreset"></div></div>
+          <div class="rrow full"><span>Arena</span><div class="seg" id="segPreset"></div></div>
         </div>
         <p class="note" id="hostNote"></p>
         <div class="roster" id="hostRoster"></div>
@@ -6637,8 +6637,8 @@ window.RPW = {
     el("curtain").hidden = false;
     show("mp");
     if (reason === "build"){
-      el("curtainTitle").textContent = "You are on different versions";
-      el("curtainText").textContent = "Your game and your opponent's are not running the same build, so they were never going to agree about the arena. Both of you reload the page — a hard refresh, Ctrl+Shift+R or Cmd+Shift+R — and host again.";
+      el("curtainTitle").textContent = "You are running different copies";
+      el("curtainText").textContent = "Your game and the other player's are not the same build, so they were never going to agree about the arena. Usually one browser is still holding an older copy of the game it saved earlier — the version number can look identical and the code underneath still differ. Both of you do a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac) and host again.";
     } else if (reason === "dropped"){
       el("curtainTitle").textContent = "You dropped out";
       el("curtainText").textContent = "Your game stopped sending input for long enough that the others carried on without you — your wizard finished the match as a bot. Join again to get back in.";
@@ -6910,6 +6910,14 @@ window.RPW = {
           pingTick(Date.now());
           net.state = "lobby";
           send({ t: "hello", name: currentName(), lv: currentLevel(), build: currentBuild() });
+          /* The fingerprint is a cache hit, but it is still asynchronous, and
+             nothing should wait on it to get into the lobby. So say hello now
+             with what we have and say it again the moment we know more — a
+             room is checked when it STARTS, which is many seconds later. */
+          codeReady.then(id => {
+            if (!id || !net.ws || net.ws.readyState !== 1) return;
+            send({ t: "hello", name: currentName(), lv: currentLevel(), build: currentBuild() });
+          }).catch(() => {});
           emit();
           resolve(net);
         };
@@ -6948,20 +6956,79 @@ window.RPW = {
   // traffic that could cost anybody a frame. The colours are not sent: cloak
   // jewels are earned strictly in level order, so a level is enough for every
   // client to rebuild the same row of stones from the shared GEMS table.
-  /* The build this page is running. Taken from the cache-bust on our own script
-     tag, so it changes on every deploy. Two clients running different builds
-     have different simulations and WILL diverge; saying so plainly beats
-     letting them play for seven seconds and calling it a desync. */
-  function currentBuild() {
+  /* Which PROGRAM is this page running?
+
+     Two clients running different code have different simulations and will
+     diverge; saying so plainly beats letting them play for nine seconds and
+     calling it a desync. The question is how to tell.
+
+     This used to be answered by the cache-bust number on our own script tag —
+     `game.js?v=59` — on the reasoning that it changes on every deploy. It does
+     not. It changes when somebody remembers to change it, and the consequences
+     of forgetting are invisible for hours and then blamed on the network:
+
+       index.html is served `max-age=0, must-revalidate`, so it is always fresh.
+       game.js is served `max-age=14400` — four hours in the browser's cache
+       without so much as a revalidation.
+
+     So if a deploy changes game.js and reuses the version, the player who
+     opened the game an hour ago runs the OLD file, the player opening it for
+     the first time today runs the NEW one, and both truthfully report build
+     "59". Every check passes. They start a match as two different programs and
+     part company the moment the changed code is reached. Distance has nothing
+     to do with it; it only looks that way, because two people in one room share
+     a deploy and two people on opposite sides of the world do not.
+
+     A version number cannot detect this, because the version number is exactly
+     the thing that is wrong. So ask the code instead: fetch our own scripts
+     from the browser's cache — `force-cache`, so we get the same bytes the page
+     is actually executing rather than whatever the server has now — and
+     fingerprint them. The tag still travels, because it is what a person can
+     read; the fingerprint is what makes the claim true. */
+  function fnvText(text) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  }
+  function simScripts() {
+    const out = [];
     try {
       const tags = document.getElementsByTagName("script");
       for (const t of tags) {
-        const m = (t.getAttribute("src") || "").match(/game\.js\?v=(\d+)/);
-        if (m) return m[1];
+        const src = t.getAttribute("src") || "";
+        if (/(^|\/)(game|net|account)\.js(\?|$)/.test(src)) out.push(src);
       }
     } catch (e) {}
+    return out;
+  }
+  function versionTag() {
+    for (const src of simScripts()) {
+      const m = src.match(/game\.js\?v=([0-9a-zA-Z.]+)/);
+      if (m) return m[1];
+    }
     return "0";
   }
+  /* Always settles: no fetch (the headless rigs), a blocked request or a
+     hostile cache all end as null, and a client that cannot fingerprint itself
+     is compared on its tag alone rather than being locked out of every match. */
+  let codeId = null;
+  const codeReady = (async () => {
+    const urls = simScripts();
+    if (!urls.length || typeof fetch !== "function") return null;
+    try {
+      let h = 2166136261 >>> 0;
+      for (const u of urls) {
+        const res = await fetch(u, { cache: "force-cache" });
+        h = (fnvText(await res.text()) ^ Math.imul(h, 16777619)) >>> 0;
+      }
+      codeId = h.toString(36);
+    } catch (e) { codeId = null; }
+    return codeId;
+  })();
+  function currentBuild() {
+    return codeId ? versionTag() + "." + codeId : versionTag();
+  }
+  RPW.NET.build = currentBuild;
 
   function currentLevel() {
     const p = window.RPWA && window.RPWA.profile;

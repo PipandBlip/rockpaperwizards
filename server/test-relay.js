@@ -413,6 +413,58 @@ test("a room split across two builds refuses to start, and says why", () => {
   assert.deepStrictEqual(bad.builds, ["45", "46"], "and told which builds are in the room");
 });
 
+/* The version tag is not enough on its own, and this is the case that mattered:
+   index.html is served fresh every time, game.js is cached for four hours. Reuse
+   a version across a deploy and one player runs the old file, the other the new
+   one, and both report the same number. So the id carries a fingerprint of the
+   code each client is actually running, and the check has to look at it. */
+
+test("same version, different code: the room refuses to start", () => {
+  const a = fakeB("A", "59.k3x9p1");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "59.zzq004"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.ok(!a.last("start"), "two different programs must not start a match");
+  assert.ok(a.last("badbuild"), "and both players are told to refresh");
+  assert.ok(b.last("badbuild"));
+});
+
+test("same version and the same code plays", () => {
+  const a = fakeB("A", "59.k3x9p1");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "59.k3x9p1"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.ok(a.last("start"), "identical clients must still be able to play");
+  assert.ok(!a.last("badbuild"));
+});
+
+test("a client that could not fingerprint itself is not locked out", () => {
+  // an old browser, or a blocked request: silent on the question, not evidence
+  const a = fakeB("A", "59.k3x9p1");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "59"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.ok(a.last("start"), "a missing fingerprint must not cost somebody the match");
+});
+
+test("the fingerprint survives the relay's sanitising", () => {
+  const a = fakeB("A", "59.k3x9p1");
+  a.say({ t: "create", total: 2 });
+  const code = a.last("room").code;
+  const b = fakeB("B", "60.k3x9p1"); b.say({ t: "join", code });
+  a.say({ t: "ready", v: true }); b.say({ t: "ready", v: true });
+  a.say({ t: "start" });
+  assert.ok(!a.last("start"), "a different version tag is still a different build");
+  assert.deepStrictEqual(a.last("badbuild").builds, ["59.k3x9p1", "60.k3x9p1"],
+    "the id must reach the relay intact — digits-only sanitising ate the fingerprint");
+});
+
 test("a client that is waiting is not a client that has gone", () => {
   const a = fakeB("A", "46");
   a.say({ t: "create", total: 2 });

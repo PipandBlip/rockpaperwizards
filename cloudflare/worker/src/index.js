@@ -55,8 +55,28 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
    desync — which sends people hunting the netcode instead of pressing refresh.
    So the build each client is running is part of the handshake, and a room that
    is not all on one build never starts. */
+/* A build id is "<tag>" or "<tag>.<fingerprint>": a version number a person can
+   read, and a hash of the code the client is actually running. Still sanitised;
+   just no longer narrowed to digits, which would have discarded the half that
+   makes the claim true. */
 function cleanBuild(v) {
-  return String(v == null ? "" : v).replace(/[^0-9]/g, "").slice(0, 8) || "0";
+  return String(v == null ? "" : v).replace(/[^0-9a-zA-Z.]/g, "").slice(0, 32) || "0";
+}
+/* Do these clients agree they are the same program?
+
+   The version tag must match — that is the deploy they think they are on. The
+   fingerprint must match too, but only between clients that HAVE one: a client
+   that could not fingerprint itself (an old browser, a blocked request) is
+   silent on the question, not evidence of a mismatch, and locking it out of
+   every match would trade a rare desync for a common lockout. */
+function buildsDiffer(seen) {
+  const tags = new Set(), codes = new Set();
+  for (const b of seen) {
+    const dot = String(b).indexOf(".");
+    tags.add(dot < 0 ? String(b) : String(b).slice(0, dot));
+    if (dot >= 0) codes.add(String(b).slice(dot + 1));
+  }
+  return tags.size > 1 || codes.size > 1;
 }
 function cleanLevel(v) {
   const n = Math.floor(Number(v));
@@ -328,7 +348,7 @@ export class RPWRelay extends DurableObject {
       const q = this.byId.get(pid);
       if (q) seen.add(q.build || "0");
     }
-    return seen.size > 1 ? [...seen].sort() : null;
+    return buildsDiffer(seen) ? [...seen].sort() : null;
   }
   startRoom(room) {
     if (room.state === "running") return;

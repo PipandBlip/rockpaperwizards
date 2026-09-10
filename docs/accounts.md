@@ -1372,6 +1372,140 @@ host looking at their own lobby is looking at it — and the check calls
 `bringToFront()` before it measures. I spent a while fixing a rounding bug that
 was real but was not this one.
 
+## The desync that was a browser cache
+
+Green and a friend in Canada could not finish a match. The report named the
+component — "the scenery at frame 540" — which is exactly what the component
+hashes were built for, and it sent me straight into the simulation. It was not
+in the simulation.
+
+What made it findable was one sentence from Green: *it used to work, and I think
+it was before the capes.* A regression with a date attached is a different
+problem from a mystery. It ruled out physics I had not touched and ruled in
+anything that changes when a deploy happens.
+
+### First: prove it is not the netcode
+
+Every networked test in this repo delivered messages the instant they were sent.
+That is a LAN with the cable removed — and it is why the suite stayed green
+through a bug that made the game unplayable across the Pacific. So
+`tools/lag-test.js` puts the two clients on a real link: a configurable one-way
+delay, jitter, and a frame rate per client, because the interesting case is not
+two identical machines but one that holds 60fps and one that does not.
+
+Two things about that harness are worth keeping.
+
+A WebSocket runs over TCP, so a connection **delivers in the order it was
+written**. My first version gave every message an independent delay and sorted
+by arrival, which let a late lobby sync overtake a match start — and it duly
+"found" a bug that cannot happen. Each direction now keeps its own arrival clock
+and nothing may land before the message in front of it. An unordered link does
+not model the internet; it models a different, easier internet that reports
+failures the real one never will.
+
+And a run that never disturbs the scenery proves nothing about the scenery. The
+scripted players cast Grasp and Hexstone specifically so crates get thrown and
+smashed, and the test prints how many distinct scenery states it saw — a green
+result off four states is not evidence.
+
+Thirty-two combinations of latency, jitter, frame rate, bot count and seed: all
+in lockstep, at speed. The simulation and the netcode were fine. Which left the
+one thing the harness cannot vary, because it loads one file into both
+sandboxes: **whether the two clients are running the same program at all.**
+
+### The actual cause
+
+Two headers, from the live site:
+
+    index.html      cache-control: public, max-age=0, must-revalidate
+    src/game.js     cache-control: public, max-age=14400, must-revalidate
+
+The page is always fresh. The code is cached for four hours. The only thing
+holding two players on the same program is the `?v=` cache-bust in the script
+tag — a number a human has to remember to change.
+
+Forget it once, and:
+
+- the player who opened the game an hour ago runs the file their browser saved;
+- the player opening it for the first time today runs the new one;
+- both read `game.js?v=59` off their own script tag and **truthfully report
+  build 59**;
+- `buildSplit()` sees one build, the room starts, and two different programs
+  play in lockstep until the changed code is reached.
+
+That is every fact Green gave me. It has nothing to do with distance; distance
+only correlates, because two people in one room share a deploy and two people on
+opposite sides of the world open the game hours apart and never share a cache.
+It explains why it "used to work" — before deploys became frequent — and why
+every determinism test passes, because each build is perfectly deterministic on
+its own. And it is not hypothetical: I nearly shipped it in the same session I
+found it, by leaving `?v=58` on a tree whose `game.js` had changed, while the
+live site was already on 59.
+
+### The fix: ask the code, not the version
+
+`currentBuild()` now fetches the client's own scripts with `cache: "force-cache"`
+— which returns the bytes the browser actually has, rather than whatever the
+server holds now — and fingerprints them. The id becomes `"60.12s9fa7"`: a
+version tag a person can read, and a hash that makes the claim true. A version
+number cannot detect this class of failure, because the version number is the
+thing that is wrong.
+
+Three details that matter:
+
+- **It always settles.** No `fetch`, a blocked request, or a hostile cache all
+  end as `null`, and the client falls back to the bare tag.
+- **A client with no fingerprint is not locked out.** `buildsDiffer()` compares
+  version tags always, and fingerprints only between clients that have one.
+  Silence is not evidence of a mismatch, and trading a rare desync for a common
+  lockout is a bad trade.
+- **The hello is sent twice.** Once immediately with the tag, so nothing waits
+  on a fetch to reach the lobby, and again when the fingerprint resolves. A room
+  is checked when it STARTS, which is many seconds later.
+
+`cleanBuild()` on both relays had to stop stripping everything but digits — it
+would have thrown the fingerprint away and left the check exactly as weak as
+before. Both twins changed together, and there is a test asserting the id
+survives the relay intact.
+
+Deploy the worker before Pages, as usual. It is safe in that order: an old
+worker sanitising a new client's `"60.abc"` down to `"60"` just restores the old
+behaviour, which is where we already were.
+
+### And then remove the reason it could happen
+
+The fingerprint detects a mismatch. It does not prevent one, and being told to
+hard-refresh is still an interruption. So `/src/*` now revalidates:
+
+    /src/*
+      Cache-Control: public, max-age=0, must-revalidate
+
+Four files, well under 300KB, revalidating to a 304. The audio and the pictures
+cannot affect the simulation and keep their long cache. The fingerprint is now a
+backstop rather than the only defence.
+
+### What is checked
+
+`tools/build-test.js` (in `npm test`) boots clients in separate contexts, each
+serving its own source back to its own `fetch` — which is what a browser cache
+is — and asserts that one changed simulation constant produces a different
+build, that identical clients agree, and that a client which cannot fingerprint
+itself still plays.
+
+`tools/stale-cache-check.js` (playwright plus the relay) is the whole thing end
+to end: the same page on two origins under the same version tag, one byte of
+simulation code apart, through the real relay, under the production CSP. It
+asserts the match is refused, that both players are told they are running
+different copies rather than being shown a desync, and that the CSP permits the
+fingerprint fetch — a `connect-src` that forbade it would fail silently and
+forever.
+
+It also runs the same scenario against a patched client with the old
+version-only check, and asserts that one **starts the match**. A test that
+passes with and without the fix is not evidence, and this repo has been caught
+by that twice: an `innerText` comparison that passed on an empty string, and a
+no-fold cape assertion that only checked joint angles.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile
