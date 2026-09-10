@@ -1278,6 +1278,100 @@ not exist (menu starts and fresh rounds are fine; only the direction was wrong).
 It probes for open ground now. And the rings the sticks wear are drawn outside
 the sticks, so the layout margin has to clear the RINGS, not the sticks.
 
+## The lobby stopped explaining itself
+
+The lobby had one job — who is coming? — and it answered in a paragraph:
+
+> Send the code to your friends. 3 seats are still empty; starting now fills
+> them with Adept bots. · 106ms to the relay (fine)
+
+Every clause of that is true and every clause of it is also on screen somewhere
+else, or could be. Worse, the seat count is a number inside prose that changes
+while you are reading the sentence containing it, and the round trip changes
+about once a second. A sentence that rewrites itself is not a sentence; it is a
+readout wearing a sentence's clothes.
+
+So the paragraph is gone and its three jobs are split three ways.
+
+**The seats are blocks.** `renderRoster()` draws one block per seat with a
+class saying what it is: `open` for an empty seat, `here` for somebody who has
+arrived, `ready` for somebody who has pressed Ready, plus `me` on your own. The
+class is the colour — dashed and dim for open, `--hex` amber for here, `--ward`
+green for ready — and the block carries the player's name and a person icon, or
+a bot icon on an empty seat, because an empty seat is not nothing: it is the
+bot you will be playing with if nobody takes it. The tag under the name says
+the one thing left to do (`waiting`, `ready`), and says `hosting` on the host's
+own block, because the host presses Start and is never asked to ready up. Three
+seats' worth of prose became a row you can count without reading.
+
+The icons are built with `createElementNS` against `SVGNS` and the path data in
+`ICON`, not with `innerHTML`. The page runs under a strict CSP and `innerHTML`
+on an SVG namespace is a reliable way to produce an element that exists,
+matches selectors and draws nothing at all.
+
+**The note is now only for errors.** The element survives — it is still where
+`netFail()` puts "that room is full" — but `hostNote()` clears it and `.note`
+carries `.note:empty { display: none }`, so a lobby with nothing wrong has no
+paragraph and no gap where one used to be. The static sentence came out of
+`index.html` as well as out of the JavaScript: `hostNote()` only runs on a net
+change, so leaving the fallback text in the markup meant the old sentence was
+still the first thing on screen, for as long as it took the relay to answer.
+
+**The round trip moved to the corner of the arena.** `#pingTag` sits absolutely
+positioned at the top right of `.stage`, over the canvas, in the lobby and in
+the match alike. `pingWord()` turns the number into a judgement (`sharp`,
+`fine`, `long, but playable`, `very long`) so it reads without a benchmark, and
+`paintPing()` returns early unless the number actually moved, because
+`syncHUD()` calls it every frame.
+
+That early return is also why the lobby needed `startPingBeat()`. In a match,
+`syncHUD()` repaints constantly. In a lobby the only repaints are roster
+changes, and the first round-trip sample arrives a second or two after the room
+opens — so on a quiet lobby the corner sat blank until somebody happened to
+join. A one-second interval fixes it and costs nothing, because the paint
+returns early on every tick where the number has not changed.
+
+### A round trip of zero is not a missing round trip
+
+Writing the readout turned up a real bug behind it. `RPW.NET.rtt()` returns 0
+to mean "not measured yet", and the smoothing was written as:
+
+```js
+rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+```
+
+`Date.now()` counts whole milliseconds. On a relay in the same building the
+sample is literally `0` — so `rtt` is set to 0, and the `rtt ?` guard then reads
+that as "still no measurement" on every sample afterwards, forever. The readout
+hid itself precisely when the connection was at its best.
+
+The fix is to stop making one variable carry two facts. `rttSeen` is a boolean
+that says whether a sample has ever landed; `rtt` carries only the number; and
+`RPW.NET.rtt()` reports `Math.max(1, Math.round(rtt))` once a sample has
+landed, because a measured round trip must never come back as the same value
+that means silence. The test asserts `/[1-9]\d*ms/` rather than `/\d+ms/` for
+the same reason — the old pattern would have passed on `0ms`.
+
+### tools/lobby-check.js
+
+None of the above is reachable from the headless suites: it needs a real relay,
+two real clients and a layout. `npm run test:lobby` (playwright, plus
+`node server/server.js` and a served copy) opens two browser pages, hosts a
+four-seat room on one, joins and readies on the other, and asserts the panel
+order, that the note says nothing and occupies no space but would still show an
+error, each seat's state as it changes, that open/here/ready compute to three
+different border colours — by eye, not only by class name — and that the round
+trip sits in the arena's top right, in the lobby and once the duel has started.
+
+One trap worth knowing before writing any timer-driven assertion across two
+Playwright pages: **Chromium throttles a background tab's timers to about once
+a minute.** The host's keepalive is a 2-second `setInterval`, so while the
+joiner's page is the one in front, the host page never pings, never measures a
+round trip, and shows an empty corner. That is the harness, not the game — a
+host looking at their own lobby is looking at it — and the check calls
+`bringToFront()` before it measures. I spent a while fixing a rounding bug that
+was real but was not this one.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile

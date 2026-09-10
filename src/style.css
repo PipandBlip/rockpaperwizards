@@ -249,7 +249,7 @@
   .opts .rrow.full{grid-column:1 / -1}
   .opts .rrow{margin:0}
   .room .note{margin-top:2px}
-  .room .roster{max-height:104px;overflow-y:auto}
+  .room .roster{max-height:168px;overflow-y:auto}
   /* the advanced knobs live behind a disclosure so the lobby is a code, a size
      and a roster — not a wall of sliders */
   /* Match options reads as a select control: a raised bar with a caret on the
@@ -334,19 +334,57 @@
     color:var(--spark);background:rgba(63,231,255,.05);border:1px solid var(--edge);border-radius:3px;
     padding:7px 10px;width:150px;text-align:center;padding-left:calc(10px + .3em)}
   .codefield input:focus{outline:none;border-color:var(--spark);box-shadow:0 0 14px -6px var(--spark)}
-  /* who has actually turned up */
-  .roster em.lv{font-style:normal;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
-    color:var(--spark);border:1px solid var(--edge);border-radius:2px;padding:0 4px;margin-left:6px}
-  .roster{display:flex;flex-direction:column;gap:3px;width:100%}
+  /* Who has actually turned up — as blocks, so the answer is a colour rather
+     than a sentence: dashed and dim is an empty seat, amber is someone who has
+     arrived, green is someone ready. */
+  .roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+    gap:6px;width:100%}
   .roster:empty{display:none}
-  .roster div{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;
-    color:#a99fc4;padding:4px 2px;border-bottom:1px solid rgba(42,35,64,.5)}
-  .roster div:last-child{border-bottom:0}
-  .roster div.me{color:#fff}
-  .roster div.empty{color:var(--muted);font-style:italic}
-  .roster i{font-style:normal;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
-  .roster i.on{color:var(--ward)}
+  .seat{display:flex;align-items:center;gap:8px;min-width:0;
+    padding:7px 9px;border-radius:4px;
+    border:1px solid var(--edge);background:rgba(255,255,255,.02);
+    transition:border-color .18s, background .18s, color .18s}
+  .seat-ico{width:15px;height:15px;flex:0 0 auto;opacity:.85}
+  .seat-body{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .seat-name{font-size:12px;font-weight:600;color:#cfc6e6;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .seat i{font-style:normal;font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted)}
+  .roster em.lv{font-style:normal;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+    color:var(--spark);border:1px solid var(--edge);border-radius:2px;padding:0 4px;
+    margin-left:auto;flex:0 0 auto}
+
+  /* an empty seat: dashed, quiet, and wearing the mark of what it becomes */
+  .seat.open{border-style:dashed;background:transparent;color:var(--muted)}
+  .seat.open .seat-name{color:var(--muted);font-weight:400;font-style:italic}
+  .seat.open .seat-ico{opacity:.45}
+
+  /* somebody is here, and the lobby is waiting on them */
+  .seat.here{border-color:var(--hex);background:rgba(255,143,58,.10);color:var(--hex)}
+  .seat.here .seat-name{color:#ffd0a6}
+  .seat.here i{color:var(--hex)}
+
+  /* and they have said they are ready */
+  .seat.ready{border-color:var(--ward);background:rgba(93,255,171,.10);color:var(--ward)}
+  .seat.ready .seat-name{color:#bdffe0}
+  .seat.ready i{color:var(--ward)}
+
+  .seat.me{box-shadow:0 0 0 1px rgba(255,255,255,.16) inset}
   .note.bad{color:var(--blood)}
+  /* the lobby note carries errors now and nothing else, so it should occupy
+     nothing at all when there is no error to carry */
+  .note:empty{display:none}
+
+  /* The round trip, in the corner of the arena. Above the curtain so the lobby
+     shows it too — knowing the link is bad is most useful BEFORE you start. */
+  .pingtag{position:absolute;top:8px;right:10px;z-index:4;pointer-events:none;
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+    padding:3px 7px;border-radius:3px;
+    border:1px solid var(--edge);background:rgba(6,4,12,.66);color:var(--muted)}
+  .pingtag[hidden]{display:none}
+  .pingtag.good{color:var(--ward);border-color:color-mix(in srgb, var(--ward) 40%, var(--edge))}
+  .pingtag.far{color:var(--hex);border-color:color-mix(in srgb, var(--hex) 40%, var(--edge))}
+  .pingtag.bad{color:var(--blood);border-color:color-mix(in srgb, var(--blood) 40%, var(--edge))}
   .pausebox{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
     background:rgba(6,4,12,.82);backdrop-filter:blur(2px);z-index:3}
   .pausebox[hidden]{display:none}

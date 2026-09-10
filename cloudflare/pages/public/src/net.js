@@ -182,7 +182,8 @@
 
       case "pong": {
         const sample = Date.now() - (+msg.s || Date.now());
-        rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+        rtt = rttSeen ? rtt * 0.7 + sample * 0.3 : sample;
+        rttSeen = true;
         // what the furthest OTHER player in the room costs, as the relay sees it
         peerRtt = Math.max(0, +msg.peer || 0);
         emit();
@@ -326,9 +327,16 @@
      to be sent, and therefore how much lag you play with — so it is worth
      showing people, and worth knowing before changing anything about where the
      relay lives. Smoothed, because a single sample is mostly jitter. */
-  let rtt = 0, peerRtt = 0, pingAt = 0;
-  RPW.NET.rtt = () => Math.round(rtt);
-  RPW.NET.peerRtt = () => Math.round(peerRtt);
+  let rtt = 0, peerRtt = 0, pingAt = 0, rttSeen = false;
+  /* Callers read 0 as "not measured yet", so a measured round trip must never
+     report as 0 — and on a relay in the same building it otherwise would.
+     Date.now() only counts whole milliseconds, so a local sample is literally
+     0, which used to be indistinguishable from silence: the readout hid itself
+     precisely when the connection was at its best. rttSeen carries the
+     "measured" part; the number carries only the number. */
+  const shown = v => v ? Math.max(1, Math.round(v)) : 0;
+  RPW.NET.rtt = () => rttSeen ? Math.max(1, Math.round(rtt)) : 0;
+  RPW.NET.peerRtt = () => shown(peerRtt);
   function pingTick(now) {
     if (!net.ws || net.ws.readyState !== 1) return;
     if (now - pingAt < 2000) return;

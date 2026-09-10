@@ -12,6 +12,7 @@
     "test:cape": "node tools/cape-test.js",
     "test:touch": "node tools/touch-test.js",
     "test:phone": "node tools/phone-check.js",
+    "test:lobby": "node tools/lobby-check.js",
     "test:feel": "node tools/cape-feel.js",
     "test:strip": "node tools/cape-strip.js",
     "test:relay": "node server/test-relay.js",

@@ -3440,11 +3440,11 @@ function syncHUD(){
     el("roundLabel").textContent =
       `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ${alive} ${alive === 1 ? "rival" : "rivals"}${party}`;
   } else {
-    const ping = NET.active && RPW_NET_RTT() ? ` · ${RPW_NET_RTT()}ms` : "";
-    el("roundLabel").textContent = (matchCfg.mode === "lives"
+    el("roundLabel").textContent = matchCfg.mode === "lives"
       ? `Lives · ${matchCfg.lives} each`
-      : `Round ${roundNo} · first to ${matchCfg.roundsToWin}`) + ping;
+      : `Round ${roundNo} · first to ${matchCfg.roundsToWin}`;
   }
+  paintPing();
 }
 
 /* ---------------------------------------------------------- music */
@@ -4310,29 +4310,55 @@ function afterSeg(){
 /* The round trip to the relay, in plain words. It is the single number that
    decides how a long-distance match feels, and until it was on screen nobody
    could tell a slow link from a broken one. */
-function pingText(){
-  const n = window.RPWNet;
-  if (!n || !RPW_NET_RTT()) return "";
+/* How far away the relay is, as a corner readout on the arena.
+
+   It used to be appended to the lobby's explanatory paragraph, which made a
+   sentence that rewrote itself every second while you were reading it. The
+   number is worth having and worth watching; it is just not prose. */
+function pingWord(ms){
+  return ms < 90 ? "sharp" : ms < 180 ? "fine" : ms < 320 ? "long, but playable" : "very long";
+}
+/* In a match, syncHUD() repaints this every frame. In a LOBBY nothing does:
+   the round trip arrives from the relay a second or so after you open the room,
+   and the only repaints are roster changes — so on a quiet lobby the readout
+   would sit blank until somebody happened to join. One slow tick fixes it, and
+   costs nothing because paintPing() returns early unless the number moved. */
+let pingBeat = 0;
+function startPingBeat(){
+  if (typeof setInterval !== "function" || pingBeat) return;
+  pingBeat = setInterval(() => { try { paintPing(); } catch (e) {} }, 1000);
+}
+let pingShown = null;
+function paintPing(force){
+  const tag = el("pingTag");
+  if (!tag) return;
   const ms = RPW_NET_RTT();
-  const how = ms < 90 ? "sharp" : ms < 180 ? "fine" : ms < 320 ? "long, but playable" : "very long";
-  return " · " + ms + "ms to the relay (" + how + ")";
+  // syncHUD() runs every frame; the round trip changes about once a second
+  if (!force && ms === pingShown) return;
+  pingShown = ms;
+  const live = !!(window.RPWNet && ms && (inRoom() || (NET && NET.active)));
+  tag.hidden = !live;
+  if (!live) return;
+  tag.textContent = ms + "ms · " + pingWord(ms);
+  tag.className = "pingtag " + (ms < 180 ? "good" : ms < 320 ? "far" : "bad");
 }
 function RPW_NET_RTT(){
   return (window.RPW && window.RPW.NET && window.RPW.NET.rtt) ? window.RPW.NET.rtt() : 0;
 }
+/* The lobby used to explain itself in a paragraph here — which game type this
+   is, how many seats were still empty, and what would fill them. The seat
+   blocks say all of that at a glance now: an empty seat is dashed and wears the
+   bot mark, so the sentence was narrating the picture directly beneath it.
+
+   The element stays. netFail() needs somewhere to put "could not reach the
+   match server", and that is worth a sentence. `.note:empty` keeps it from
+   taking any space the rest of the time. */
 function hostNote(){
-  const taken = inRoom() ? window.RPWNet.net.players.length : 1;
-  const bots = Math.max(0, roomTotal - taken);
   const note = el("hostNote");
+  if (!note) return;
   note.classList.remove("bad");
-  const fill = bots === 0
-    ? "Every seat is taken — start when you are ready."
-    : bots + (bots === 1 ? " seat is" : " seats are") + " still empty; starting now fills " +
-      (bots === 1 ? "it" : "them") + " with " + DIFF[botLevel].name +
-      (hostCoop ? (bots === 1 ? " ally." : " allies.") : (bots === 1 ? " bot." : " bots."));
-  note.textContent = (hostCoop
-    ? "You fight together against wave after wave — no friendly fire, and a downed ally is back on their feet next wave. "
-    : "Send the code to your friends. ") + fill + pingText();
+  note.textContent = "";
+  paintPing();
 }
 
 /* ------------------------------------------------------ the relay */
@@ -4381,22 +4407,60 @@ function setInvite(code){
   el("copyCode").classList.remove("done");
   el("copyCode").textContent = "Copy";
 }
+/* The seats, as blocks you can count at a glance.
+
+   A lobby answers one question — who is coming? — and it used to answer it in
+   rows of prose you had to read. Blocks answer it by colour: dim and dashed is
+   an empty seat, amber is somebody who has turned up, green is somebody ready.
+   Six of those read in about a second, which is roughly how long anyone spends
+   looking at a lobby.
+
+   An empty seat wears the bot mark rather than a blank, because that is what it
+   will become the moment the host starts. */
+const SVGNS = "http://www.w3.org/2000/svg";
+const ICON = {
+  // head and shoulders
+  person: "M8 7.6a2.9 2.9 0 1 0 0-5.8 2.9 2.9 0 0 0 0 5.8Zm0 1.3c-2.7 0-4.9 1.6-4.9 3.6V14h9.8v-1.5c0-2-2.2-3.6-4.9-3.6Z",
+  // a squared head with an aerial and two eyes
+  bot: "M7.3 1.4h1.4v1.4H11a2 2 0 0 1 2 2v5.8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4.8a2 2 0 0 1 2-2h2.3V1.4ZM6.1 6.3a1.05 1.05 0 1 0 0 2.1 1.05 1.05 0 0 0 0-2.1Zm3.8 0a1.05 1.05 0 1 0 0 2.1 1.05 1.05 0 0 0 0-2.1Z"
+};
+function seatIcon(kind, parent){
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("class", "seat-ico");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(SVGNS, "path");
+  path.setAttribute("d", ICON[kind]);
+  path.setAttribute("fill", "currentColor");
+  svg.appendChild(path);
+  if (parent) parent.appendChild(svg);
+  return svg;
+}
 function renderRoster(box){
   box.innerHTML = "";
   if (!inRoom()) return;
   const n = window.RPWNet.net;
   for (let i = 0; i < roomTotal; i++){
     const p = (n.players || []).find(x => x.seat === i);
-    const row = mk("div", p ? (i === n.seat ? "me" : null) : "empty", box);
-    const who = mk("span", null, row);
-    who.textContent = p ? (p.name + (p.host ? " (host)" : "")) : "empty — a bot takes this seat";
+    const state = !p ? "open" : (p.ready ? "ready" : "here");
+    const cell = mk("div", "seat " + state + (p && i === n.seat ? " me" : ""), box);
+    cell.setAttribute("data-seat", i);
+    seatIcon(p ? "person" : "bot", cell);
+    const body = mk("span", "seat-body", cell);
+    const who = mk("b", "seat-name", body);
+    who.textContent = p ? (p.name + (p.host ? " (host)" : "")) : "empty";
+    const tag = mk("i", null, body);
+    /* The host never presses Ready — they press Start — so "waiting" would sit
+       under their name for the whole lobby and read as something they had
+       forgotten to do. */
+    tag.textContent = !p ? "bot at start"
+                    : p.host ? "hosting"
+                    : p.ready ? "ready" : "waiting";
     // rank, so you can see who you are up against before the wands come out
     if (p && p.lv > 1){
-      const lv = mk("em", "lv", row);
+      const lv = mk("em", "lv", cell);
       lv.textContent = "Lv " + p.lv;
     }
-    const tag = mk("i", p && p.ready ? "on" : null, row);
-    tag.textContent = p ? (p.ready ? "ready" : "waiting") : "";
   }
 }
 let iAmReady = false;
@@ -4412,11 +4476,12 @@ function paintJoin(){
     btn.classList.remove("done");
   }
   renderRoster(el("joinRoster"));
+  paintPing(true);
   // the joiner is the one who usually has the long link, so show them the number
   if (inRoom()){
     const note = el("joinNote");
     if (note && !note.classList.contains("bad"))
-      note.textContent = "Waiting for the host to start." + pingText();
+      note.textContent = "Waiting for the host to start.";
   }
 }
 function onNetChange(n){
@@ -4887,6 +4952,7 @@ function syncPumpToVisibility(){
 if (typeof document !== "undefined" && document.addEventListener){
   document.addEventListener("visibilitychange", syncPumpToVisibility);
 }
+startPingBeat();
 makeMap();
 resetWizards();
 msg = null;

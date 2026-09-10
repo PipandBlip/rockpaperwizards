@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=57">
+  <link rel="stylesheet" href="src/style.css?v=58">
 </head>
 <body>
 
@@ -52,6 +52,10 @@
 
   <div class="stage" id="stage">
     <canvas id="game" width="960" height="620" aria-label="Wizard duel arena"></canvas>
+    <!-- The round trip to the relay, in the corner of the arena rather than at
+         the end of a sentence in the lobby: it changes while you read it, and a
+         number that moves does not belong inside prose. -->
+    <div class="pingtag" id="pingTag" hidden></div>
     <div class="curtain" id="curtain">
       <h2 id="curtainTitle">Rock, Paper, Wizards</h2>
       <p id="curtainText">Battle and level up your wizard, unlock new jewels to adorn your cloak, become the greatest Archmage.</p>
@@ -134,8 +138,8 @@
         <div class="opts arenapick">
           <div class="rrow full"><span>Arena</span><div class="seg" id="segPreset"></div></div>
         </div>
+        <p class="note" id="hostNote"></p>
         <div class="roster" id="hostRoster"></div>
-        <p class="note" id="hostNote">Send the code to your friends. Any seat still empty when you start becomes a bot.</p>
         <details class="moreopts">
           <summary>More options</summary>
           <div class="opts">
@@ -158,8 +162,8 @@
         <label class="codefield"><span>Invite code</span>
           <input id="codeInput" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" autocapitalize="characters"></label>
         <button class="go" id="joinGo">Join</button>
-        <div class="roster" id="joinRoster"></div>
         <p class="note" id="joinNote">Paste the code the host sent you.</p>
+        <div class="roster" id="joinRoster"></div>
         <button class="back" id="joinBack">Back</button>
       </div>
 
@@ -270,8 +274,8 @@
     </div>
   </div>
 
-  <script src="src/account.js?v=57"></script>
-  <script src="src/game.js?v=57"></script>
-  <script src="src/net.js?v=57"></script>
+  <script src="src/account.js?v=58"></script>
+  <script src="src/game.js?v=58"></script>
+  <script src="src/net.js?v=58"></script>
 </body>
 </html>
