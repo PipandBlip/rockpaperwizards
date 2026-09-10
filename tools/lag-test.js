@@ -62,7 +62,12 @@ const REDUCED_B = process.env.REDUCED_B === "1";
    bit. Real engines disagree far less often than that on ordinary inputs, which
    is exactly why this takes minutes to show up in a real match rather than
    seconds. */
-const ULP_B = +(process.env.ULP_B ?? 0);
+/* SKEW is accepted as an alias because it is the name that ended up in a
+   shipped handoff note, and an env var nobody recognises is silently ignored —
+   which is how a run that varied NOTHING got read as proof of the cross-browser
+   case. SKEW=1 means "on", at the default rarity. */
+const ULP_B = +(process.env.ULP_B ?? 0) ||
+              (process.env.SKEW ? (+process.env.SKEW > 1 ? +process.env.SKEW : 4096) : 0);
 const f64 = new Float64Array(1), u64 = new BigUint64Array(f64.buffer);
 function nextUlp(x){
   if (!Number.isFinite(x) || x === 0) return x;
@@ -397,6 +402,22 @@ async function settle(ms){
     console.log("\nFAIL: lockstep held, but the match crawled — only " + fa + " sim frames in " + FRAMES);
     process.exitCode = 1;
   } else {
+    /* A pass is only worth what the run actually varied. Spelling that out on
+       the verdict line is the difference between "the cross-browser case holds"
+       and "nothing was tested and nothing broke" — which read identically until
+       somebody acted on the wrong one. */
+    const varied = [];
+    if (JITTER) varied.push("jitter");
+    if (FPS_A !== FPS_B) varied.push("mismatched frame rates");
+    if (REDUCED_A !== REDUCED_B) varied.push("reduce-motion");
+    if (ULP_B) varied.push("a different browser's trig");
     console.log("\nPASS: in lockstep and running at speed over a " + (LAG * 2) + "ms link");
+    console.log(varied.length
+      ? "      the clients differed in: " + varied.join(", ")
+      : "      NOTE: both clients were identical (same code, same engine, same settings)." +
+        "\n      This run says nothing about playing across two different browsers." +
+        "\n      For that, set ULP_B (e.g. ULP_B=4096), or run tools/clash-test.js.");
+    if (MODE === "beam" && clashFrames === 0)
+      console.log("      NOTE: no two beams ever locked, so it says nothing about the clash either.");
   }
 })();

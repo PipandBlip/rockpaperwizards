@@ -1472,17 +1472,41 @@ Deploy the worker before Pages, as usual. It is safe in that order: an old
 worker sanitising a new client's `"60.abc"` down to `"60"` just restores the old
 behaviour, which is where we already were.
 
-### And then remove the reason it could happen
+### And then remove the reason it could happen — attempted, NOT yet in effect
 
 The fingerprint detects a mismatch. It does not prevent one, and being told to
-hard-refresh is still an interruption. So `/src/*` now revalidates:
+hard-refresh is still an interruption. So `/src/*` was given a revalidating
+cache rule in `cloudflare/pages/public/_headers`:
 
     /src/*
       Cache-Control: public, max-age=0, must-revalidate
 
-Four files, well under 300KB, revalidating to a 304. The audio and the pictures
-cannot affect the simulation and keep their long cache. The fingerprint is now a
-backstop rather than the only defence.
+**Check the live headers before believing this worked.** After the deploy,
+`/src/game.js` still comes back with
+
+    cache-control: public, max-age=14400, must-revalidate
+
+which is Cloudflare Pages' default for non-HTML assets, i.e. the rule is not
+being applied. The `_headers` file itself IS being consumed — the CSP in it is
+served, and `/_headers` returns the SPA fallback rather than the file, both of
+which say Pages is reading it as configuration. So either the edited file did
+not make it into the Pages build output, or Pages is not honouring
+`Cache-Control` from `_headers` for its own static assets. Cloudflare's own
+documentation shows a `Cache-Control` example under "Configure custom browser
+cache behavior", so it is supposed to work — which points at the deploy.
+
+If it turns out Pages genuinely ignores it, the documented route is a Pages
+Function: `_headers` is explicitly not applied to Function responses, so a
+`functions/src/_middleware.js` that calls `next()` and rewrites the header takes
+precedence. That has not been done, because putting a Function in front of the
+game's own scripts is a real change and it should not be made to work around
+something that might simply be an undeployed file.
+
+Nothing is broken in the meantime: this half was only ever the belt to the
+fingerprint's braces. A stale copy is still caught and announced before the
+match starts. But the claim "`/src/*` now revalidates" was written into a
+handoff note before anyone looked at a live response header, and it was not
+true. Check the header, not the file.
 
 ### What is checked
 
