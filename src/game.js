@@ -16,6 +16,154 @@ fogCv.width = W; fogCv.height = H;
 const fogC = fogCv.getContext("2d");
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/* ============================================ deterministic simulation maths
+
+   Two players on different browsers had matches fall apart after a few minutes,
+   always just after two beams locked against each other. It was not the network
+   and not the netcode: it was Math.sin.
+
+   The ECMAScript spec requires +, -, *, / and Math.sqrt to be correctly rounded
+   — those give bit-identical answers on every engine, forever. It does NOT
+   require that of sin, cos, tan, atan2, hypot, exp, pow or log. Those are
+   "implementation-approximated": V8, SpiderMonkey and JavaScriptCore are each
+   free to return a slightly different double for the same input, and they do.
+
+   In a lockstep game that is fatal, because every client must compute the same
+   world from the same inputs. Most of the time a last-bit difference washes out
+   — positions get clamped, hits are threshold tests. The BEAM CLASH does the
+   opposite. The orb's position along the line between two wizards is carried
+   from frame to frame and slid toward a target computed from both wizards' mana;
+   it is a feedback loop with memory and no quantisation, so it holds a tiny
+   difference and grows it. A few seconds later the two beams are different
+   lengths, they burn different props, and the scenery hashes stop matching. That
+   is exactly the report we kept getting: "the scenery", several thousand frames
+   in, right after a beam fight.
+
+   So the simulation does its own trigonometry, built only from the operations
+   the spec pins down. These are within about one unit in the last place of the
+   native versions — accuracy was never the problem, agreement was.
+
+   Drawing may still use Math.*: nothing outside this client depends on where a
+   spark was painted. Anything that touches simulation state must use these. */
+const PI = 3.141592653589793, PI_2 = 1.5707963267948966;
+const _dmF = new Float64Array(2), _dmU = new Uint32Array(_dmF.buffer);
+function ldexp(x, k){                       // x * 2^k without pow()
+  if (x === 0 || !Number.isFinite(x)) return x;
+  let r = x;
+  while (k > 1000){ r *= 8.98846567431158e307; k -= 1023; }
+  while (k < -1000){ r *= 2.2250738585072014e-308; k += 1022; }
+  _dmF[0] = 1; _dmU[1] = (1023 + k) << 20; _dmU[0] = 0;
+  return r * _dmF[0];
+}
+const PIO2_HI = 1.5707963267341256, PIO2_LO = 6.077100506506192e-11;
+const _S1=-1.66666666666666324348e-01, _S2=8.33333333332248946124e-03,
+      _S3=-1.98412698298579493134e-04, _S4=2.75573137070700676789e-06,
+      _S5=-2.50507602534068634195e-08, _S6=1.58969099521155010221e-10;
+const _C1=4.16666666666666019037e-02, _C2=-1.38888888888741095749e-03,
+      _C3=2.48015872894767294178e-05, _C4=-2.75573143513906633035e-07,
+      _C5=2.08757232129817482790e-09, _C6=-1.13596475577881948265e-11;
+function _kSin(x){ const z=x*x, w=z*z, r=_S2+z*(_S3+z*_S4)+z*w*(_S5+z*_S6); return x+z*x*(_S1+z*r); }
+function _kCos(x){ const z=x*x, w=z*z, r=z*(_C1+z*(_C2+z*_C3))+w*w*(_C4+z*(_C5+z*_C6)); return 1-(0.5*z-z*r); }
+/* Cody-Waite: pi/2 as an exact high part plus a low correction, so subtracting
+   n*pi/2 does not throw away the bits that decide the answer. */
+function _quad(x){
+  const n = Math.round(x * 0.6366197723675814);
+  return [((n % 4) + 4) % 4, (x - n * PIO2_HI) - n * PIO2_LO];
+}
+function SIN(x){
+  if (!Number.isFinite(x)) return NaN;
+  const q = _quad(x), r = q[1];
+  return q[0] === 0 ? _kSin(r) : q[0] === 1 ? _kCos(r) : q[0] === 2 ? -_kSin(r) : -_kCos(r);
+}
+function COS(x){
+  if (!Number.isFinite(x)) return NaN;
+  const q = _quad(x), r = q[1];
+  return q[0] === 0 ? _kCos(r) : q[0] === 1 ? -_kSin(r) : q[0] === 2 ? -_kCos(r) : _kSin(r);
+}
+const _T0=3.33333333333329318027e-01, _T1=-1.99999999998764832476e-01,
+      _T2=1.42857142725034663711e-01, _T3=-1.11111104054623557880e-01,
+      _T4=9.09088713343650656196e-02, _T5=-7.69187620504482999495e-02,
+      _T6=6.66107313738753120669e-02, _T7=-5.83357013379057348645e-02,
+      _T8=4.97687799461593236017e-02, _T9=-3.65315727442169155270e-02,
+      _T10=1.62858201153657823623e-02;
+/* One polynomial across the whole range is not good enough near |x| = 1 — the
+   first version of this was 3e-3 out there, which is not a last-bit difference,
+   it is a different answer. The interval split with an exact hi/lo constant per
+   interval brings every input back to about one ulp. */
+const _ATHI = [4.63647609000806093515e-01, 7.85398163397448278999e-01,
+               9.82793723247329054082e-01, 1.57079632679489655800e+00];
+const _ATLO = [2.26987774529616870924e-17, 3.06161699786838301793e-17,
+               1.39033110312309984516e-17, 6.12323399573676603587e-17];
+function _atPoly(x){
+  const z=x*x, w=z*z;
+  const s1 = z*(_T0+w*(_T2+w*(_T4+w*(_T6+w*(_T8+w*_T10)))));
+  const s2 = w*(_T1+w*(_T3+w*(_T5+w*(_T7+w*_T9))));
+  return x*(s1+s2);
+}
+function ATAN(x){
+  if (!Number.isFinite(x)) return x !== x ? NaN : (x > 0 ? PI_2 : -PI_2);
+  const neg = x < 0;
+  let a = neg ? -x : x, id;
+  if (a < 0.4375) id = -1;
+  else if (a < 0.6875){ id = 0; a = (2*a - 1) / (2 + a); }
+  else if (a < 1.1875){ id = 1; a = (a - 1) / (a + 1); }
+  else if (a < 2.4375){ id = 2; a = (a - 1.5) / (1 + 1.5*a); }
+  else { id = 3; a = -1 / a; }
+  const p = _atPoly(a);
+  const r = id < 0 ? a - p : _ATHI[id] - ((p - _ATLO[id]) - a);
+  return neg ? -r : r;
+}
+function ATAN2(y, x){
+  if (x === 0 && y === 0) return 0;
+  if (x === 0) return y > 0 ? PI_2 : -PI_2;
+  const a = ATAN(y / x);
+  if (x > 0) return a;
+  return y >= 0 ? a + PI : a - PI;
+}
+function HYPOT(x, y){
+  x = x < 0 ? -x : x; y = y < 0 ? -y : y;
+  if (x < y){ const t = x; x = y; y = t; }
+  if (x === 0) return 0;
+  const r = y / x;
+  return x * Math.sqrt(1 + r*r);       // sqrt is exact on every engine
+}
+const _LN2HI = 6.93147180369123816490e-01, _LN2LO = 1.90821492927058770002e-10;
+const _G1=6.666666666666735130e-01, _G2=3.999999999940941908e-01,
+      _G3=2.857142874366239149e-01, _G4=2.222219843214978396e-01,
+      _G5=1.818357216161805012e-01, _G6=1.531383769920937332e-01,
+      _G7=1.479819860511658591e-01;
+function LN(x){
+  if (x <= 0) return x === 0 ? -Infinity : NaN;
+  if (!Number.isFinite(x)) return x;
+  _dmF[0] = x;
+  let e = ((_dmU[1] >>> 20) & 0x7ff) - 1023;
+  _dmU[1] = (_dmU[1] & 0x000fffff) | (1023 << 20);
+  let m = _dmF[0];
+  if (m > 1.4142135623730951){ m *= 0.5; e += 1; }
+  const f = m - 1, s = f / (2 + f), z = s*s, w = z*z;
+  const R = w*(_G2+w*(_G4+w*_G6)) + z*(_G1+w*(_G3+w*(_G5+w*_G7)));
+  const hf = 0.5*f*f;
+  return e*_LN2HI - ((hf - (s*(hf+R) + e*_LN2LO)) - f);
+}
+const _P1=1.66666666666666019037e-01, _P2=-2.77777777770155933842e-03,
+      _P3=6.61375632143793436117e-05, _P4=-1.65339022054652515390e-06,
+      _P5=4.13813679705723846039e-08;
+function EXP(x){
+  if (x !== x) return NaN;
+  if (x > 709.78) return Infinity;
+  if (x < -745.2) return 0;
+  const k = Math.round(x * 1.4426950408889634);
+  const xx = (x - k*_LN2HI) - k*_LN2LO, t = xx*xx;
+  const c = xx - t*(_P1+t*(_P2+t*(_P3+t*(_P4+t*_P5))));
+  return ldexp(1 + (xx*c/(2-c) + xx), k);
+}
+function POW(x, y){
+  if (y === 0) return 1;
+  if (x === 0) return y > 0 ? 0 : Infinity;
+  if (x < 0) return NaN;
+  return EXP(y * LN(x));
+}
+
 /* ---------------------------------------------------------- spells */
 const SPELLS = [
   { key:"y", id:"spark", name:"Spark",    color:"#3fe7ff", cost:9,  weight:1, chargeW:1, speed:640, dmg:7,  radius:6,  cast:.07, maxChg:.75 },
@@ -126,8 +274,8 @@ const STEP = 1/60;                       // the simulation only ever advances in
 const rnd  = (a,b) => a + rand()*(b-a);    // simulation
 const vrnd = (a,b) => a + vrand()*(b-a);   // view only — never inside the sim
 const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
-const dist2 = (a,b) => (a.x-b.x)**2 + (a.y-b.y)**2;
-const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+const dist2 = (a,b) => (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y);
+const dist = (a,b) => HYPOT(a.x-b.x, a.y-b.y);
 const TAU = Math.PI*2;
 
 function rayCircle(ox,oy,dx,dy,cx,cy,r){
@@ -148,7 +296,7 @@ function segCircle(ax,ay,bx,by,cx,cy,r){
   let t = ((cx-ax)*dx + (cy-ay)*dy)/len2;
   t = clamp(t,0,1);
   const px = ax + dx*t, py = ay + dy*t;
-  return (px-cx)**2 + (py-cy)**2 <= r*r;
+  return (px-cx)*(px-cx) + (py-cy)*(py-cy) <= r*r;
 }
 
 /* ---------------------------------------------------------- state */
@@ -453,8 +601,8 @@ function bakeFloor(){
       const x = vrnd(0,W), y = vrnd(0,H), a = vrnd(0,TAU), L = vrnd(40,150);
       g.lineWidth = vrnd(1,3);
       g.beginPath(); g.moveTo(x,y);
-      g.quadraticCurveTo(x + Math.cos(a)*L*.5 + vrnd(-30,30), y + Math.sin(a)*L*.5 + vrnd(-30,30),
-                         x + Math.cos(a)*L, y + Math.sin(a)*L);
+      g.quadraticCurveTo(x + COS(a)*L*.5 + vrnd(-30,30), y + SIN(a)*L*.5 + vrnd(-30,30),
+                         x + COS(a)*L, y + SIN(a)*L);
       g.stroke();
     }
     // tufts of grass
@@ -512,8 +660,8 @@ function bakeFloor(){
   for (let i = 0; i < 12; i++){
     const a = i/12*TAU;
     g.beginPath();
-    g.moveTo(Math.cos(a)*168, Math.sin(a)*168);
-    g.lineTo(Math.cos(a)*190, Math.sin(a)*190);
+    g.moveTo(COS(a)*168, SIN(a)*168);
+    g.lineTo(COS(a)*190, SIN(a)*190);
     g.stroke();
   }
   g.restore();
@@ -665,9 +813,9 @@ function cast(w, idx, lvl){
       const ang = a + off + rnd(-.02,.02);
       const sp = s.speed * rnd(.9,1.1);
       shots.push({
-        x: w.x + Math.cos(a)*20 - Math.sin(a)*off*46,
-        y: w.y + Math.sin(a)*20 + Math.cos(a)*off*46,
-        vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp,
+        x: w.x + COS(a)*20 - SIN(a)*off*46,
+        y: w.y + SIN(a)*20 + COS(a)*off*46,
+        vx: COS(ang)*sp, vy: SIN(ang)*sp,
         weight: 1, w0: 1,
         dmg: 9 * (1 + lvl*0.35) * dmgMul(w),
         r: 6.5,
@@ -690,7 +838,7 @@ function cast(w, idx, lvl){
     speed = 115 + 75*lvl;
     hexR = 6 + 15*lvl + weight*0.6;
     seek = {
-      turn: 0.18 + 2.35*Math.pow(lvl, 1.8),
+      turn: 0.18 + 2.35*POW(lvl, 1.8),
       wob:  (1 - lvl) * 1.35,
       vMin: speed,
       vMax: 265 + 355*lvl,
@@ -698,8 +846,8 @@ function cast(w, idx, lvl){
     };
   }
   shots.push({
-    x: w.x + Math.cos(a)*22, y: w.y + Math.sin(a)*22,
-    vx: Math.cos(a)*speed, vy: Math.sin(a)*speed,
+    x: w.x + COS(a)*22, y: w.y + SIN(a)*22,
+    vx: COS(a)*speed, vy: SIN(a)*speed,
     weight, w0: weight,
     dmg: s.dmg * (1 + lvl*0.9) * dmgMul(w),
     r: hexR || (s.radius + weight*1.6),
@@ -715,7 +863,7 @@ function throwHeld(w){
   const d = w.held; if (!d) return;
   const a = w.facing;
   d.owner = null; d.thrown = 1.6;
-  d.vx = Math.cos(a)*520; d.vy = Math.sin(a)*520;
+  d.vx = COS(a)*520; d.vy = SIN(a)*520;
   d.thrower = w;
   w.held = null;
   swish(w, byId.grasp.color, "cast");
@@ -726,8 +874,8 @@ const DASH_CD = 3;
 function tryDash(w, ax, ay){
   if (w.dead || w.dashCool > 0 || w.dashT > 0 || w.beamOn) return false;
   let dx = ax, dy = ay;
-  if (Math.hypot(dx, dy) < .01){ dx = Math.cos(w.facing); dy = Math.sin(w.facing); }
-  const L = Math.hypot(dx, dy) || 1;
+  if (HYPOT(dx, dy) < .01){ dx = COS(w.facing); dy = SIN(w.facing); }
+  const L = HYPOT(dx, dy) || 1;
   w.dashT = .17; w.dashCool = DASH_CD;
   w.dashVX = dx/L * 880; w.dashVY = dy/L * 880;
   const tint = w.tint;
@@ -759,9 +907,9 @@ function moveWizard(w, ax, ay, dt){
   const chargeSlow = w.charge !== null ? .55 : 1;
   const holdSlow = w.held ? .82 : 1;
   const spd = 190 * beamSlow * chargeSlow * holdSlow;
-  const m = Math.hypot(ax,ay) || 1;
-  const tx = (ax/m)*spd*(Math.hypot(ax,ay) > .01 ? 1 : 0);
-  const ty = (ay/m)*spd*(Math.hypot(ax,ay) > .01 ? 1 : 0);
+  const m = HYPOT(ax,ay) || 1;
+  const tx = (ax/m)*spd*(HYPOT(ax,ay) > .01 ? 1 : 0);
+  const ty = (ay/m)*spd*(HYPOT(ax,ay) > .01 ? 1 : 0);
   w.vx += (tx - w.vx) * Math.min(1, dt*12);
   w.vy += (ty - w.vy) * Math.min(1, dt*12);
   w.x += w.vx*dt; w.y += w.vy*dt;
@@ -782,7 +930,7 @@ function blocksBeam(d){ return !d.owner && d.stopsBeam; }
 function launchOrb(w, x, y){
   const a = w.facing;
   shots.push({
-    x, y, vx: Math.cos(a)*400, vy: Math.sin(a)*400,
+    x, y, vx: COS(a)*400, vy: SIN(a)*400,
     weight: 9, w0: 9, dmg: 42 * dmgMul(w), r: 17,
     color: byId.beam.color, kind: "orb", owner: w, life: 2.4, trail: [], spin: 0,
     seek: null, glow: 44, lvl: 1, orb: true
@@ -805,7 +953,7 @@ function explodeOrb(s){
   }
 }
 function beamReach(w, other){
-  const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
+  const dx = COS(w.facing), dy = SIN(w.facing);
   let best = 1400;
   // walls
   if (dx > 0.001) best = Math.min(best, (W-4 - w.x)/dx);
@@ -828,7 +976,7 @@ function stopBeam(w, quiet){
   if (wasFiring && !quiet){
     w.beamBurn = 1.2;
     w.castLock = Math.max(w.castLock, .6);
-    puff(w.x + Math.cos(w.facing)*22, w.y + Math.sin(w.facing)*22, "#6b6188", 10);
+    puff(w.x + COS(w.facing)*22, w.y + SIN(w.facing)*22, "#6b6188", 10);
   }
 }
 function dmgMul(w){ return w && w.D && w.D.dmg ? w.D.dmg : 1; }
@@ -887,8 +1035,8 @@ function incomingThreat(w, foeW){
     if (s.owner !== foeW) continue;
     if (!perceives(w, s)) continue;          // it has not come into sight yet
     const toX = w.x - s.x, toY = w.y - s.y;
-    const d = Math.hypot(toX,toY) || 1;
-    const sp = Math.hypot(s.vx,s.vy) || 1;
+    const d = HYPOT(toX,toY) || 1;
+    const sp = HYPOT(s.vx,s.vy) || 1;
     const dot = (s.vx*toX + s.vy*toY)/(sp*d);
     if (dot < .86) continue;
     const t = d/sp;
@@ -901,8 +1049,8 @@ function incomingThreat(w, foeW){
     if (!d.thrown) continue;
     if (!perceives(w, d)) continue;
     const toX = w.x-d.x, toY = w.y-d.y;
-    const dd = Math.hypot(toX,toY)||1;
-    const sp = Math.hypot(d.vx,d.vy)||1;
+    const dd = HYPOT(toX,toY)||1;
+    const sp = HYPOT(d.vx,d.vy)||1;
     if ((d.vx*toX + d.vy*toY)/(sp*dd) > .85 && dd/sp < 1.3){ weight += 3; soonest = Math.min(soonest, dd/sp); }
   }
   return { weight, light, soonest };
@@ -933,7 +1081,7 @@ function nearestCover(w, from){
   for (const d of debris){
     if (d.owner || !d.stopsShot || d.hp <= 1) continue;
     const ax = d.x - from.x, ay = d.y - from.y;
-    const L = Math.hypot(ax,ay) || 1;
+    const L = HYPOT(ax,ay) || 1;
     const spot = { x: d.x + (ax/L)*(d.r+24), y: d.y + (ay/L)*(d.r+24) };
     if (spot.x < 30 || spot.x > W-30 || spot.y < 30 || spot.y > H-30) continue;
     const score = d.r*1.4 - dist(w,spot)*0.5;
@@ -947,8 +1095,8 @@ function ownWeightToward(w, opp){
   for (const s of shots){
     if (s.owner !== w) continue;
     const toX = opp.x - s.x, toY = opp.y - s.y;
-    const d = Math.hypot(toX,toY) || 1;
-    const sp = Math.hypot(s.vx,s.vy) || 1;
+    const d = HYPOT(toX,toY) || 1;
+    const sp = HYPOT(s.vx,s.vy) || 1;
     if ((s.vx*toX + s.vy*toY)/(sp*d) > .8 && d/sp < 1.5) total += s.weight;
   }
   return total;
@@ -965,7 +1113,7 @@ function aiTick(w, opp, dt){
   const by = seen ? opp.y : (w.seenY != null ? w.seenY : opp.y);
   const evade = () => {
     if (!D.dash || w.dashCool > 0) return;
-    const dx = bx - w.x, dy = by - w.y, L = Math.hypot(dx,dy) || 1;
+    const dx = bx - w.x, dy = by - w.y, L = HYPOT(dx,dy) || 1;
     if (rand() < D.aim) tryDash(w, -dy/L * w.strafe, dx/L * w.strafe);
   };
   w.think -= dt;
@@ -976,7 +1124,7 @@ function aiTick(w, opp, dt){
   const threat = incomingThreat(w, opp);
   const los = lineClear(w, opp, false) && seen;
   const losShoot = lineClear(w, opp, true) && seen;
-  const d = Math.hypot(w.x - bx, w.y - by);
+  const d = HYPOT(w.x - bx, w.y - by);
 
   // ---- reaction to threats
   w.react -= dt;
@@ -1068,7 +1216,7 @@ function aiTick(w, opp, dt){
   // somewhere else entirely rather than let it keep scraping the same crate.
   w.stuckT = (w.stuckT || 0) + dt;
   if (w.stuckT >= 0.5){
-    const moved = Math.hypot(w.x - (w.lastPX == null ? w.x : w.lastPX),
+    const moved = HYPOT(w.x - (w.lastPX == null ? w.x : w.lastPX),
                              w.y - (w.lastPY == null ? w.y : w.lastPY));
     if (moved < 12){
       w.stuckFor = (w.stuckFor || 0) + w.stuckT;
@@ -1084,17 +1232,17 @@ function aiTick(w, opp, dt){
   const wantD = w.hp < 35 ? 380 : 300;
   // a long walk goes through the nav grid; the last few strides are direct
   const routeTo = (tx, ty) => {
-    if (Math.hypot(tx - w.x, ty - w.y) < 60) return [tx - w.x, ty - w.y];
+    if (HYPOT(tx - w.x, ty - w.y) < 60) return [tx - w.x, ty - w.y];
     const wp = navNext(w.x, w.y, tx, ty);
     return wp ? [wp.x - w.x, wp.y - w.y] : [tx - w.x, ty - w.y];
   };
   if (w.panic > 0 && w.goal){
     [ax, ay] = routeTo(w.goal.x, w.goal.y);
-    if (Math.hypot(w.goal.x - w.x, w.goal.y - w.y) < 26) { w.panic = 0; w.goal = null; }
+    if (HYPOT(w.goal.x - w.x, w.goal.y - w.y) < 26) { w.panic = 0; w.goal = null; }
   } else if (w.goal && !losShoot){
     [ax, ay] = routeTo(w.goal.x, w.goal.y);
-    if (Math.hypot(w.goal.x - w.x, w.goal.y - w.y) < 30) w.goal = null;
-  } else if (!seen && w.seenX != null && Math.hypot(w.x - bx, w.y - by) > 90){
+    if (HYPOT(w.goal.x - w.x, w.goal.y - w.y) < 30) w.goal = null;
+  } else if (!seen && w.seenX != null && HYPOT(w.x - bx, w.y - by) > 90){
     // hunting: walk the route to where they were last seen instead of pressing
     // straight at it through whatever happens to be in between
     [ax, ay] = routeTo(bx, by);
@@ -1139,7 +1287,7 @@ function hurt(w, amount, by){
 // that hurts, and it only hurts by what it had left over.
 function wardFacing(w, sx, sy){
   if (!w || w.ward <= 0) return false;
-  return Math.cos(angDiff(Math.atan2(sy - w.y, sx - w.x), w.facing)) > WARD_COS;
+  return COS(angDiff(ATAN2(sy - w.y, sx - w.x), w.facing)) > WARD_COS;
 }
 // `soak` marks damage arriving in sixty small pieces a second, so the wall
 // sparks on a steady budget instead of once a frame.
@@ -1218,14 +1366,14 @@ function surge(w, weight){
   rings.push({ x:w.x, y:w.y, r:12, max:40, t:0, life:.34, color:SURGE_COLOR, width:2 });
   for (let i = 0; i < 10; i++){
     const a = vrnd(0,TAU), sp = vrnd(50,150);
-    bits.push({ x:w.x, y:w.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:vrnd(.3,.6), t:0, color:SURGE_COLOR, r:vrnd(1,2.4) });
+    bits.push({ x:w.x, y:w.y, vx:COS(a)*sp, vy:SIN(a)*sp, life:vrnd(.3,.6), t:0, color:SURGE_COLOR, r:vrnd(1,2.4) });
   }
 }
 function puff(x,y,color,n){
   if (REDUCED) n = Math.min(n, 4);
   for (let i = 0; i < n; i++){
     const a = vrand()*TAU, s = vrnd(30,220);
-    bits.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: vrnd(.2,.6), t:0, color, r: vrnd(1,3) });
+    bits.push({ x, y, vx: COS(a)*s, vy: SIN(a)*s, life: vrnd(.2,.6), t:0, color, r: vrnd(1,3) });
   }
 }
 
@@ -1255,9 +1403,9 @@ function update(dt){
     if (w.target){
       if (perceives(w, w.target)){
         w.seenX = w.target.x; w.seenY = w.target.y; w.seenT = 0;
-        w.facing = Math.atan2(w.target.y - w.y, w.target.x - w.x);
+        w.facing = ATAN2(w.target.y - w.y, w.target.x - w.x);
       } else if (w.seenX != null){
-        w.facing = Math.atan2(w.seenY - w.y, w.seenX - w.x);
+        w.facing = ATAN2(w.seenY - w.y, w.seenX - w.x);
       }
     }
     w.castLock = Math.max(0, w.castLock - dt);
@@ -1273,8 +1421,8 @@ function update(dt){
     w.beamBurn = Math.max(0, w.beamBurn - dt);
     if (w.surge > 0 && !REDUCED && vrand() < dt*26){
       const a = vrnd(0, TAU), rr = vrnd(16, 26);
-      bits.push({ x: w.x + Math.cos(a)*rr, y: w.y + Math.sin(a)*rr,
-                  vx: Math.cos(a)*vrnd(4,18), vy: Math.sin(a)*vrnd(4,18) - 22,
+      bits.push({ x: w.x + COS(a)*rr, y: w.y + SIN(a)*rr,
+                  vx: COS(a)*vrnd(4,18), vy: SIN(a)*vrnd(4,18) - 22,
                   life: vrnd(.35,.7), t:0, color: SURGE_COLOR, r: vrnd(.9,2.1) });
     }
     const regen = ((w.charge !== null || beamActive) ? 6 : 17)
@@ -1314,11 +1462,11 @@ function update(dt){
     if (winding && !REDUCED){
       // red motes drawn in out of the dark towards the wand
       const k = w.beamWind / byId.beam.cast;
-      const tx = w.x + Math.cos(w.facing)*24, ty = w.y + Math.sin(w.facing)*24;
+      const tx = w.x + COS(w.facing)*24, ty = w.y + SIN(w.facing)*24;
       const n = 1 + (vrand()*3|0);
       for (let i = 0; i < n; i++){
         const ang = vrnd(0, TAU), rad = vrnd(18, 54) * (1.15 - k*0.55);
-        const px = tx + Math.cos(ang)*rad, py = ty + Math.sin(ang)*rad;
+        const px = tx + COS(ang)*rad, py = ty + SIN(ang)*rad;
         const pull = 70 + k*210;
         bits.push({ x:px, y:py, vx:(tx-px)/rad*pull, vy:(ty-py)/rad*pull,
                     life: rad/pull * vrnd(.75,1.05), t:0,
@@ -1329,7 +1477,7 @@ function update(dt){
     // held debris orbit
     if (w.held){
       const d = w.held;
-      const tx = w.x + Math.cos(w.facing)*54, ty = w.y + Math.sin(w.facing)*54;
+      const tx = w.x + COS(w.facing)*54, ty = w.y + SIN(w.facing)*54;
       d.x += (tx-d.x)*Math.min(1,dt*11); d.y += (ty-d.y)*Math.min(1,dt*11);
       d.a += dt*3;
       w.holdT += dt;
@@ -1356,8 +1504,8 @@ function update(dt){
       const sep = dist(a, b);
       if (a.beamLen < sep-20 || b.beamLen < sep-20) continue;
       // are they actually pointed at each other?
-      if (Math.cos(a.facing)*(b.x-a.x) + Math.sin(a.facing)*(b.y-a.y) <= 0) continue;
-      if (Math.cos(b.facing)*(a.x-b.x) + Math.sin(b.facing)*(a.y-b.y) <= 0) continue;
+      if (COS(a.facing)*(b.x-a.x) + SIN(a.facing)*(b.y-a.y) <= 0) continue;
+      if (COS(b.facing)*(a.x-b.x) + SIN(b.facing)*(a.y-b.y) <= 0) continue;
 
       const prev = wasClashing.find(c => (c.a === a && c.b === b) || (c.a === b && c.b === a));
       let t = prev ? (prev.a === a ? prev.t : 1 - prev.t) : 0.5;
@@ -1387,11 +1535,11 @@ function update(dt){
       const touch = Math.min(.34, (a.r + 16) / Math.max(1, sep));
       if (t < touch){
         hurt(a, 62*dt*dmgMul(b), b);
-        a.vx -= Math.cos(a.facing)*90*dt; a.vy -= Math.sin(a.facing)*90*dt;
+        a.vx -= COS(a.facing)*90*dt; a.vy -= SIN(a.facing)*90*dt;
         if (!REDUCED) puff(cx, cy, "#fff", 2);
       } else if (t > 1 - touch){
         hurt(b, 62*dt*dmgMul(a), a);
-        b.vx -= Math.cos(b.facing)*90*dt; b.vy -= Math.sin(b.facing)*90*dt;
+        b.vx -= COS(b.facing)*90*dt; b.vy -= SIN(b.facing)*90*dt;
         if (!REDUCED) puff(cx, cy, "#fff", 2);
       }
 
@@ -1404,9 +1552,9 @@ function update(dt){
       if (!REDUCED){
         const n = 2 + (vrand()*3|0);
         for (let k = 0; k < n; k++){
-          const ang = Math.atan2(b.y-a.y, b.x-a.x) + Math.PI/2 * (vrand()<.5?1:-1) + vrnd(-.8,.8);
+          const ang = ATAN2(b.y-a.y, b.x-a.x) + Math.PI/2 * (vrand()<.5?1:-1) + vrnd(-.8,.8);
           const sp = vrnd(120,340);
-          bits.push({ x:cx, y:cy, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, life:vrnd(.15,.45), t:0,
+          bits.push({ x:cx, y:cy, vx:COS(ang)*sp, vy:SIN(ang)*sp, life:vrnd(.15,.45), t:0,
                       color: vrand()<.4 ? "#ffffff" : byId.beam.color, r:vrnd(1,3) });
         }
       }
@@ -1433,7 +1581,7 @@ function update(dt){
   // an unopposed beam burns whatever stands in it
   for (const w of wizards){
     if (!firing(w) || w.clash) continue;
-    const ex = w.x + Math.cos(w.facing)*w.beamLen, ey = w.y + Math.sin(w.facing)*w.beamLen;
+    const ex = w.x + COS(w.facing)*w.beamLen, ey = w.y + SIN(w.facing)*w.beamLen;
     for (const o of wizards){
       if (o.dead || o.team === w.team) continue;
       // a ward is no answer to a beam: the beam burns straight through it
@@ -1444,7 +1592,7 @@ function update(dt){
   // beams vaporize shots & chew crates
   for (const w of wizards){
     if (!firing(w)) continue;
-    const ex = w.x + Math.cos(w.facing)*w.beamLen, ey = w.y + Math.sin(w.facing)*w.beamLen;
+    const ex = w.x + COS(w.facing)*w.beamLen, ey = w.y + SIN(w.facing)*w.beamLen;
     for (let i = shots.length-1; i >= 0; i--){
       const s = shots[i];
       if (s.owner === w) continue;
@@ -1468,15 +1616,15 @@ function update(dt){
     if (s.seek){
       const mark = s.owner.target;
       if (!mark) { s.seek = null; } else {
-      const dd = Math.hypot(mark.x - s.x, mark.y - s.y);
+      const dd = HYPOT(mark.x - s.x, mark.y - s.y);
       const prox = clamp(1 - dd/560, 0, 1);
       const want = s.seek.vMin + (s.seek.vMax - s.seek.vMin) * prox * prox;
       s.seek.phase += dt*5.5;
-      const desired = Math.atan2(mark.y - s.y, mark.x - s.x) + Math.sin(s.seek.phase)*s.seek.wob*0.4;
-      const cur = Math.atan2(s.vy, s.vx);
+      const desired = ATAN2(mark.y - s.y, mark.x - s.x) + SIN(s.seek.phase)*s.seek.wob*0.4;
+      const cur = ATAN2(s.vy, s.vx);
       const step = clamp(angDiff(desired, cur), -s.seek.turn*dt, s.seek.turn*dt);
       const na = cur + step;
-      s.vx = Math.cos(na)*want; s.vy = Math.sin(na)*want;
+      s.vx = COS(na)*want; s.vy = SIN(na)*want;
       s.spin += dt*(2.5 + prox*9);
       if (!REDUCED && vrand() < prox*0.5*(0.3 + (s.lvl||0)*0.9))
         bits.push({ x:s.x, y:s.y, vx:vrnd(-30,30), vy:vrnd(-30,30), life:vrnd(.2,.45), t:0, color:byId.hex.color, r:vrnd(1,2.4) });
@@ -1495,7 +1643,7 @@ function update(dt){
     for (const d of debris){
       if (d.gone || d.owner === s.owner) continue;
       if (!d.stopsShot) continue;
-      if (dist2(s,d) < (d.r + s.r)**2){
+      if (dist2(s,d) < (d.r + s.r)*(d.r + s.r)){
         if (d.hp !== Infinity){
           d.hp -= s.weight;
           if (!d.owner){ d.vx += s.vx*0.06; d.vy += s.vy*0.06; }
@@ -1514,11 +1662,11 @@ function update(dt){
       if (j === i || j >= shots.length) continue;
       const o = shots[j];
       if (!o || o.owner === s.owner) continue;
-      if (dist2(s,o) < (s.r + o.r)**2){
+      if (dist2(s,o) < (s.r + o.r)*(s.r + o.r)){
         const cx = (s.x+o.x)/2, cy = (s.y+o.y)/2;
         let near = null, nd = Infinity;
         for (const q of wizards){
-          const qd = (cx-q.x)**2 + (cy-q.y)**2;
+          const qd = (cx-q.x)*(cx-q.x) + (cy-q.y)*(cy-q.y);
           if (!q.dead && qd < nd){ nd = qd; near = q; }
         }
         swish(near, near === s.owner ? o.color : s.color);
@@ -1551,7 +1699,7 @@ function update(dt){
     let tgt = null;
     for (const q of wizards){
       if (q.dead || q.team === s.owner.team) continue;
-      if (dist2(s,q) < (q.r + s.r)**2){ tgt = q; break; }
+      if (dist2(s,q) < (q.r + s.r)*(q.r + s.r)){ tgt = q; break; }
     }
     if (tgt){
       const held = wardFacing(tgt, s.x, s.y) && WARD_BLOCKS[s.kind];
@@ -1579,9 +1727,9 @@ function update(dt){
       let tgt = null;
       if (d.thrower) for (const q of wizards){
         if (q.dead || q.team === d.thrower.team) continue;
-        if (dist2(d,q) < (d.r + q.r)**2){ tgt = q; break; }
+        if (dist2(d,q) < (d.r + q.r)*(d.r + q.r)){ tgt = q; break; }
       }
-      if (tgt && Math.hypot(d.vx,d.vy) > 80){
+      if (tgt && HYPOT(d.vx,d.vy) > 80){
         strike(tgt, byId.grasp.dmg * dmgMul(d.thrower), d.x, d.y, "prop", false, d.thrower);
         impact(d.x, d.y, 3.4, byId.grasp.color);
         d.vx = d.vy = 0; d.thrown = 0; d.hp -= 2;
@@ -1589,7 +1737,7 @@ function update(dt){
       }
       for (const o of debris){
         if (o === d || o.gone || o.owner || o.thrown > 0 || !o.solid) continue;
-        if (dist2(d,o) < (d.r+o.r)**2){
+        if (dist2(d,o) < (d.r+o.r)*(d.r+o.r)){
           d.vx = d.vy = 0; d.thrown = 0;
           puff(d.x,d.y,"#ffd24a",6);
           if (o.hp !== Infinity){ o.hp -= 2; if (o.hp <= 0) breakProp(o); }
@@ -1760,18 +1908,18 @@ function draw(){
     for (const d of debris){
       if (d.gone || d.owner || !blocksBeam(d)) continue;
       const dx = d.x - you.x, dy = d.y - you.y;
-      const dd = Math.hypot(dx, dy);
+      const dd = HYPOT(dx, dy);
       if (dd <= d.r + 2 || dd - d.r > fr) continue;   // standing in it, or past the light
       // the two tangent rays from the eye graze the prop; everything beyond them is dark
-      const a = Math.atan2(dy, dx);
+      const a = ATAN2(dy, dx);
       const sp = Math.asin(Math.min(1, d.r / dd));
       const L = Math.sqrt(Math.max(1, dd*dd - d.r*d.r));
       const a1 = a - sp, a2 = a + sp;
       g.beginPath();
-      g.moveTo(you.x + Math.cos(a1)*L,   you.y + Math.sin(a1)*L);
-      g.lineTo(you.x + Math.cos(a1)*FAR, you.y + Math.sin(a1)*FAR);
-      g.lineTo(you.x + Math.cos(a2)*FAR, you.y + Math.sin(a2)*FAR);
-      g.lineTo(you.x + Math.cos(a2)*L,   you.y + Math.sin(a2)*L);
+      g.moveTo(you.x + COS(a1)*L,   you.y + SIN(a1)*L);
+      g.lineTo(you.x + COS(a1)*FAR, you.y + SIN(a1)*FAR);
+      g.lineTo(you.x + COS(a2)*FAR, you.y + SIN(a2)*FAR);
+      g.lineTo(you.x + COS(a2)*L,   you.y + SIN(a2)*L);
       g.closePath(); g.fill();
     }
     ctx.drawImage(fogCv, 0, 0);
@@ -1858,8 +2006,8 @@ function drawDebris(d){
       ctx.beginPath();
       for (let i = 0; i < 7; i++){
         const ang = i/7*TAU;
-        const rr = d.r * (0.82 + 0.22*Math.sin(d.seed + i*2.1));
-        ctx[i?"lineTo":"moveTo"](Math.cos(ang)*rr, Math.sin(ang)*rr);
+        const rr = d.r * (0.82 + 0.22*SIN(d.seed + i*2.1));
+        ctx[i?"lineTo":"moveTo"](COS(ang)*rr, SIN(ang)*rr);
       }
       ctx.closePath();
       ctx.fillStyle = "#231d33"; ctx.fill();
@@ -1902,8 +2050,8 @@ function drawDebris(d){
       ctx.beginPath(); ctx.arc(0, 0, d.r*0.30, 0, TAU); ctx.fill();
       for (let i = 0; i < 6; i++){
         const ang = d.seed + i/6*TAU;
-        const rr = d.r * (0.46 + 0.12*Math.sin(d.seed*2 + i*1.7));
-        const cx = Math.cos(ang)*d.r*0.46, cy = Math.sin(ang)*d.r*0.46;
+        const rr = d.r * (0.46 + 0.12*SIN(d.seed*2 + i*1.7));
+        const cx = COS(ang)*d.r*0.46, cy = SIN(ang)*d.r*0.46;
         ctx.fillStyle = i % 2 ? "#31532a" : "#24401f";
         ctx.beginPath(); ctx.arc(cx, cy, rr, 0, TAU); ctx.fill();
       }
@@ -1919,16 +2067,16 @@ function drawDebris(d){
       const clumps = 5;
       for (let i = 0; i < clumps; i++){
         const ang = d.seed + i/clumps*TAU;
-        const cx = Math.cos(ang)*d.r*0.42, cy = Math.sin(ang)*d.r*0.42;
+        const cx = COS(ang)*d.r*0.42, cy = SIN(ang)*d.r*0.42;
         ctx.fillStyle = i % 2 ? "#1f3a22" : "#27492a";
         ctx.beginPath(); ctx.arc(cx, cy, d.r*0.52, 0, TAU); ctx.fill();
       }
       ctx.strokeStyle = line; ctx.globalAlpha *= .5; ctx.lineWidth = 1.2;
       for (let i = 0; i < 7; i++){
-        const ang = d.seed*1.7 + i/7*TAU, rr = d.r*(0.5 + 0.35*Math.sin(d.seed+i));
+        const ang = d.seed*1.7 + i/7*TAU, rr = d.r*(0.5 + 0.35*SIN(d.seed+i));
         ctx.beginPath();
-        ctx.moveTo(Math.cos(ang)*rr*0.4, Math.sin(ang)*rr*0.4);
-        ctx.lineTo(Math.cos(ang)*rr, Math.sin(ang)*rr);
+        ctx.moveTo(COS(ang)*rr*0.4, SIN(ang)*rr*0.4);
+        ctx.lineTo(COS(ang)*rr, SIN(ang)*rr);
         ctx.stroke();
       }
       ctx.globalAlpha = d.solid ? 1 : .82;
@@ -1986,7 +2134,7 @@ function drawDebris(d){
       ctx.fillStyle = "#1e1b28"; ctx.strokeStyle = "#4a4358"; ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.arc(0, 0, d.r, 0, TAU); ctx.fill(); ctx.stroke();
       // the flame breathes on view time — never on the seeded clock
-      const flick = 0.82 + 0.18*Math.sin(performance.now()/150 + d.seed*6);
+      const flick = 0.82 + 0.18*SIN(performance.now()/150 + d.seed*6);
       ctx.fillStyle = "#5a2a10";
       ctx.beginPath(); ctx.arc(0, 0, d.r*0.66, 0, TAU); ctx.fill();
       ctx.fillStyle = "#ff8a2b";
@@ -2013,8 +2161,8 @@ function drawDebris(d){
       // knocked-out masonry: a scatter of chunks you can pick up and throw
       for (let i = 0; i < 4; i++){
         const ang = d.seed + i*1.9;
-        const cx = Math.cos(ang)*d.r*0.4, cy = Math.sin(ang)*d.r*0.4;
-        const rr = d.r*(0.3 + 0.16*Math.sin(d.seed + i*2.3));
+        const cx = COS(ang)*d.r*0.4, cy = SIN(ang)*d.r*0.4;
+        const rr = d.r*(0.3 + 0.16*SIN(d.seed + i*2.3));
         ctx.fillStyle = i % 2 ? "#2b2a3d" : "#35334a";
         ctx.beginPath();
         ctx.moveTo(cx + rr, cy);
@@ -2044,8 +2192,8 @@ function drawDebris(d){
       for (let i = 0; i < 4; i++){
         const ang = i/4*TAU + .4;
         ctx.beginPath();
-        ctx.moveTo(Math.cos(ang)*d.r*.6, Math.sin(ang)*d.r*.6);
-        ctx.lineTo(Math.cos(ang)*d.r, Math.sin(ang)*d.r);
+        ctx.moveTo(COS(ang)*d.r*.6, SIN(ang)*d.r*.6);
+        ctx.lineTo(COS(ang)*d.r, SIN(ang)*d.r);
         ctx.stroke();
       }
       break;
@@ -2103,7 +2251,7 @@ function drawDebris(d){
       ctx.fillStyle = line;
       for (let i = 0; i < 3; i++){
         const ang = d.seed + i/3*TAU;
-        ctx.beginPath(); ctx.arc(Math.cos(ang)*d.r*.6, Math.sin(ang)*d.r*.6, 1.6, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(COS(ang)*d.r*.6, SIN(ang)*d.r*.6, 1.6, 0, TAU); ctx.fill();
       }
       break;
     }
@@ -2118,9 +2266,9 @@ function drawDebris(d){
     for (let i = 0; i < cracks; i++){
       const ang = d.seed + i*2.3;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(ang)*d.r*.15, Math.sin(ang)*d.r*.15);
-      ctx.lineTo(Math.cos(ang+.4)*d.r*.6, Math.sin(ang+.4)*d.r*.6);
-      ctx.lineTo(Math.cos(ang)*d.r*.9, Math.sin(ang)*d.r*.9);
+      ctx.moveTo(COS(ang)*d.r*.15, SIN(ang)*d.r*.15);
+      ctx.lineTo(COS(ang+.4)*d.r*.6, SIN(ang+.4)*d.r*.6);
+      ctx.lineTo(COS(ang)*d.r*.9, SIN(ang)*d.r*.9);
       ctx.stroke();
     }
   }
@@ -2154,7 +2302,7 @@ function drawShot(s){
     ctx.beginPath();
     for (let i = 0; i < 6; i++){
       const ang = i/6*TAU, rr = s.r*1.5;
-      ctx[i?"lineTo":"moveTo"](Math.cos(ang)*rr, Math.sin(ang)*rr);
+      ctx[i?"lineTo":"moveTo"](COS(ang)*rr, SIN(ang)*rr);
     }
     ctx.closePath(); ctx.stroke();
     ctx.globalAlpha = .2 + s.lvl*.3;
@@ -2170,8 +2318,8 @@ function drawShot(s){
     for (let i = 0; i < s.weight; i++){
       const a = -Math.PI/2 + (i - (s.weight-1)/2)*0.42;
       ctx.beginPath();
-      ctx.moveTo(s.x + Math.cos(a)*(s.r+4), s.y + Math.sin(a)*(s.r+4));
-      ctx.lineTo(s.x + Math.cos(a)*(s.r+9), s.y + Math.sin(a)*(s.r+9));
+      ctx.moveTo(s.x + COS(a)*(s.r+4), s.y + SIN(a)*(s.r+4));
+      ctx.lineTo(s.x + COS(a)*(s.r+9), s.y + SIN(a)*(s.r+9));
       ctx.stroke();
     }
     ctx.restore();
@@ -2180,11 +2328,11 @@ function drawShot(s){
 
 function jag(x1,y1,x2,y2,segs,amp){
   const pts = [];
-  const dx = x2-x1, dy = y2-y1, L = Math.hypot(dx,dy) || 1;
+  const dx = x2-x1, dy = y2-y1, L = HYPOT(dx,dy) || 1;
   const nx = -dy/L, ny = dx/L;
   for (let i = 0; i <= segs; i++){
     const t = i/segs;
-    const taper = Math.sin(t*Math.PI);
+    const taper = SIN(t*Math.PI);
     const off = (vrand()*2-1) * amp * taper;
     pts.push(x1 + dx*t + nx*off, y1 + dy*t + ny*off);
   }
@@ -2244,7 +2392,7 @@ function poly(g, n, r, rot){
   g.beginPath();
   for (let i = 0; i < n; i++){
     const a = rot + i * TAU / n;
-    g[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r);
+    g[i ? "lineTo" : "moveTo"](COS(a) * r, SIN(a) * r);
   }
   g.closePath();
 }
@@ -2253,7 +2401,7 @@ function starPath(g, points, outer, inner, rot){
   for (let i = 0; i < points * 2; i++){
     const r = i % 2 ? inner : outer;
     const a = rot + i * Math.PI / points;
-    g[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r);
+    g[i ? "lineTo" : "moveTo"](COS(a) * r, SIN(a) * r);
   }
   g.closePath();
 }
@@ -2317,7 +2465,7 @@ function hexAt(g, x, y, r){
   g.moveTo(x + r, y);
   for (let i = 1; i < 6; i++){
     const a = i * TAU / 6;
-    g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    g.lineTo(x + COS(a) * r, y + SIN(a) * r);
   }
   g.closePath();
 }
@@ -2333,7 +2481,7 @@ function emblemPath(g, s, kind){
     // four discs in a flower — the first mark that is a device rather than a count
     case "quatre": for (let i = 0; i < 4; i++){
                      const a = i * TAU / 4 + Math.PI / 4;
-                     discAt(g, Math.cos(a) * s * 0.40, Math.sin(a) * s * 0.40, s * 0.36);
+                     discAt(g, COS(a) * s * 0.40, SIN(a) * s * 0.40, s * 0.36);
                    } return "stroke";
     case "hex1":   hexAt(g, 0, 0, s * 0.62); return "stroke";
     case "hex2":   hexAt(g, -s * 0.50, 0, s * 0.46); hexAt(g, s * 0.50, 0, s * 0.46); return "stroke";
@@ -2449,7 +2597,7 @@ function drawBeam(w){
   const winding = w.beamWind < byId.beam.cast;
   const a = w.facing;
   const len = winding ? 90 : w.beamLen;
-  const ex = w.x + Math.cos(a)*len, ey = w.y + Math.sin(a)*len;
+  const ex = w.x + COS(a)*len, ey = w.y + SIN(a)*len;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   if (winding){
@@ -2459,32 +2607,32 @@ function drawBeam(w){
     ctx.lineWidth = 1 + k*2;
     ctx.setLineDash([6, 8]);
     ctx.beginPath();
-    ctx.moveTo(w.x + Math.cos(a)*20, w.y + Math.sin(a)*20);
-    ctx.lineTo(w.x + Math.cos(a)*(20 + 600*k), w.y + Math.sin(a)*(20 + 600*k));
+    ctx.moveTo(w.x + COS(a)*20, w.y + SIN(a)*20);
+    ctx.lineTo(w.x + COS(a)*(20 + 600*k), w.y + SIN(a)*(20 + 600*k));
     ctx.stroke();
     ctx.setLineDash([]);
     blitSprite(glowSprite(byId.beam.color, 3 + k*7, 20*k),
-               w.x + Math.cos(a)*22, w.y + Math.sin(a)*22);
-    const tx = w.x + Math.cos(a)*24, ty = w.y + Math.sin(a)*24;
+               w.x + COS(a)*22, w.y + SIN(a)*22);
+    const tx = w.x + COS(a)*24, ty = w.y + SIN(a)*24;
     if (!REDUCED){
       const now = performance.now();
       const dots = 8;
       for (let i = 0; i < dots; i++){
         const ang = now/280 * (w.friendly ? 1 : -1) + i/dots*TAU;
-        const rad = 8 + 42*(1-k) + Math.sin(now/130 + i)*2.5;
+        const rad = 8 + 42*(1-k) + SIN(now/130 + i)*2.5;
         blitSprite(glowSprite(i % 3 ? byId.beam.color : "#ffd6df", .9 + 2.2*k, 12),
-                   tx + Math.cos(ang)*rad, ty + Math.sin(ang)*rad, .3 + .65*k);
+                   tx + COS(ang)*rad, ty + SIN(ang)*rad, .3 + .65*k);
       }
       ctx.globalAlpha = 1;
       if (k > .25) for (let i = 0; i < 2; i++){
         const ang = vrnd(0, TAU), L2 = vrnd(6, 10 + k*22);
-        strokeJag(jag(tx, ty, tx + Math.cos(ang)*L2, ty + Math.sin(ang)*L2, 3, 5), "#fff", 1, .55*k);
+        strokeJag(jag(tx, ty, tx + COS(ang)*L2, ty + SIN(ang)*L2, 3, 5), "#fff", 1, .55*k);
       }
     }
   } else {
     const now = performance.now();
-    const flick = 1 + Math.sin(now/40)*0.12;
-    const sx = w.x + Math.cos(a)*18, sy = w.y + Math.sin(a)*18;
+    const flick = 1 + SIN(now/40)*0.12;
+    const sx = w.x + COS(a)*18, sy = w.y + SIN(a)*18;
     ctx.shadowColor = byId.beam.color; ctx.shadowBlur = 26;
     ctx.strokeStyle = byId.beam.color;
     ctx.globalAlpha = .5;
@@ -2509,20 +2657,20 @@ function drawBeam(w){
         const bx = sx + (ex-sx)*t, by = sy + (ey-sy)*t;
         const ang = a + Math.PI/2*(vrand()<.5?1:-1) + vrnd(-.6,.6);
         const L2 = vrnd(14,46);
-        strokeJag(jag(bx, by, bx + Math.cos(ang)*L2, by + Math.sin(ang)*L2, 4, 7), "#fff", 1.1, .5);
+        strokeJag(jag(bx, by, bx + COS(ang)*L2, by + SIN(ang)*L2, 4, 7), "#fff", 1.1, .5);
       }
       ctx.shadowBlur = 0;
     }
     // muzzle bloom at the wand
     ctx.fillStyle = "#fff"; ctx.shadowColor = byId.beam.color; ctx.shadowBlur = 30;
-    ctx.beginPath(); ctx.arc(sx, sy, 5 + Math.sin(now/50)*1.6, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx, sy, 5 + SIN(now/50)*1.6, 0, TAU); ctx.fill();
 
     if (w.clash && w.clashOrb){
       const orb = w.clashOrb;
       // the shiver lives here, in the drawing, so the simulated orb stays put
       const j = (orb.jit && !REDUCED) ? orb.jit : 0;
       const ox = orb.x + (j ? vrnd(-j, j) : 0), oy = orb.y + (j ? vrnd(-j, j) : 0);
-      const pulse = Math.sin(now/55);
+      const pulse = SIN(now/55);
       const r = 15 + pulse*4 + orb.press*7;
       const lead = orb.lead ? orb.lead.tint : "#fff";
       ctx.shadowBlur = 45;
@@ -2541,7 +2689,7 @@ function drawBeam(w){
         for (let i = 0; i < spokes; i++){
           const ang = vrnd(0, TAU);
           const L2 = vrnd(18, 62);
-          strokeJag(jag(ex, ey, ex + Math.cos(ang)*L2, ey + Math.sin(ang)*L2, 5, 9),
+          strokeJag(jag(ex, ey, ex + COS(ang)*L2, ey + SIN(ang)*L2, 5, 9),
                     i % 2 ? "#fff" : byId.beam.color, 1.5, .75);
         }
         ctx.strokeStyle = "#fff"; ctx.globalAlpha = .35; ctx.lineWidth = 2;
@@ -2648,8 +2796,8 @@ const CAPE_FOLD_MARGIN = 1.45;
    uniformly fatter cape, which is what the reference sheet does as it climbs. */
 function capeHalf(i, last, wide, flare, wob){
   const k = i / last;
-  let w = (8.6 + k * 10.4) * (1 - Math.pow(k, 10) * 0.16);
-  if (flare) w *= 1 + flare * Math.pow(Math.max(0, (k - 0.34) / 0.66), 1.6);
+  let w = (8.6 + k * 10.4) * (1 - POW(k, 10) * 0.16);
+  if (flare) w *= 1 + flare * POW(Math.max(0, (k - 0.34) / 0.66), 1.6);
   if (wob && wob[i] != null) w *= wob[i];
   return w * (wide == null ? 1 : wide);
 }
@@ -2761,7 +2909,7 @@ function makeCape(w, seg){
   // rest direction — the three pieces of state that make the cloth overlap
   // itself rather than move as one board.
   const c = { seg, a: [], va: [], prev: [], p: [], wob: [],
-              ax: w.x - Math.cos(w.facing) * 3, ay: w.y - Math.sin(w.facing) * 3,
+              ax: w.x - COS(w.facing) * 3, ay: w.y - SIN(w.facing) * 3,
               hang: back, svx: w.vx || 0, svy: w.vy || 0 };
   for (let i = 0; i < CAPE_NODES - 1; i++){ c.a.push(back); c.va.push(0); c.prev.push(back); }
   for (let i = 0; i < CAPE_NODES; i++) c.wob.push(1);
@@ -2782,8 +2930,8 @@ function layCape(c, ax, ay){
   let x = ax, y = ay;
   c.p[0].x = x; c.p[0].y = y;
   for (let i = 0; i < c.a.length; i++){
-    x += Math.cos(c.a[i]) * c.seg;
-    y += Math.sin(c.a[i]) * c.seg;
+    x += COS(c.a[i]) * c.seg;
+    y += SIN(c.a[i]) * c.seg;
     c.p[i + 1].x = x; c.p[i + 1].y = y;
   }
 }
@@ -2804,7 +2952,7 @@ function updateCapes(dt){
     const marks = capeMarks(w);
     const rung = marks.at, flare = marks.flare || 0;
     const seg = capeSeg(rung), wide = capeWide(rung);
-    const ax = w.x - Math.cos(w.facing) * 3, ay = w.y - Math.sin(w.facing) * 3;
+    const ax = w.x - COS(w.facing) * 3, ay = w.y - SIN(w.facing) * 3;
 
     let c = w.cape;
     if (!c || c.seg !== seg || c.a.length !== CAPE_NODES - 1) c = w.cape = makeCape(w, seg);
@@ -2813,24 +2961,24 @@ function updateCapes(dt){
        to them, so a dash pulls the cloth taut behind and a stop lets it catch
        up — but the lag is clamped to a few pixels, because a cape that comes
        off its owner's back is a bug, not follow-through. */
-    const chase = 1 - Math.pow(0.0016, step);
+    const chase = 1 - POW(0.0016, step);
     c.ax += (ax - c.ax) * chase;
     c.ay += (ay - c.ay) * chase;
     const offx = c.ax - ax, offy = c.ay - ay;
-    const off = Math.hypot(offx, offy);
+    const off = HYPOT(offx, offy);
     if (off > CAPE_LAG){ c.ax = ax + offx / off * CAPE_LAG; c.ay = ay + offy / off * CAPE_LAG; }
 
     // Which way the cloth hangs when nothing is happening: straight out behind.
     // If the wizard is moving, it trails the direction of travel instead — that
     // is the difference between a cape and a weather vane. Eased, so a turn
     // arrives at the collar as a sweep rather than a jump.
-    const sp = Math.hypot(w.vx || 0, w.vy || 0);
+    const sp = HYPOT(w.vx || 0, w.vy || 0);
     let want0 = w.facing + Math.PI;
     if (sp > 12){
-      const drift = Math.atan2(-(w.vy || 0), -(w.vx || 0));
+      const drift = ATAN2(-(w.vy || 0), -(w.vx || 0));
       want0 += angleTo(want0, drift) * Math.min(1, sp / 150) * 0.85;
     }
-    c.hang += angleTo(c.hang, want0) * (1 - Math.pow(0.02, step));
+    c.hang += angleTo(c.hang, want0) * (1 - POW(0.02, step));
 
     const phase = w.seat * 1.7;
     const gust = Math.min(1, sp / 170);
@@ -2840,11 +2988,11 @@ function updateCapes(dt){
        the raw velocity is doing AHEAD of that smoothed value is an acceleration
        without the noise of differencing a position twice. */
     const vx = w.vx || 0, vy = w.vy || 0;
-    const ease = 1 - Math.exp(-step / CAPE_ACC_TAU);
+    const ease = 1 - EXP(-step / CAPE_ACC_TAU);
     c.svx += (vx - c.svx) * ease;
     c.svy += (vy - c.svy) * ease;
     let accx = (vx - c.svx) / CAPE_ACC_TAU, accy = (vy - c.svy) / CAPE_ACC_TAU;
-    const am = Math.hypot(accx, accy);
+    const am = HYPOT(accx, accy);
     // A respawn moves a wizard across the arena in one frame. That is a
     // teleport, not a sprint, and a cape that treats it as one turns inside out.
     if (am > CAPE_ACC_MAX){ accx = accx / am * CAPE_ACC_MAX; accy = accy / am * CAPE_ACC_MAX; }
@@ -2861,13 +3009,13 @@ function updateCapes(dt){
          produces the opposite of slack. */
       const stiff = CAPE_STIFF_TOP + (CAPE_STIFF_TIP - CAPE_STIFF_TOP) * k;
       const zeta  = CAPE_ZETA_TOP  + (CAPE_ZETA_TIP  - CAPE_ZETA_TOP)  * k;
-      const damp  = Math.exp(-2 * zeta * Math.sqrt(stiff) * step);
+      const damp  = EXP(-2 * zeta * Math.sqrt(stiff) * step);
       // the wave lives in the TARGET, never in the positions — a wave applied
       // to points can kink the curve, a wave applied to a target cannot. Two
       // frequencies that do not divide into one another, so the idle drift
       // never falls into a visible beat the way a single sine does.
-      const wave = (Math.sin(t * 2.1  - i * 0.42 + phase) * 0.63 +
-                    Math.sin(t * 3.37 - i * 0.23 + phase * 1.7) * 0.37)
+      const wave = (SIN(t * 2.1  - i * 0.42 + phase) * 0.63 +
+                    SIN(t * 3.37 - i * 0.23 + phase * 1.7) * 0.37)
                    * (0.045 + 0.115 * k) * (0.55 + gust);
       const lead = i === 0 ? c.hang : c.prev[i - 1];
       const want = lead + wave;
@@ -2877,7 +3025,7 @@ function updateCapes(dt){
          pointing one way is thrown by the component of that acceleration across
          it, and not at all by the component along it. Weighted towards the hem,
          which has the most cloth below it to be thrown. */
-      const nx = -Math.sin(c.a[i]), ny = Math.cos(c.a[i]);
+      const nx = -SIN(c.a[i]), ny = COS(c.a[i]);
       c.va[i] -= (accx * nx + accy * ny) / seg * CAPE_SWING * (0.25 + 0.75 * k) * step;
       c.va[i] *= damp;
       c.a[i] += c.va[i] * step;
@@ -2928,7 +3076,7 @@ function updateCapes(dt){
     const wobStep = CAPE_WOB_WAVE / Math.max(1, c.wob.length - 1);
     for (let i = 0; i < c.wob.length; i++){
       const k = i / Math.max(1, c.wob.length - 1);
-      c.wob[i] = 1 + Math.sin(t * 2.6 - i * wobStep + phase) * CAPE_WOB * k * (0.6 + 0.5 * gust);
+      c.wob[i] = 1 + SIN(t * 2.6 - i * wobStep + phase) * CAPE_WOB * k * (0.6 + 0.5 * gust);
     }
     layCape(c, c.ax, c.ay);
   }
@@ -2960,7 +3108,7 @@ function drawCape(w){
   const dirAt = i => {
     const a = P[Math.max(0, i - 1)], b = P[Math.min(last, i + 1)];
     let ux = b.x - a.x, uy = b.y - a.y;
-    const d = Math.hypot(ux, uy) || 1;
+    const d = HYPOT(ux, uy) || 1;
     return { x: ux / d, y: uy / d };
   };
   const wide = capeWide(rank.at), flare = rank.flare || 0;
@@ -3128,11 +3276,11 @@ function drawCape(w){
     const i0 = Math.min(last - 1, f | 0), fr = f - i0;
     const a = P[i0], b = P[i0 + 1];
     let ux = b.x - a.x, uy = b.y - a.y;
-    const d = Math.hypot(ux, uy) || 1; ux /= d; uy /= d;
+    const d = HYPOT(ux, uy) || 1; ux /= d; uy /= d;
     const x = a.x + (b.x - a.x) * fr, y = a.y + (b.y - a.y) * fr;
     const size = 5.2 + 2.6 * ((rank.at - 1) / (CAPE_RUNGS - 1));
     ctx.globalAlpha = .92;
-    blitSprite(emblemSprite(rank.emblem, size, "#ffffff"), x, y, 1, Math.atan2(uy, ux) + Math.PI / 2);
+    blitSprite(emblemSprite(rank.emblem, size, "#ffffff"), x, y, 1, ATAN2(uy, ux) + Math.PI / 2);
     ctx.globalAlpha = 1;
   }
 
@@ -3164,7 +3312,7 @@ function drawWizard(w){
     ctx.shadowColor = SURGE_COLOR; ctx.shadowBlur = 20;
     ctx.globalAlpha = .25 + k*.45;
     ctx.lineWidth = 1.5 + k*1.5;
-    const puls = 22 + Math.sin(performance.now()/140)*1.6 + k*3;
+    const puls = 22 + SIN(performance.now()/140)*1.6 + k*3;
     ctx.beginPath(); ctx.arc(0, 0, puls, 0, TAU); ctx.stroke();
     ctx.globalAlpha = (.12 + k*.22);
     ctx.beginPath(); ctx.arc(0, 0, puls*1.35, 0, TAU); ctx.stroke();
@@ -3193,11 +3341,11 @@ function drawWizard(w){
     for (let i = 0; i < motes; i++){
       const f = ((i/motes) + spin) % 1;
       const ang = -half + f*half*2;
-      const rr = (WARD_R - 3) + Math.sin(spin*7 + i*1.7)*3.5;
-      ctx.globalAlpha = (.35 + k*.6) * Math.sin(f*Math.PI);
+      const rr = (WARD_R - 3) + SIN(spin*7 + i*1.7)*3.5;
+      ctx.globalAlpha = (.35 + k*.6) * SIN(f*Math.PI);
       ctx.fillStyle = i % 4 ? byId.ward.color : "#dcffec";
       ctx.beginPath();
-      ctx.arc(Math.cos(ang)*rr, Math.sin(ang)*rr, 1.3 + k*1.7, 0, TAU);
+      ctx.arc(COS(ang)*rr, SIN(ang)*rr, 1.3 + k*1.7, 0, TAU);
       ctx.fill();
     }
     ctx.restore();
@@ -3288,7 +3436,7 @@ function drawWizard(w){
   }
   // arm sweep when they bat a spell aside
   const cast = w.swishKind === "cast";
-  const sw = w.swish > 0 ? Math.sin((1 - w.swish/w.swishT0) * Math.PI) : 0;
+  const sw = w.swish > 0 ? SIN((1 - w.swish/w.swishT0) * Math.PI) : 0;
   const swAng = sw * w.swishDir * (cast ? .8 : 1.15);
   if (sw > 0.02){
     ctx.save();
@@ -3707,7 +3855,7 @@ function spawnRing(n){
   const rx = W*0.36*s, ry = H*0.33*s;
   for (let i = 0; i < n; i++){
     const a = Math.PI + (i/n)*TAU;
-    pts.push({ x: W/2 + Math.cos(a)*rx, y: H/2 + Math.sin(a)*ry });
+    pts.push({ x: W/2 + COS(a)*rx, y: H/2 + SIN(a)*ry });
   }
   return pts;
 }
@@ -5084,7 +5232,7 @@ function padHit(p, cx, cy, r){
 }
 // Angle from a stick's centre, clockwise from due right, 0..360.
 function padAngle(dx, dy){
-  let a = Math.atan2(dy, dx) * 180 / Math.PI;
+  let a = ATAN2(dy, dx) * 180 / Math.PI;
   return (a + 360) % 360;
 }
 
@@ -5107,7 +5255,7 @@ function padSpellAt(deg){
 function padMove(dx, dy, R){
   const dead = R * 0.30;
   const P = PAD1;
-  if (Math.hypot(dx, dy) < dead){
+  if (HYPOT(dx, dy) < dead){
     keys[P.up] = keys[P.down] = keys[P.left] = keys[P.right] = false;
     return;
   }
@@ -5191,7 +5339,7 @@ function padRapid(step){
    already off-centre counts as a shove exactly like sliding there would. */
 function padMoveUpdate(ptr, x, y, L){
   ptr.dx = x - ptr.ox; ptr.dy = y - ptr.oy;
-  const mag = Math.hypot(ptr.dx, ptr.dy);
+  const mag = HYPOT(ptr.dx, ptr.dy);
   padMove(ptr.dx, ptr.dy, L.R);
   padRimDash(mag, L.R, !you || (you.dashCool || 0) <= 0);
 }
@@ -5225,7 +5373,7 @@ function padMoveEvt(e){
   }
   if (c && c.id === e.pointerId){
     c.dx = e.clientX - c.ox; c.dy = e.clientY - c.oy;
-    const d = Math.hypot(c.dx, c.dy);
+    const d = HYPOT(c.dx, c.dy);
     if (d < L.R * 0.32) padCastRelease(c);          // back to the middle: let it go
     else padCastEngage(c, padSpellAt(padAngle(c.dx, c.dy)));
     e.preventDefault();
@@ -5323,7 +5471,7 @@ function drawPad(){
      finds — the first version clamped the knob at 0.62 of the radius, so the
      rim it was supposed to touch was permanently out of reach. */
   const KNOB = 0.34;
-  const mag = m ? Math.hypot(m.dx, m.dy) : 0;
+  const mag = m ? HYPOT(m.dx, m.dy) : 0;
   const atRim = mag >= L.R * PAD_DASH_RIM;
   const live = ready >= 1;
   const deny = Math.max(0, 1 - (performance.now() - padDenyAt) / 300);
@@ -5356,7 +5504,7 @@ function drawPad(){
   for (let s = 0; s < 6; s++){
     const idx = PAD_SECTOR[s], sp = SPELLS[idx];
     const a = PAD_ANGLE[s] * Math.PI / 180;
-    const tx = L.cast.x + Math.cos(a) * L.R * 0.70, ty = L.cast.y + Math.sin(a) * L.R * 0.70;
+    const tx = L.cast.x + COS(a) * L.R * 0.70, ty = L.cast.y + SIN(a) * L.R * 0.70;
     const poor = w && w.mana < sp.cost * 0.95;
     if (c && c.idx === idx){
       g.globalAlpha = 1;
@@ -5383,7 +5531,7 @@ function drawPad(){
               -Math.PI / 2 + TAU * ch.lvl, sp.color, 4);
     } else {
       // a channel or a carried stone: full ring, breathing, no fake level
-      g.globalAlpha = 0.55 + 0.35 * Math.sin(performance.now() / 140);
+      g.globalAlpha = 0.55 + 0.35 * SIN(performance.now() / 140);
       padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, sp.color, 4);
     }
   }
@@ -5392,7 +5540,7 @@ function drawPad(){
   g.globalAlpha = c ? 0.95 : 0.62;
   let sx = L.cast.x, sy = L.cast.y;
   if (c){
-    const d = Math.hypot(c.dx, c.dy) || 1, cl = Math.min(d, L.R * 0.62);
+    const d = HYPOT(c.dx, c.dy) || 1, cl = Math.min(d, L.R * 0.62);
     sx += c.dx / d * cl; sy += c.dy / d * cl;
   }
   g.beginPath(); g.arc(sx, sy, L.R * 0.30, 0, TAU);
@@ -5488,6 +5636,9 @@ window.RPW = {
   },
   seatOf: () => you.seat,
   frameNow: () => simFrame,
+  // test hook: how many beams are currently locked against each other. A clash
+  // test that never produced a clash is not evidence about clashes.
+  clashing: () => clashes.length,
   // test hook: what the last desync report actually said
   lastDesync: () => lastDesync,
   // test hooks for the touch pad: what it thinks it is, and where it puts things.
@@ -5549,7 +5700,7 @@ window.RPW = {
     const w = wizards.find(x => x.seat === seat);
     if (!w || !w.cape || !w.cape.p) return null;
     const c = w.cape, P = c.p, last = P.length - 1;
-    const dx = Math.cos(w.facing), dy = Math.sin(w.facing);
+    const dx = COS(w.facing), dy = SIN(w.facing);
     const rel = p => {
       const ox = p.x - w.x, oy = p.y - w.y;
       return { x: ox, y: oy, lateral: ox * -dy + oy * dx };
@@ -5557,7 +5708,7 @@ window.RPW = {
     const dirAt = i => {
       const a = P[Math.max(0, i - 1)], b = P[Math.min(last, i + 1)];
       let ux = b.x - a.x, uy = b.y - a.y;
-      const d = Math.hypot(ux, uy) || 1;
+      const d = HYPOT(ux, uy) || 1;
       return { x: ux / d, y: uy / d };
     };
     const L = [], R = [];
@@ -5571,7 +5722,7 @@ window.RPW = {
       rung: capeMarks(w).at, emblem: capeMarks(w).emblem, seams: capeMarks(w).seams,
       tail: capeMarks(w).tail, flare: capeMarks(w).flare,
       nodes: P.map(rel), left: L, right: R,
-      segs: P.slice(1).map((p, i) => Math.hypot(p.x - P[i].x, p.y - P[i].y)),
+      segs: P.slice(1).map((p, i) => HYPOT(p.x - P[i].x, p.y - P[i].y)),
       // the bend at each joint, in radians
       turns: c.a.slice(1).map((a, i) => {
         let d = (a - c.a[i]) % TAU;
@@ -5593,10 +5744,10 @@ window.RPW = {
     const a = wizards.find(x => x.id === fromId);
     const b = wizards.find(x => x.id === toId);
     if (!a || !b) return false;
-    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    const ang = ATAN2(b.y - a.y, b.x - a.x);
     shots.push({
-      x: a.x + Math.cos(ang)*22, y: a.y + Math.sin(ang)*22,
-      vx: Math.cos(ang)*600, vy: Math.sin(ang)*600,
+      x: a.x + COS(ang)*22, y: a.y + SIN(ang)*22,
+      vx: COS(ang)*600, vy: SIN(ang)*600,
       weight: 3, w0: 3, dmg, r: 9, glow: 22,
       color: "#fff", kind: "spark", owner: a, life: 4, trail: [], spin: 0,
       seek: null, lvl: 0

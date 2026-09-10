@@ -37,6 +37,48 @@ const FPS_B  = +(process.env.FPS_B ?? 60);
    busiest users of the seeded stream and the only thing that reacts to a
    smashed crate by re-planning a route. */
 const TOTAL  = +(process.env.TOTAL ?? 2);
+/* MODE=beam makes both players hold the red beam almost continuously. Two beams
+   meeting is the clash — the one part of the simulation with state that lives
+   BETWEEN frames outside the wizards (the orb's position along the line) and
+   the one Green can reproduce on demand. */
+const MODE   = process.env.MODE || "spread";
+/* The operating system's "reduce motion" setting differs per PLAYER, and this
+   game has already shipped one desync that was hiding behind it (hit-stop, which
+   scales dt for the whole world, used to be skipped for anyone who had it on).
+   So the harness has to be able to disagree about it, or it can never catch the
+   next one. */
+const REDUCED_A = process.env.REDUCED_A === "1";
+const REDUCED_B = process.env.REDUCED_B === "1";
+/* ULP_B=1 models the one thing this harness structurally cannot vary: the
+   BROWSER. Both clients run in the same V8, so Math.sin returns the same bits
+   for both — but the ECMAScript spec does not require sin, cos, atan2, hypot,
+   exp, pow or log to be correctly rounded. They are "implementation-
+   approximated", and V8, SpiderMonkey and JavaScriptCore genuinely disagree in
+   the last bit. (+, -, *, / and sqrt ARE exact, and identical everywhere.)
+   So this gives client B a trig function that is off by one unit in the last
+   place on a fraction of its inputs — which is precisely what playing on a
+   different browser looks like from inside the simulation.
+   The value is a DENOMINATOR: ULP_B=4096 means one result in 4096 is off by a
+   bit. Real engines disagree far less often than that on ordinary inputs, which
+   is exactly why this takes minutes to show up in a real match rather than
+   seconds. */
+const ULP_B = +(process.env.ULP_B ?? 0);
+const f64 = new Float64Array(1), u64 = new BigUint64Array(f64.buffer);
+function nextUlp(x){
+  if (!Number.isFinite(x) || x === 0) return x;
+  f64[0] = x; u64[0] += (x > 0 ? 1n : -1n); return f64[0];
+}
+function skewMath(rate){
+  const M = Object.create(Math);
+  // deterministic in the input, so a rerun perturbs exactly the same calls
+  const N = BigInt(Math.max(2, rate));
+  const bite = v => { f64[0] = v; return (u64[0] % N) === 0n; };
+  for (const fn of ["sin", "cos", "atan2", "hypot", "exp", "pow", "log", "tan", "acos", "asin", "atan"]){
+    const base = Math[fn];
+    M[fn] = (...a) => { const v = base(...a); return bite(v) ? nextUlp(v) : v; };
+  }
+  return M;
+}
 
 /* ---------------------------------------------------- the simulated clock */
 let now = 0;                       // ms, the only clock anything in here sees
@@ -178,7 +220,7 @@ function fakeEl(id){
 }
 
 /* ------------------------------ one client ------------------------------- */
-function makeClient(name, relay){
+function makeClient(name, relay, reduced, ulp){
   const els = {}; const listeners = {};
   let frameCb = null;
   function fire(type, key){ for (const fn of listeners[type] || []) fn({ key, preventDefault(){}, target: { tagName: "BODY" } }); }
@@ -204,7 +246,7 @@ function makeClient(name, relay){
     requestAnimationFrame(cb){ frameCb = cb; return 1; },
     setTimeout(){ return 0; }, clearTimeout(){},
     setInterval: simSetInterval, clearInterval: simClearInterval,
-    Math, Date: SimDate, Object, Array, JSON, Symbol, Proxy, Number, String, Boolean, Error,
+    Math: ulp ? skewMath(ulp) : Math, Date: SimDate, Object, Array, JSON, Symbol, Proxy, Number, String, Boolean, Error,
     document: { getElementById(id){ return els[id] || (els[id] = fakeEl(id)); },
                 createElement(tag){ return fakeEl(tag); } },
     WebSocket: FakeWS,
@@ -212,7 +254,7 @@ function makeClient(name, relay){
     localStorage: { getItem(){ return null; }, setItem(){} }
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  sandbox.window.matchMedia = () => ({ matches: false });
+  sandbox.window.matchMedia = (q) => ({ matches: !!reduced && /prefers-reduced-motion/.test(String(q)) });
   sandbox.window.addEventListener = (type, fn) => { (listeners[type] ||= []).push(fn); };
   sandbox.addEventListener = sandbox.window.addEventListener;
   sandbox.window.RPW_RELAY = "wss://fake-relay/ws";
@@ -243,11 +285,13 @@ async function settle(ms){
 
 (async () => {
   const relay = makeRelay();
-  const A = makeClient("host", relay);
-  const B = makeClient("guest", relay);
+  const A = makeClient("host", relay, REDUCED_A, 0);
+  const B = makeClient("guest", relay, REDUCED_B, ULP_B);
 
   console.log(`link: ${LAG}ms each way${JITTER ? ` +/-${JITTER}ms jitter` : ""} (round trip ~${LAG * 2}ms)`);
-  console.log(`frame rate: A ${FPS_A}fps, B ${FPS_B}fps | seats ${TOTAL} | seed ${SEED}`);
+  console.log(`frame rate: A ${FPS_A}fps, B ${FPS_B}fps | seats ${TOTAL} | seed ${SEED} | mode ${MODE}` +
+              (REDUCED_A || REDUCED_B ? ` | reduce-motion A ${REDUCED_A} B ${REDUCED_B}` : "") +
+              (ULP_B ? ` | B on a different browser's trig (1 result in ${ULP_B} is 1 ulp out)` : ""));
 
   A.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
   B.sandbox.window.RPWNet.connect("wss://fake-relay/ws");
@@ -280,10 +324,12 @@ async function settle(ms){
         move.push([key, now + 300 + (rng() * 700 | 0)]);
       }
     }
-    if (release.size === 0 && rng() < 0.08){
+    const wantCast = MODE === "beam" ? 0.9 : 0.08;
+    if (release.size === 0 && rng() < wantCast){
       const k = keys[(rng() * keys.length) | 0];
       c.fire("keydown", k);
-      release.set(k, now + 60 + (rng() * 900 | 0));
+      // a beam is held for seconds, not flicked
+      release.set(k, now + (MODE === "beam" ? 900 + (rng() * 2600 | 0) : 60 + (rng() * 900 | 0)));
     }
     for (const [k, at] of [...release]) if (now >= at){ c.fire("keyup", k); release.delete(k); }
     c.frameCb(now);
@@ -293,6 +339,7 @@ async function settle(ms){
   /* proof the run actually disturbed the scenery — a green test that never
      moved a crate is not evidence about crates */
   const sceneryA = new Set();
+  let clashFrames = 0;
   const simFrame = c => c.sandbox.window.RPW.frameNow();
 
   let firstBad = -1, firstParts = null, stalledFor = 0, maxStall = 0;
@@ -311,11 +358,14 @@ async function settle(ms){
        up and hurls it, and i is the Hexstone, which is heavy enough to smash
        one. A script that only shoots sparks never moves a crate, and a scenery
        bug cannot fail a test that never disturbs the scenery. */
-    if (now >= nextA){ nextA = now + stepA; drive(A, rngA, relA, movA, ["y","u","i","k","k"]); }
-    if (now >= nextB){ nextB = now + stepB; drive(B, rngB, relB, movB, ["y","i","k","j","k"]); }
+    const keysA = MODE === "beam" ? ["j"] : ["y","u","i","k","k"];
+    const keysB = MODE === "beam" ? ["j"] : ["y","i","k","j","k"];
+    if (now >= nextA){ nextA = now + stepA; drive(A, rngA, relA, movA, keysA); }
+    if (now >= nextB){ nextB = now + stepB; drive(B, rngB, relB, movB, keysB); }
 
     const fa = simFrame(A), fb = simFrame(B);
     sceneryA.add(parts(A).scenery);
+    if (A.sandbox.window.RPW.clashing && A.sandbox.window.RPW.clashing()) clashFrames++;
     if (fa === lastA) { stalledFor++; maxStall = Math.max(maxStall, stalledFor); }
     else { stalledFor = 0; lastA = fa; }
 
@@ -337,6 +387,7 @@ async function settle(ms){
   console.log("\nafter", FRAMES, "frames:");
   console.log("  sim frames reached: A", fa, "B", fb);
   console.log("  longest stall:", maxStall, "frames");
+  console.log("  frames with beams locked:", clashFrames, clashFrames === 0 && MODE === "beam" ? "  <-- no clash happened; this run proves nothing" : "");
   console.log("  distinct scenery states seen:", sceneryA.size, sceneryA.size < 5 ? "  <-- the scenery barely moved; this run proves little about it" : "");
   console.log("  input delay settled at: A", A.sandbox.window.RPW.NET.delay(), "B", B.sandbox.window.RPW.NET.delay());
   if (firstBad >= 0){

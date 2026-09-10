@@ -74,14 +74,35 @@ function fakeEl(id) {
 /* Boot the game in a stubbed DOM and hand back the controls.
    Split out of run() so other rigs — tools/input-test.js — can drive the same
    sandbox instead of keeping a second copy of these stubs in step with this one. */
+/* A Math whose engine-approximated functions are one unit in the last place out.
+
+   The spec pins down +, -, *, / and sqrt; it does NOT pin down sin, cos, tan,
+   atan2, hypot, exp, pow or log, and real engines differ in the last bit. This
+   models "the other player is on a different browser" exactly, and lets a test
+   assert the thing that matters: that the SIMULATION cannot tell. */
+const _skF = new Float64Array(1), _skU = new BigUint64Array(_skF.buffer);
+function skewedMath(base) {
+  const M = Object.create(base);
+  for (const fn of ["sin","cos","tan","atan2","atan","asin","acos","hypot","exp","log","pow","cbrt","sinh","cosh","tanh","log2","log10","expm1","log1p"]) {
+    if (typeof base[fn] !== "function") continue;
+    const f = base[fn];
+    M[fn] = function (...a) {
+      const v = f.apply(base, a);
+      if (!Number.isFinite(v) || v === 0) return v;
+      _skF[0] = v; _skU[0] += (v > 0 ? 1n : -1n); return _skF[0];
+    };
+  }
+  return M;
+}
+
 function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1,
-                reducedMotion = false } = {}) {
+                reducedMotion = false, skew = false } = {}) {
   const els = {};
   const listeners = {};
   let frameCb = null;
   let clock = 1000;
   const rng = mulberry32(seed);
-  const SMath = Object.create(Math);
+  const SMath = Object.create(skew ? skewedMath(Math) : Math);
   SMath.random = rng;
 
   const sandbox = {
@@ -139,8 +160,8 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1,
   };
 }
 
-function run({ seed, diff, room, frames, every = 30, opts = null, preset = null, seat = 0, humans = 1, idle = false, reducedMotion = false }) {
-  const rig = boot({ seed, diff, room, opts, seat, humans, reducedMotion });
+function run({ seed, diff, room, frames, every = 30, opts = null, preset = null, seat = 0, humans = 1, idle = false, reducedMotion = false, skew = false }) {
+  const rig = boot({ seed, diff, room, opts, seat, humans, reducedMotion, skew });
   /* A fixed layout, started the way an OFFLINE match starts — no NET.active.
      Presets used to be gated on a live network match, which made the arena
      picker do nothing in solo; these runs would have passed anyway and told us
@@ -197,7 +218,7 @@ function run({ seed, diff, room, frames, every = 30, opts = null, preset = null,
 // what the bots actually DO — the check that an optimisation left behaviour
 // alone, which this file on its own cannot make (it compares a build against
 // itself, not against yesterday's).
-module.exports = { run, boot };
+module.exports = { run, boot, skewedMath };
 if (require.main !== module) return;
 
 const SEEDS = +(process.env.SEEDS || 6);

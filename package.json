@@ -5,7 +5,7 @@
   "description": "A top-down wizard duel where every spell has a weight",
   "scripts": {
     "serve": "python3 -m http.server 8080",
-    "test": "node tools/determinism.js && node tools/ward-test.js && node tools/input-test.js && node tools/coop-test.js && node tools/cape-test.js && node tools/touch-test.js && node tools/desync-parts-test.js && node tools/build-test.js && node tools/net-round-test.js && node server/test-relay.js && node server/test-accounts.js",
+    "test": "node tools/determinism.js && node tools/ward-test.js && node tools/input-test.js && node tools/coop-test.js && node tools/cape-test.js && node tools/touch-test.js && node tools/desync-parts-test.js && node tools/build-test.js && node tools/engine-test.js && node tools/clash-test.js && node tools/net-round-test.js && node server/test-relay.js && node server/test-accounts.js",
     "test:accounts": "node server/test-accounts.js",
     "test:input": "node tools/input-test.js",
     "test:coop": "node tools/coop-test.js",
@@ -18,6 +18,8 @@
     "test:relay": "node server/test-relay.js",
     "test:desync": "node tools/desync-parts-test.js",
     "test:build": "node tools/build-test.js",
+    "test:engine": "node tools/engine-test.js",
+    "test:clash": "node tools/clash-test.js",
     "test:lag": "node tools/lag-test.js",
     "test:golden": "node tools/golden.js tools/golden.expected.txt",
     "build": "node tools/build-single.js",

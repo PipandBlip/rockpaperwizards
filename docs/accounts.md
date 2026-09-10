@@ -1506,6 +1506,134 @@ passes with and without the fix is not evidence, and this repo has been caught
 by that twice: an `innerText` comparison that passed on an empty string, and a
 no-fold cape assertion that only checked joint angles.
 
+## The desync that was Math.sin
+
+With the build fingerprint in, three players — Virginia, Canada, Japan — could
+play a full match against three bots. Until two of them pointed the red beam at
+each other. Then, reliably, the worlds came apart, and the report almost always
+said **the scenery**, several thousand frames in.
+
+A trigger you can reproduce on demand is worth more than any amount of reading,
+and this one named the culprit.
+
+### +, -, *, / and sqrt are exact. sin and cos are not.
+
+The ECMAScript spec requires the four arithmetic operators and `Math.sqrt` to be
+**correctly rounded** — given the same doubles they return the same double on
+every engine, forever. It does not require that of `sin`, `cos`, `tan`, `atan2`,
+`hypot`, `exp`, `pow` or `log`. Those are *implementation-approximated*: an
+engine may return any value within a small error bound, and V8, SpiderMonkey and
+JavaScriptCore genuinely disagree in the last bit.
+
+In a lockstep game every client must compute the same world from the same
+inputs. `game.js` called those functions 137 times.
+
+### Why the beam, and why the scenery
+
+Most of the game shrugs off a last-bit difference. Positions get clamped to the
+arena, hits are threshold comparisons, a spell either connects or does not — the
+difference has to grow by a factor of a trillion before any branch changes, and
+usually it is washed out first.
+
+The beam clash does the opposite. The orb's position along the line between two
+wizards is `t`, and `t` is:
+
+- **carried from frame to frame** — it lives in the `clashes` array, not
+  recomputed from scratch;
+- **slid, never snapped**, toward a target derived from both wizards' mana;
+- **unquantised** — nothing rounds it back to a grid.
+
+That is a feedback loop with memory. It does not wash a small difference out, it
+holds it and grows it. A few seconds later the two clients disagree about `t` in
+the third decimal place, so `a.beamLen = sep*t` differs, so the beams reach
+different distances — and an unopposed beam **burns whatever stands in it**. The
+two clients burn different props. The scenery hashes part company, and that is
+what the player is told.
+
+The measurement, in `tools/lag-test.js`, with one client's trig deliberately one
+ulp out on a fraction of results:
+
+    beams flying:   DIVERGED at sim frame 847 — scenery   (seeds 1, 2, 3)
+    no beams:       PASS, every seed, same perturbation
+
+Same link, same perturbation, same seeds. The clash is the amplifier.
+
+It is also worth knowing that `hash()` mixes `(v * 1000) | 0` — it truncates.
+So a divergence is invisible to the checksum until it exceeds a thousandth of a
+pixel, which is why the match plays fine for minutes and then reports a desync
+that has in fact been growing for a while.
+
+### The fix: the simulation does its own trigonometry
+
+`SIN`, `COS`, `ATAN`, `ATAN2`, `HYPOT`, `LN`, `EXP` and `POW` at the top of
+`game.js`, built only from `+`, `-`, `*`, `/` and `Math.sqrt`. They are
+fdlibm-derived: Cody-Waite range reduction with pi/2 split into an exact high
+part and a low correction, then minimax polynomials.
+
+Accuracy was never the problem — **agreement** was — but they land within about
+one ulp of native anyway:
+
+    SIN    worst relative error 2.2e-16      ATAN2  2.2e-16
+    COS    2.2e-16                           HYPOT  bit-identical to V8
+    EXP    2.2e-16                           POW    2.6e-15
+
+One thing that bit me on the way: a single polynomial for `atan` over the whole
+range is **3e-3** out near |x| = 1. That is not a last-bit difference, it is a
+different answer. The interval split with a per-interval hi/lo constant brings
+every input back to one ulp. Check the error against native before believing a
+polynomial.
+
+`**` went too: `Number::exponentiate` is also implementation-approximated, so
+`(a.x-b.x)**2` became a multiplication — which is exact, and faster.
+
+`Math.min`, `max`, `abs`, `floor`, `ceil`, `round`, `sign`, `imul` and `sqrt`
+are all exactly specified and stayed. `Math.asin` and `Math.acos` stayed too:
+they are used only to draw the fog shadow and the ward arc, and nothing outside
+this client depends on where a pixel went.
+
+### What it costs
+
+    native Math            1.268 ms per frame   (6 wizards, sim + draw)
+    deterministic math     1.461 ms per frame
+
+About 0.19ms a frame at the heaviest configuration, inside a 16.7ms budget.
+`HYPOT` and `ATAN2` are actually FASTER than native; `SIN` is the expensive one,
+at roughly four times the cost of V8's.
+
+The drawing does not need to be deterministic and could go back to native
+`Math` — the capes are by far the biggest consumer — which would recover most of
+that. It has not been done, because the split has to be exactly right and the
+current arrangement cannot be got wrong. If it is ever worth doing,
+`engine-test.js` below is what makes it safe.
+
+### The bots play very slightly differently now
+
+Eight of the twenty rows in `golden.expected.txt` changed. That is expected and
+unavoidable: any deterministic implementation differs from V8's by some ulps, so
+the bots make imperceptibly different decisions. The file was re-recorded. It is
+the one change in this work that is not invisible, and it is invisible to a
+player.
+
+### What is checked
+
+`tools/engine-test.js` (in `npm test`) is the real guard. It runs each match
+twice — once with **every** implementation-approximated `Math` function
+deliberately one ulp out — and requires the simulation checksum to be identical.
+Native `Math` anywhere in a simulation path fails it immediately. That is an
+exhaustive check of "the simulation contains no engine-defined maths", which
+eyeballing 137 call sites is not. It also asserts the skew can actually move a
+result, so the cases cannot pass for the wrong reason.
+
+`tools/clash-test.js` (also in `npm test`, dependency-free) is the end-to-end
+version: a beam duel over a quarter-second link with one client on a different
+browser's trig, including an absurd one-in-two perturbation, plus an assertion
+that the beams really did lock — a clash test that never produced a clash proves
+nothing.
+
+`tools/lag-test.js` is the harness underneath both, and now models the four
+things that vary between two real players: one-way delay, jitter, frame rate,
+and the engine's floating-point behaviour.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile
