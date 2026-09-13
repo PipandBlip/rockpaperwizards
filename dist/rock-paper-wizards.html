@@ -5236,39 +5236,89 @@ function respawnWizard(w){
 
 
 /* --------------------------------------------------- high scores */
+// Escalation has two boards. The GLOBAL one — every signed-in wizard's best
+// run, kept by the account server (cloudflare/worker/src/leaderboard.js) —
+// is what "Escalation records" is supposed to mean. The LOCAL one is only
+// this browser's own history, and it is a fallback now, not the board: it
+// is what a guest sees (there is nowhere global to put a guest's score,
+// the same reason a guest earns no experience either), and what anyone
+// sees the instant a fetch fails or there is no server to ask at all (the
+// single-file dist build, a file:// page). Before this, the local list WAS
+// the board, unconditionally — which is why it could show six rows that
+// all read the same name: that was never a leaderboard, it was one
+// player's own recent runs, on the one device that played them.
 const HS_KEY = "rpw.escalation.scores";
-function loadScores(){
+function loadLocalScores(){
   try { const v = JSON.parse(localStorage.getItem(HS_KEY)); return Array.isArray(v) ? v : []; }
   catch (e) { return []; }
 }
-function saveScore(entry){
+function saveLocalScore(entry){
   try {
-    const list = loadScores();
+    const list = loadLocalScores();
     list.push(entry);
     list.sort((a,b) => b.s - a.s);
     localStorage.setItem(HS_KEY, JSON.stringify(list.slice(0, 8)));
   } catch (e) {}
 }
+// One failed request is enough to stop asking for the rest of the session —
+// the same rule src/account.js uses for /api/*, and for the same reason: a
+// dead or absent server should cost one round trip, not one per menu visit.
+let boardOffline = false;
+let boardCache = null, boardCacheAt = 0;
+const BOARD_TTL_MS = 15000;   // modeCopy() re-asks every time the menu is opened; this just stops it hammering the endpoint while someone idles on it
+async function fetchGlobalBoard(){
+  if (boardOffline || typeof fetch !== "function") return null;
+  const now = Date.now();
+  if (boardCache && now - boardCacheAt < BOARD_TTL_MS) return boardCache;
+  try {
+    const res = await fetch("/api/leaderboard");
+    if (!res.ok) { boardOffline = true; return null; }
+    const data = await res.json();
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    boardCache = rows; boardCacheAt = now;
+    return rows;
+  } catch (e) { boardOffline = true; return null; }
+}
 function esc(str){
   return String(str).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
-function renderBoard(fresh){
+// Eight are kept locally, six are shown everywhere: the end screen has to
+// fit the arena without scrolling, and the bottom rows are the least
+// interesting ones on it.
+function boardRowsHTML(rows, isNew){
+  return '<ol>' + rows.slice(0, 6).map((r, i) =>
+    '<li class="' + (isNew(r) ? "fresh" : "") + '"><span>' + (i+1) + '</span>' +
+    '<span>' + esc(r.n || "Wizard") + ' · wave ' + r.w + ' · ' + r.k + (r.k === 1 ? " kill" : " kills") + '</span>' +
+    '<b>' + r.s.toLocaleString() + '</b></li>'
+  ).join("") + '</ol>';
+}
+let boardRequest = 0;   // lets a later renderBoard() call win over a slower earlier one
+async function renderBoard(fresh){
   const box = el("board");
-  const list = loadScores();
-  if (!list.length){
-    box.innerHTML = '<h4>Escalation records</h4><div class="none">No runs recorded yet.</div>';
+  const askedFor = ++boardRequest;
+  box.hidden = false;
+  scheduleFit();
+  const rows = await fetchGlobalBoard();
+  if (askedFor !== boardRequest) return;   // a newer call already landed; this one is stale
+  if (rows){
+    box.innerHTML = '<h4>Escalation records</h4>' + (rows.length
+      ? boardRowsHTML(rows, r => !!fresh && r.n === fresh.n && r.s === fresh.s)
+      : '<div class="none">No runs recorded yet.</div>');
   } else {
-    // Eight are kept, six are shown: the end screen has to fit the arena without
-    // scrolling, and the bottom two entries are the least interesting rows on it.
-    box.innerHTML = '<h4>Escalation records</h4><ol>' + list.slice(0, 6).map((r, i) => {
-      const isNew = fresh && r.s === fresh.s && r.d === fresh.d;
-      return '<li class="' + (isNew ? "fresh" : "") + '"><span>' + (i+1) + '</span>' +
-             '<span>' + esc(r.n || "Wizard") + ' · wave ' + r.w + ' · ' + r.k + (r.k === 1 ? " kill" : " kills") + '</span>' +
-             '<b>' + r.s.toLocaleString() + '</b></li>';
-    }).join("") + '</ol>';
+    const list = loadLocalScores();
+    box.innerHTML = '<h4>Escalation records (this device)</h4>' + (list.length
+      ? boardRowsHTML(list, r => !!fresh && r.s === fresh.s && r.d === fresh.d)
+      : '<div class="none">No runs recorded yet on this device.</div>');
   }
   box.hidden = false;
   scheduleFit();
+}
+// Hides the board AND invalidates any renderBoard() still in flight, so a
+// slow fetch cannot land after the player has already navigated away and
+// pop the board back open behind them.
+function hideBoard(){
+  boardRequest++;
+  el("board").hidden = true;
 }
 function escGameOver(){
   phase = "over"; phaseT = 1.2;
@@ -5277,7 +5327,7 @@ function escGameOver(){
   const party = seats.length > 1;
   // The score and the wave belong to the party; the kill count is your own.
   const mine = (you && you.kills) | 0;
-  if (!party) saveScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
+  if (!party) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
   msg = { text: party ? "The party falls" : "Fallen",
           sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
   const banked = bankRun(final, wave, party ? mine : kills);
@@ -5294,7 +5344,7 @@ function escGameOver(){
       " · " + Math.round(survT) + " seconds standing.";
     el("curtainText").textContent = report;
     if (!party){ el("goBtn").textContent = "Run it again"; renderBoard({ s: final, k: kills, w: wave, d: Date.now(), n: playerName }); }
-    else el("board").hidden = true;
+    else hideBoard();
     el("curtain").hidden = false;
     banked.then(out => showEarned(out, report));
   }, 1600);
@@ -5333,7 +5383,7 @@ function newMatch(seed){
   makeSeats();
   newRound();
   el("curtain").hidden = true;
-  el("board").hidden = true;
+  hideBoard();
   el("pausePanel").hidden = true;
   // the menus hide these; a match puts them back
   const st = el("stats"); if (st) st.hidden = true;
@@ -5532,7 +5582,7 @@ function show(which){
   const rl = el("roundLabel");
   if (rl) rl.hidden = false;     // it fades instead of hiding, so its space stays reserved
   if (which === "solo"){ const w = el("whoami"); if (w) w.hidden = false; modeCopy(); return; }
-  el("board").hidden = true;
+  hideBoard();
   el("curtainTitle").textContent = COPY[which][0];
   el("curtainText").textContent = COPY[which][1];
   // lobby panels carry their own controls; keep the banner overhead small
@@ -5555,7 +5605,7 @@ function modeCopy(){
     el("goBtn").textContent = "Begin the duel";
     el("curtainTitle").textContent = "Choose your rival";
     el("curtainText").textContent = "Your wand tracks its target on its own — Tab switches targets. Read what is coming and answer it with something heavy enough to stop it.";
-    el("board").hidden = true;
+    hideBoard();
   }
 }
 function selectMode(v){

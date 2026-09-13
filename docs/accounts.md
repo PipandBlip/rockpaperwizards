@@ -1670,6 +1670,100 @@ nothing.
 things that vary between two real players: one-way delay, jitter, frame rate,
 and the engine's floating-point behaviour.
 
+## The leaderboard that was never a leaderboard
+
+Green's report: the Escalation results screen has an "Escalation records"
+table, and every row on it read the same name — his. The question was
+whether it was showing global high scores or just his own, and the answer
+was the latter: it was never global at all.
+
+`renderBoard()` read `localStorage.getItem("rpw.escalation.scores")` — a
+list this one browser had been keeping of its own last eight runs, full
+stop. Nothing about it involved the network, another player, or the
+account server. It looked like a leaderboard (a numbered table, best score
+first) and it sat on a screen that also shows XP earned from a signed-in
+account, so it read as "the game's records" rather than "this device's
+last few plays" — but that is all it was, and a table of six rows that
+all say the same name is exactly what that looks like once you have played
+Escalation a few times on one machine.
+
+**The fix.** A genuine global board needs somewhere that can see every
+player, and nothing in the account system could: each account is its own
+Durable Object, addressed by name (`u:<lowercased name>`), with no index
+across them — that shape is what makes registering a name need no lock
+and no scan, but it also means no account object can enumerate anyone
+else's. So the board is a new, single object of its own —
+`RPWLeaderboard` in `cloudflare/worker/src/index.js`, addressed by one
+fixed name (`idFromName("global-escalation")`, never per-player) — which
+is the one place "who is ahead of whom" can mean anything, because it is
+the one place that has seen every submission. The ranking rule itself
+lives in `cloudflare/worker/src/leaderboard.js`, kept storage-agnostic
+(a tiny async key/value `store`, the same shape `accounts.js` already
+uses) so it can be driven in Node without deploying anything —
+`server/test-leaderboard.js` does exactly that, 25 cases.
+
+One row per wizard, not one row per run: `submit()` keeps a name's entry
+only when the new score beats their own previous best, so a player who
+has run Escalation fifty times occupies one row, not fifty — which is
+also what stops one very active player from crowding everyone else off
+the board, the same failure mode as the old per-device list but at global
+scale instead of one screen's worth.
+
+Submission rides the existing report path rather than adding a new one:
+`bankRun()` in `src/game.js` was already calling `acct.report({ mode:
+"escalation", score, waves, kills })` on every Escalation game-over, for
+XP — signed-in players only, same as every other reward in this game.
+`RPWAccount.fetch()` (`cloudflare/worker/src/index.js`), after that
+result is accepted, forwards the same score/waves/kills to
+`RPWLeaderboard` via `ctx.waitUntil()` — best-effort, never awaited into
+the response, so a slow or failed board write can never slow down or
+fail the thing the request is actually for (the player's own XP and
+profile). A guest's run is never submitted, for the same reason a
+guest's run never earns experience: there is no account to credit it to.
+
+Reading the board is a new, unauthenticated Pages Function,
+`cloudflare/pages/functions/api/leaderboard.js` — `GET /api/leaderboard`,
+no token, because reading a public leaderboard needs no identity. It sits
+as a sibling to `api/[[route]].js` rather than inside it: that file is
+POST-only and routes every action by the name folded into the caller's
+token, which a leaderboard read has neither of, and Pages Functions match
+a static file (`api/leaderboard.js`) ahead of a catch-all
+(`api/[[route]].js`) by design, so the two coexist without either one
+touching the other's code path.
+
+`src/game.js` now tries the global board first and only falls back to the
+old local `localStorage` list when there is nowhere to ask — a dead
+connection, a guest with nothing to submit even if the network were up,
+or the single-file `dist` build and a `file://` page, neither of which
+has an `/api/*` behind them at all (`src/account.js` already treats those
+the same way, for sign-in). The fallback view is now labelled "Escalation
+records (this device)" rather than plain "Escalation records," so it can
+no longer be mistaken for the global board it replaces only in that one
+situation. `renderBoard()` had to become async either way (it now awaits
+a fetch), which opened a real race — a slow first request finishing after
+a faster second one had already landed, or after the player had backed
+out of the Escalation menu entirely and the panel should just be
+hidden — so a request counter (`boardRequest`) is threaded through both
+`renderBoard()` and the new `hideBoard()`, and a stale response is simply
+dropped rather than applied. `tools/` has no browser DOM to run this
+logic against, so it is not in `npm test`; it was checked by hand against
+a stub `el()`/`fetch()`/`localStorage` covering: a populated global board,
+an empty-but-reachable one, both no-server fallback cases, the "fresh
+run" highlight, the stale-response race, `hideBoard()` cutting off an
+in-flight request, and a name containing `<img onerror=…>` coming back
+escaped rather than live in the DOM (`esc()` already existed for this;
+the new code path is what actually made it matter on this screen for
+the first time — a name from ANOTHER player, not typed by the viewer,
+now reaches `innerHTML` here).
+
+New Durable Object means a new binding, in both `wrangler.toml`s
+(`RPW_LEADERBOARD`, same `rockpaperwizards-relay` worker script the
+account and relay objects already live in) and a new migration tag
+(`v3`, `new_sqlite_classes: ["RPWLeaderboard"]`) in the worker's. Deploy
+order is unchanged — the worker first, then Pages — for the same reason
+it already mattered for `RPW_ACCOUNT`: the Pages project's binding names
+a `script_name` that has to already exist.
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile

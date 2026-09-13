@@ -26,3 +26,9 @@ script_name = "rockpaperwizards-relay"
 name = "RPW_ACCOUNT"
 class_name = "RPWAccount"
 script_name = "rockpaperwizards-relay"
+
+# The global Escalation leaderboard, served from ./functions/api/leaderboard.js
+[[durable_objects.bindings]]
+name = "RPW_LEADERBOARD"
+class_name = "RPWLeaderboard"
+script_name = "rockpaperwizards-relay"

@@ -26,6 +26,14 @@ class_name = "RPWRelay"
 name = "RPW_ACCOUNT"
 class_name = "RPWAccount"
 
+# The global Escalation leaderboard: a single instance (always addressed by
+# the same fixed name), so "top scores across everyone" has one place to
+# live. RPWAccount submits to it after a signed-in player's result is
+# accepted; cloudflare/pages/functions/api/leaderboard.js reads it back.
+[[durable_objects.bindings]]
+name = "RPW_LEADERBOARD"
+class_name = "RPWLeaderboard"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RPWRelay"]
@@ -33,3 +41,7 @@ new_sqlite_classes = ["RPWRelay"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["RPWAccount"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RPWLeaderboard"]

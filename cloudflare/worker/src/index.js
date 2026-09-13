@@ -24,6 +24,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { handle as handleAccount } from "./accounts.js";
+import { submit as lbSubmit, top as lbTop } from "./leaderboard.js";
 
 const MAX_SEATS = 6;
 const ROOM_IDLE_MS = 10 * 60 * 1000;
@@ -608,10 +609,72 @@ export class RPWAccount extends DurableObject {
     // needed for throughput — but register/login both read then write, and
     // the object is single-threaded per request anyway.
     const out = await handleAccount(this.store, path, body, Date.now());
+    // An accepted Escalation result is also a candidate for the GLOBAL board
+    // (RPWLeaderboard below) — this account object only ever knows its own
+    // history, so the row for "does this beat everyone else" has to be kept
+    // somewhere that can see everyone, which is what that object is for.
+    // Best-effort and never awaited into the response: a signed-in player's
+    // own profile (xp, bestEsc) is the thing this request is actually for,
+    // and a slow or failed board write should not hold that up or fail it.
+    if (path === "result" && out.status === 200 && body.result && body.result.mode === "escalation"){
+      const p = out.body && out.body.profile, r = body.result;
+      if (p && p.name && this.env && this.env.RPW_LEADERBOARD){
+        const id = this.env.RPW_LEADERBOARD.idFromName("global-escalation");
+        const stub = this.env.RPW_LEADERBOARD.get(id);
+        this.ctx.waitUntil(stub.fetch("https://leaderboard/submit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: p.name, s: r.score, w: r.waves, k: r.kills })
+        }).catch(() => {}));
+      }
+    }
     return new Response(JSON.stringify(out.body), {
       status: out.status,
       headers: { "content-type": "application/json" }
     });
+  }
+}
+
+/* ==================================================================
+   RPWLeaderboard — one Durable Object, one instance (idFromName always
+   passed the same fixed name), holding the whole global Escalation board.
+
+   A single instance rather than one-per-something is the right shape here:
+   unlike accounts (one object per name, so registration needs no index),
+   the whole point of this object IS the index — "who is ahead of whom" only
+   means something read from one place that has seen every submission.
+
+   All the ranking logic lives in leaderboard.js, which knows nothing about
+   Cloudflare — this class only adapts ctx.storage to the tiny async
+   key/value shape that module expects, same pattern as RPWAccount above,
+   so the same code path is what server/test-leaderboard.js exercises in
+   Node over a Map.
+   ================================================================== */
+export class RPWLeaderboard extends DurableObject {
+  constructor(ctx, env){
+    super(ctx, env);
+    this.store = {
+      get: k => ctx.storage.get(k),
+      put: (k, v) => ctx.storage.put(k, v)
+    };
+  }
+
+  async fetch(request){
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/submit"){
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      await lbSubmit(this.store, body);
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200, headers: { "content-type": "application/json" }
+      });
+    }
+    if (url.pathname === "/top"){
+      return new Response(JSON.stringify({ rows: await lbTop(this.store) }), {
+        status: 200, headers: { "content-type": "application/json" }
+      });
+    }
+    return new Response("not found", { status: 404 });
   }
 }
 

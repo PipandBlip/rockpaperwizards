@@ -5,8 +5,9 @@
   "description": "A top-down wizard duel where every spell has a weight",
   "scripts": {
     "serve": "python3 -m http.server 8080",
-    "test": "node tools/determinism.js && node tools/ward-test.js && node tools/input-test.js && node tools/coop-test.js && node tools/cape-test.js && node tools/touch-test.js && node tools/desync-parts-test.js && node tools/build-test.js && node tools/engine-test.js && node tools/clash-test.js && node tools/net-round-test.js && node server/test-relay.js && node server/test-accounts.js",
+    "test": "node tools/determinism.js && node tools/ward-test.js && node tools/input-test.js && node tools/coop-test.js && node tools/cape-test.js && node tools/touch-test.js && node tools/desync-parts-test.js && node tools/build-test.js && node tools/engine-test.js && node tools/clash-test.js && node tools/net-round-test.js && node server/test-relay.js && node server/test-accounts.js && node server/test-leaderboard.js",
     "test:accounts": "node server/test-accounts.js",
+    "test:leaderboard": "node server/test-leaderboard.js",
     "test:input": "node tools/input-test.js",
     "test:coop": "node tools/coop-test.js",
     "test:cape": "node tools/cape-test.js",
