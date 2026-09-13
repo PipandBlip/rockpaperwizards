@@ -24,7 +24,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { handle as handleAccount } from "./accounts.js";
-import { submit as lbSubmit, top as lbTop } from "./leaderboard.js";
+import { submit as lbSubmit, top as lbTop, remove as lbRemove } from "./leaderboard.js";
 
 const MAX_SEATS = 6;
 const ROOM_IDLE_MS = 10 * 60 * 1000;
@@ -671,6 +671,25 @@ export class RPWLeaderboard extends DurableObject {
     }
     if (url.pathname === "/top"){
       return new Response(JSON.stringify({ rows: await lbTop(this.store) }), {
+        status: 200, headers: { "content-type": "application/json" }
+      });
+    }
+    // Moderation/cleanup, not a player action: drop one name's row. Fails
+    // closed — there is no admin ROLE anywhere in this app (no password
+    // reset either, for the same reason: minimal standing surface), so this
+    // does nothing at all unless a secret has been set on the worker
+    // (`wrangler secret put LEADERBOARD_ADMIN_KEY`, in cloudflare/worker)
+    // and the caller supplies the same value.
+    if (request.method === "POST" && url.pathname === "/remove"){
+      const adminKey = this.env && this.env.LEADERBOARD_ADMIN_KEY;
+      if (!adminKey) return new Response("not configured", { status: 501 });
+      if (request.headers.get("x-admin-key") !== adminKey) {
+        return new Response("forbidden", { status: 403 });
+      }
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const removed = await lbRemove(this.store, body && body.name);
+      return new Response(JSON.stringify({ removed }), {
         status: 200, headers: { "content-type": "application/json" }
       });
     }

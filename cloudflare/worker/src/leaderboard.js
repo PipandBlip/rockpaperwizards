@@ -63,4 +63,21 @@ export async function top(store) {
   return list.slice(0, TOP_N).map(r => ({ n: r.name, s: r.s, w: r.w, k: r.k }));
 }
 
+// Drop one wizard's row — moderation (an offensive name) or cleanup (a test
+// account that made it onto a live board), not something a player ever
+// triggers. Matched the same way `submit` dedupes, by lowercased name, so it
+// finds a row regardless of how the name was capitalised when it was set.
+// Returns whether a row was actually removed. The caller (RPWLeaderboard in
+// index.js) is what gates who may call this — this function trusts whatever
+// key it is given.
+export async function remove(store, name) {
+  const key = String(name == null ? "" : name).trim().toLowerCase();
+  if (!key) return false;
+  const list = (await store.get("top")) || [];
+  const next = list.filter(r => r.key !== key);
+  if (next.length === list.length) return false;
+  await store.put("top", next);
+  return true;
+}
+
 export const LIMITS = { MAX_ROWS, TOP_N };

@@ -7,7 +7,7 @@
 //
 //   node server/test-leaderboard.js
 
-import { submit, top, LIMITS } from "../cloudflare/worker/src/leaderboard.js";
+import { submit, top, remove, LIMITS } from "../cloudflare/worker/src/leaderboard.js";
 
 let pass = 0, failed = 0;
 const ok = (name, cond) => {
@@ -93,6 +93,20 @@ const run = async () => {
   const huge = rows.find(r => r.n === "Huge");
   ok("score, wave and kills are all clamped to sane ceilings",
      huge.s <= 9999999 && huge.w <= 200 && huge.k <= 999);
+
+  console.log("\nremoving a row — moderation/cleanup, not a player action");
+  store = freshStore();
+  await submit(store, { name: "lbcheckA", s: 9000, w: 20, k: 50 });
+  await submit(store, { name: "Green", s: 900, w: 8, k: 20 });
+  eq("removing a name that is on the board reports true", await remove(store, "lbcheckA"), true);
+  rows = await top(store);
+  eq("that row is gone", rows.length, 1);
+  eq("the other player's row is untouched", rows[0].n, "Green");
+  eq("removing it again reports false — it is already gone", await remove(store, "lbcheckA"), false);
+  eq("removing a name that was never on the board reports false", await remove(store, "Nobody"), false);
+  eq("matched case-insensitively, like submit()", await remove(store, "GREEN"), true);
+  eq("and empty input removes nothing", await remove(store, ""), false);
+  eq("nor does junk input", await remove(store, null), false);
 
   console.log("\nthe board does not grow without bound");
   store = freshStore();

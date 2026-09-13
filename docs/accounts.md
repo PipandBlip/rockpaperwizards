@@ -1764,6 +1764,31 @@ order is unchanged — the worker first, then Pages — for the same reason
 it already mattered for `RPW_ACCOUNT`: the Pages project's binding names
 a `script_name` that has to already exist.
 
+**Getting a row off the board.** The first live check of this (two
+throwaway accounts registered to prove two players both show up, ranked)
+left exactly the failure mode above one level up: real fake data,
+permanently on a real board, with no way to take it back off. There is no
+admin role anywhere in this app — on purpose, the same reason there is no
+password reset — so this is not a standing feature, it is a single
+narrow escape hatch: `remove(store, name)` in `leaderboard.js`, wired to
+`POST /remove` on the `RPWLeaderboard` object, which does nothing at all
+— `501`, not silently — unless a `LEADERBOARD_ADMIN_KEY` secret has been
+set on the worker (`wrangler secret put LEADERBOARD_ADMIN_KEY`, run from
+`cloudflare/worker`) and the caller's `x-admin-key` header matches it
+exactly, checked in the Durable Object itself, not in the Pages Function
+in front of it — `cloudflare/pages/functions/api/leaderboard-admin.js` is
+a thin forward with no logic of its own to get wrong. Matches names the
+same way `submit()` dedupes them, case-insensitively, so `Green` and
+`GREEN` are the same row to remove as they are the same row to rank.
+Once the secret is set:
+
+```
+curl -X POST https://rockpaperwizards.blipgaming.ca/api/leaderboard-admin \
+  -H "x-admin-key: <the secret>" \
+  -H "content-type: application/json" \
+  -d '{"name":"lbcheckA"}'
+```
+
 ## What is not built yet
 
 Hats, capes, and making the jewels actually appear on the wizard. The profile
