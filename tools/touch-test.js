@@ -227,43 +227,15 @@ test("well past the forgiveness margin picks nothing — the catch area is gener
   assert.strictEqual(wedgeAtDeg(270, 1.4, 100), null);
 });
 
-console.log("\nspell-input mode: stick or wedges, and the lock between them");
+console.log("\nspell-input mode: stick or wedges");
 
 test("stick is the default, so nobody's control scheme changes under them on an update", () => {
   assert.strictEqual(RPW.padMode(), "stick");
 });
 
-test("the switch moves freely while unlocked", () => {
-  assert.strictEqual(RPW.padLocked(), false, "should start unlocked");
+test("the switch moves freely", () => {
   assert.strictEqual(RPW.padSetMode("wedge"), "wedge");
   assert.strictEqual(RPW.padSetMode("stick"), "stick");
-});
-
-test("one tap on the lock does nothing — only a second tap inside the window toggles it", () => {
-  RPW.padForceLocked(false);
-  assert.strictEqual(RPW.padLockTap(1000), false, "a single tap must not lock it");
-  assert.strictEqual(RPW.padLockTap(1150), true, "150ms later is inside the double-tap window");
-});
-
-test("a slow second tap is just two single taps, not a double-tap", () => {
-  RPW.padForceLocked(false);
-  assert.strictEqual(RPW.padLockTap(0), false);
-  assert.strictEqual(RPW.padLockTap(2000), false,
-    "2 full seconds later is a fresh first tap, not the second half of a double-tap");
-});
-
-test("while locked, the switch stops answering taps", () => {
-  RPW.padForceMode("stick");
-  RPW.padForceLocked(true);
-  assert.strictEqual(RPW.padSetMode("wedge"), "stick",
-    "a tap on the switch while locked must not move it");
-});
-
-test("and a double-tap unlocks it again, the same gesture both ways", () => {
-  RPW.padForceLocked(true);
-  RPW.padLockTap(500); RPW.padLockTap(600);
-  assert.strictEqual(RPW.padLocked(), false);
-  assert.strictEqual(RPW.padSetMode("wedge"), "wedge", "and now the switch answers again");
 });
 
 test("switching modes drops whatever was engaged, so no key is left stuck down", () => {

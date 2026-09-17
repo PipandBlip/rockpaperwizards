@@ -6475,21 +6475,6 @@ function savePadMode(mode){
 }
 let padSpellMode = loadPadMode();
 
-/* The lock guards the STICK/WEDGES switch itself, not spellcasting — its only
-   job is stopping a stray tap near that corner of a duel from swapping your
-   whole control scheme out from under you mid-fight. It does NOT persist: it
-   resets unlocked on every load, so nobody gets stuck locked out of their own
-   switch by a choice a previous session made and forgot about. Toggling it
-   takes a double tap on purpose — a control whose only job is preventing an
-   accidental tap should not itself be one accidental tap away from firing. */
-let padModeLocked = false;
-// -Infinity, not 0: "no tap yet" has to be further than PAD_LOCK_DBLTAP from
-// any real timestamp, including one that happens to land near t=0, or the
-// very first tap after a fresh load could register as a double-tap against
-// nothing.
-let padLockTapAt = -Infinity;
-const PAD_LOCK_DBLTAP = 320; // ms between two taps that counts as a double-tap
-
 /* ------------------------------------------------------------- the dash
 
    Dash is: push the stick out until it touches its outer ring. It goes the way
@@ -6542,21 +6527,20 @@ function padLayout(){
      a few pixels off the edge of the screen. */
   const m = R * 1.14 + 10;
   const aimY = vh - m - R - 26;
-  /* The mode switch and lock sit in a small row above the aim button, not
-     "below" the spell control the way a settings mock might first suggest —
-     the cast stick already sits hard against the bottom edge in landscape, so
-     there is no room under it on an actual phone. Stacking upward in the same
-     right-side thumb column is the nearest real estate that is still a single
-     thumb's reach from the spell control it belongs to. */
+  /* The mode switch sits in a small row above the aim button, not "below"
+     the spell control the way a settings mock might first suggest — the
+     cast stick already sits hard against the bottom edge in landscape, so
+     there is no room under it on an actual phone. Stacking upward in the
+     same right-side thumb column is the nearest real estate that is still a
+     single thumb's reach from the spell control it belongs to. */
   const modeY = aimY - 38;
   return { vw, vh, R,
            move:  { x: m, y: vh - m },
            cast:  { x: vw - m, y: vh - m },
            aim:   { x: vw - m, y: aimY, r: 19 },
            pause: { x: 24, y: 24, r: 17 },
-           modeStick: { x: vw - m - 34, y: modeY, r: 14 },
-           modeWedge: { x: vw - m,      y: modeY, r: 14 },
-           lock:      { x: vw - m + 34, y: modeY, r: 13 } };
+           modeStick: { x: vw - m - 17, y: modeY, r: 14 },
+           modeWedge: { x: vw - m + 17, y: modeY, r: 14 } };
 }
 function padHit(p, cx, cy, r){
   const dx = p.clientX - cx, dy = p.clientY - cy;
@@ -6675,13 +6659,6 @@ function padMoveUpdate(ptr, x, y, L){
   padMove(ptr.dx, ptr.dy, L.R);
   padRimDash(mag, L.R, !you || (you.dashCool || 0) <= 0);
 }
-function padLockTap(at){
-  const now = at != null ? at
-            : (typeof performance !== "undefined" ? performance.now() : Date.now());
-  if (now - padLockTapAt < PAD_LOCK_DBLTAP){ padModeLocked = !padModeLocked; padLockTapAt = -Infinity; }
-  else padLockTapAt = now;
-  return padModeLocked;
-}
 function padSwitchMode(mode){
   if (padSpellMode === mode) return;
   padSpellMode = mode;
@@ -6706,18 +6683,13 @@ function padDown(e){
     e.preventDefault();
     return;
   }
-  if (padHit(e, L.lock.x, L.lock.y, L.lock.r + 8)){
-    padLockTap();
-    e.preventDefault();
-    return;
-  }
   if (padHit(e, L.modeStick.x, L.modeStick.y, L.modeStick.r + 8)){
-    if (!padModeLocked) padSwitchMode("stick");
+    padSwitchMode("stick");
     e.preventDefault();
     return;
   }
   if (padHit(e, L.modeWedge.x, L.modeWedge.y, L.modeWedge.r + 8)){
-    if (!padModeLocked) padSwitchMode("wedge");
+    padSwitchMode("wedge");
     e.preventDefault();
     return;
   }
@@ -6796,26 +6768,6 @@ function padRing(g, x, y, r, from, to, color, width){
   g.arc(x, y, r, from, to);
   g.strokeStyle = color; g.lineWidth = width; g.lineCap = "round";
   g.stroke();
-}
-/* A drawn padlock rather than a text glyph — the rest of the HUD's buttons
-   (⊕, ▶, ‖) are plain characters, but a padlock is easy to draw as the two
-   or three shapes it actually is and that beats trusting every phone's font
-   to carry the right emoji. Open: an outlined body, the shackle swung to one
-   side. Locked: the body filled solid, the shackle closed over the top —
-   different enough at 13px that the state reads without needing the colour. */
-function padLockGlyph(g, cx, cy, r, locked, color){
-  const bw = r * 1.15, bh = r * 0.85;
-  const bx = cx - bw / 2, by = cy - bh * 0.1;
-  const shR = r * 0.5;
-  g.strokeStyle = color; g.lineWidth = 1.6; g.lineCap = "round";
-  g.beginPath();
-  if (locked) g.arc(cx, by - shR * 0.1, shR, Math.PI, 0, false);
-  else g.arc(cx + shR * 0.35, by - shR * 0.1, shR, Math.PI * 1.1, Math.PI * 0.05, false);
-  g.stroke();
-  g.beginPath();
-  g.rect(bx, by, bw, bh);
-  if (locked){ g.fillStyle = color; g.fill(); }
-  g.strokeStyle = color; g.lineWidth = 1.4; g.stroke();
 }
 /* How full the ring is, and what it means. Beam and Grasp have no charge level
    at all — Beam is a channel you hold open and Grasp is something you are
@@ -7009,14 +6961,12 @@ function drawPad(){
     g.fillText(phase === "paused" ? "▶" : "‖", L.pause.x, L.pause.y + 1);
   }
 
-  /* --- spell-input mode switch, and the lock that guards it ---
+  /* --- spell-input mode switch ---
 
-     Small on purpose: these are a settings control living on a fight screen,
-     not a third thing to watch during one. The locked look (dim, red ring)
-     communicates by itself that tapping ST/WD right now does nothing, so a
-     locked-out tap does not read as a bug. */
+     Small on purpose: this is a settings control living on a fight screen,
+     not a third thing to watch during one. */
   const stickSel = padSpellMode === "stick", wedgeSel = !stickSel;
-  g.globalAlpha = padModeLocked ? 0.35 : 0.85;
+  g.globalAlpha = 0.85;
   padRing(g, L.modeStick.x, L.modeStick.y, L.modeStick.r, 0, TAU,
           stickSel ? "#a97cff" : "#3b3357", stickSel ? 2.2 : 1.5);
   g.font = "700 " + Math.round(L.modeStick.r * 0.6) + "px ui-monospace, monospace";
@@ -7027,12 +6977,6 @@ function drawPad(){
           wedgeSel ? "#a97cff" : "#3b3357", wedgeSel ? 2.2 : 1.5);
   g.fillStyle = wedgeSel ? "#fff" : "#8b81a8";
   g.fillText("WD", L.modeWedge.x, L.modeWedge.y + 1);
-
-  g.globalAlpha = 0.85;
-  padRing(g, L.lock.x, L.lock.y, L.lock.r, 0, TAU,
-          padModeLocked ? "#ff4d5e" : "#3b3357", padModeLocked ? 2 : 1.5);
-  padLockGlyph(g, L.lock.x, L.lock.y, L.lock.r * 0.62, padModeLocked,
-               padModeLocked ? "#ff4d5e" : "#8b81a8");
 
   g.globalAlpha = 1;
 }
@@ -7147,17 +7091,13 @@ window.RPW = {
     const idx = padWedgeSpellAt(dx, dy, R != null ? R : 100);
     return idx == null ? null : SPELLS[idx].key;
   },
-  // the spell-input mode and its lock, exercised the same way a pointerdown
-  // on the buttons would — padLockTap() IS what padDown() calls
+  // the spell-input mode, exercised the same way a pointerdown on the
+  // buttons would. padSetMode and padForceMode are the same call now that
+  // there is no lock to bypass — both names kept so existing tests read the
+  // same either way.
   padMode: () => padSpellMode,
-  // gated exactly the way padDown() gates a real tap on the ST/WD buttons —
-  // a no-op while locked. Tests that need a mode regardless of lock state use
-  // padForceMode() to set up their preconditions instead.
-  padSetMode: (mode) => {
-    if (!padModeLocked) padSwitchMode(mode === "wedge" ? "wedge" : "stick");
-    return padSpellMode;
-  },
-  padForceMode: (mode) => padSwitchMode(mode === "wedge" ? "wedge" : "stick"),
+  padSetMode: (mode) => { padSwitchMode(mode === "wedge" ? "wedge" : "stick"); return padSpellMode; },
+  padForceMode: (mode) => { padSwitchMode(mode === "wedge" ? "wedge" : "stick"); return padSpellMode; },
   // engages a spell the way a real touch would, without needing a pointer
   // event to synthesize — so a test can put something mid-charge and then
   // check what a mode switch does to it
@@ -7168,12 +7108,6 @@ window.RPW = {
     padCastEngage(padPtr.cast, idx);
     return padPtr.cast.idx;
   },
-  padLocked: () => padModeLocked,
-  // test-setup only: pins the lock to a known state directly, so a test does
-  // not have to inherit whatever state the previous test's double-tap left
-  // behind, or spend an assertion re-deriving it via two more taps
-  padForceLocked: (v) => { padModeLocked = !!v; padLockTapAt = -Infinity; return padModeLocked; },
-  padLockTap: (at) => padLockTap(at),
   padInfo: () => ({
     on: TOUCH, playing: padPlaying(), portrait: padPortrait(),
     layout: TOUCH ? padLayout() : null,
@@ -7187,7 +7121,7 @@ window.RPW = {
     rapid: { spell: SPELLS[PAD_RAPID].key, hold: PAD_RAPID_HOLD,
              engaged: !!(padPtr.cast && padPtr.cast.idx === PAD_RAPID),
              releasing: padFiring },
-    spellMode: padSpellMode, spellModeLocked: padModeLocked
+    spellMode: padSpellMode
   }),
   desyncNote,
   startMatch(opts){
