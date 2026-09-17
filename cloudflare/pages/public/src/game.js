@@ -5206,6 +5206,39 @@ function desyncNote(d){
    listener is registered, and drawPad() returns on its first line. */
 
 
+/* ------------------------------------------------------ the real viewport
+
+   window.innerWidth/innerHeight and CSS's own 100dvh both assume a phone's
+   browser chrome either always shows or always hides. Neither is reliably
+   true — some browsers keep the address bar pinned and never collapse it,
+   in which case dvh should already exclude it, but on at least one real
+   tablet this shipped to it did not: the health plates ended up laid out
+   at the top of a box taller than what was actually on screen, with the
+   pinned bar sitting over them.
+
+   visualViewport is the one number a browser cannot get wrong — it is
+   defined as "the area actually visible right now" — so every place that
+   used to read innerWidth/innerHeight to size or lay out the touch pad
+   reads this instead, and style.css mirrors it into a --vvh custom
+   property (see syncViewportVars()) for the same reason on the CSS side. */
+function viewportSize(){
+  const vv = typeof window !== "undefined" ? window.visualViewport : null;
+  if (vv) return { w: vv.width, h: vv.height };
+  return { w: typeof window !== "undefined" ? window.innerWidth : 0,
+           h: typeof window !== "undefined" ? window.innerHeight : 0 };
+}
+/* Mirrors visualViewport into plain pixel custom properties so CSS has the
+   same escape hatch: `height:var(--vvh, 100dvh)` falls back to dvh until
+   this has run once, then wins over it everywhere dvh alone was not enough. */
+function syncViewportVars(){
+  if (typeof document === "undefined") return;
+  const { w, h } = viewportSize();
+  if (!w || !h) return;
+  const root = document.documentElement.style;
+  root.setProperty("--vvw", w + "px");
+  root.setProperty("--vvh", h + "px");
+}
+
 /* Where the spells sit around the stick. Sector s spans [s*60, s*60+60) degrees
    measured clockwise from due right, so its centre is s*60+30 — and the six
    centres land on the eight-way diagonals and the vertical, which is what makes
@@ -5324,7 +5357,7 @@ function padRimDash(mag, R, ready, at){
 }
 
 function padLayout(){
-  const vw = window.innerWidth, vh = window.innerHeight;
+  const { w: vw, h: vh } = viewportSize();
   const R = Math.max(42, Math.min(76, Math.min(vw, vh) * 0.21));
   /* The rings the sticks wear — dash cooldown on the left, spell charge on the
      right — are drawn OUTSIDE the stick at 1.14 of its radius, so the margin
@@ -5559,7 +5592,9 @@ function padPlaying(){
   return TOUCH && phase !== "menu" && !padPortrait() && !padManualOpen();
 }
 function padPortrait(){
-  return typeof window !== "undefined" && window.innerHeight > window.innerWidth;
+  if (typeof window === "undefined") return false;
+  const { w, h } = viewportSize();
+  return h > w;
 }
 function padClear(){
   padMoveOff();
@@ -5573,8 +5608,9 @@ function padClear(){
 function padResize(){
   if (!padEl) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  padEl.width = Math.round(window.innerWidth * dpr);
-  padEl.height = Math.round(window.innerHeight * dpr);
+  const { w, h } = viewportSize();
+  padEl.width = Math.round(w * dpr);
+  padEl.height = Math.round(h * dpr);
   padCtx = padEl.getContext("2d");
   padCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
@@ -5828,6 +5864,7 @@ function drawPad(){
    rather than letterboxing the fight into a strip. */
 function padOrient(){
   if (!TOUCH) return;
+  syncViewportVars();
   const rot = el("rotate");
   const portrait = padPortrait();
   if (rot) rot.hidden = !portrait;
@@ -5847,6 +5884,7 @@ if (TOUCH && typeof document !== "undefined"){
   padEl = el("pad");
   if (padEl){
     padEl.hidden = false;
+    syncViewportVars();
     padResize();
     window.addEventListener("pointerdown", padDown, { passive: false });
     window.addEventListener("pointermove", padMoveEvt, { passive: false });
@@ -5854,6 +5892,14 @@ if (TOUCH && typeof document !== "undefined"){
     window.addEventListener("pointercancel", padUp);
     window.addEventListener("resize", padOrient);
     window.addEventListener("orientationchange", padOrient);
+    /* window's own resize event does not always fire for a browser chrome
+       show/hide that doesn't change window.innerHeight (some browsers only
+       move visualViewport) — this is the one event guaranteed to fire when
+       the actually-visible area changes for any reason at all. */
+    if (window.visualViewport){
+      window.visualViewport.addEventListener("resize", padOrient);
+      window.visualViewport.addEventListener("scroll", syncViewportVars);
+    }
     padOrient();
   }
 }

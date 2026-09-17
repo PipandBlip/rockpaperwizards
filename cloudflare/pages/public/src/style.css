@@ -514,8 +514,16 @@
      double-tap zoom fighting the sticks. */
   html.touch, html.touch body{height:100%;overflow:hidden;overscroll-behavior:none}
   html.touch body{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none}
-  /* dvh, so the arena does not sit under the browser's own chrome */
-  html.touch .shell{max-width:none;height:100vh;height:100dvh;gap:2px;padding:2px 4px}
+  /* dvh, so the arena does not sit under the browser's own chrome. Some
+     mobile browsers (reported: Android Chrome in landscape on a tablet)
+     don't collapse their own address bar out of `dvh`'s accounting the way
+     they're supposed to, so `--vvh` is a second, more reliable fallback:
+     game.js's syncViewportVars() reads window.visualViewport (the actual
+     visible area, chrome and all, on every browser that supports it) and
+     writes it here as a custom property. Cascade order matters — this line
+     only wins once JS has run at least once; until then, or on a browser
+     with no visualViewport support, it falls straight back to 100dvh. */
+  html.touch .shell{max-width:none;height:100vh;height:100dvh;height:var(--vvh, 100dvh);gap:2px;padding:2px 4px}
   html.touch header.crest{display:none}
   html.touch .roundlabel{margin-top:0}
 
