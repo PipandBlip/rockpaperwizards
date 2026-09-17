@@ -6388,6 +6388,67 @@ const PAD_ANGLE = [30, 90, 150, 210, 270, 330];
 const padPtr = { move: null, cast: null };  // pointerId -> which stick owns it
 let padCtx = null, padEl = null;
 
+/* ------------------------------------------------------ spell input: wedges
+
+   A second way to work the same six spells: instead of dragging toward a
+   name, each of the six compass slots is its own tap target. Press picks the
+   spell and starts it charging (exactly what padCastEngage() already does —
+   only what triggers it changes), release fires it, same as the stick. The
+   slots and their spells are IDENTICAL to the stick's (PAD_SECTOR/PAD_ANGLE),
+   on purpose: a player who already knows "Rive is straight up" from the stick
+   should not have to relearn anything to use the wedges.
+
+   PAD_WEDGE_INNER is the empty hole at the centre — a dead zone so a thumb
+   that lands dead-centre (grabbing for the stick out of habit) does not fire
+   whichever sector happens to sit at angle zero. PAD_WEDGE_OUTER is how far
+   past the drawn edge a touch still counts, the same kind of forgiveness the
+   aim and pause buttons already get via padHit(..., r + 8) — a phone thumb
+   cannot see what it is covering, so the hit area is deliberately more
+   generous than the drawn one. Both numbers are shared between the hit test
+   here and the drawing in drawPad(), so the ring the player sees stays the
+   ring the code triggers on (the same rule the dash rim holds itself to). */
+const PAD_WEDGE_INNER = 0.22;
+const PAD_WEDGE_OUTER = 1.12;
+
+/* Pure: which spell (if any) a touch at (dx, dy) from the wedges' centre
+   lands on, for a stick of radius R. No canvas, no pointer — same reasoning
+   as padSpellAt/padAt, and what lets tools/touch-test.js check the geometry
+   without a browser. */
+function padWedgeSpellAt(dx, dy, R){
+  const rad = HYPOT(dx, dy);
+  if (rad < R * PAD_WEDGE_INNER || rad > R * PAD_WEDGE_OUTER) return null;
+  return padSpellAt(padAngle(dx, dy));
+}
+
+/* ---------------------------------------------------- spell input: the mode
+
+   Which of the two gestures above is live, remembered the same way the local
+   scoreboard is (see HS_KEY) so the choice survives a reload. */
+const PAD_MODE_KEY = "rpw.pad.spellMode";
+function loadPadMode(){
+  try { return localStorage.getItem(PAD_MODE_KEY) === "wedge" ? "wedge" : "stick"; }
+  catch (e) { return "stick"; }
+}
+function savePadMode(mode){
+  try { localStorage.setItem(PAD_MODE_KEY, mode); } catch (e) {}
+}
+let padSpellMode = loadPadMode();
+
+/* The lock guards the STICK/WEDGES switch itself, not spellcasting — its only
+   job is stopping a stray tap near that corner of a duel from swapping your
+   whole control scheme out from under you mid-fight. It does NOT persist: it
+   resets unlocked on every load, so nobody gets stuck locked out of their own
+   switch by a choice a previous session made and forgot about. Toggling it
+   takes a double tap on purpose — a control whose only job is preventing an
+   accidental tap should not itself be one accidental tap away from firing. */
+let padModeLocked = false;
+// -Infinity, not 0: "no tap yet" has to be further than PAD_LOCK_DBLTAP from
+// any real timestamp, including one that happens to land near t=0, or the
+// very first tap after a fresh load could register as a double-tap against
+// nothing.
+let padLockTapAt = -Infinity;
+const PAD_LOCK_DBLTAP = 320; // ms between two taps that counts as a double-tap
+
 /* ------------------------------------------------------------- the dash
 
    Dash is: push the stick out until it touches its outer ring. It goes the way
@@ -6439,11 +6500,22 @@ function padLayout(){
      has to clear those and not just the stick. Clearing only R put both rings
      a few pixels off the edge of the screen. */
   const m = R * 1.14 + 10;
+  const aimY = vh - m - R - 26;
+  /* The mode switch and lock sit in a small row above the aim button, not
+     "below" the spell control the way a settings mock might first suggest —
+     the cast stick already sits hard against the bottom edge in landscape, so
+     there is no room under it on an actual phone. Stacking upward in the same
+     right-side thumb column is the nearest real estate that is still a single
+     thumb's reach from the spell control it belongs to. */
+  const modeY = aimY - 38;
   return { vw, vh, R,
            move:  { x: m, y: vh - m },
            cast:  { x: vw - m, y: vh - m },
-           aim:   { x: vw - m, y: vh - m - R - 26, r: 19 },
-           pause: { x: 24, y: 24, r: 17 } };
+           aim:   { x: vw - m, y: aimY, r: 19 },
+           pause: { x: 24, y: 24, r: 17 },
+           modeStick: { x: vw - m - 34, y: modeY, r: 14 },
+           modeWedge: { x: vw - m,      y: modeY, r: 14 },
+           lock:      { x: vw - m + 34, y: modeY, r: 13 } };
 }
 function padHit(p, cx, cy, r){
   const dx = p.clientX - cx, dy = p.clientY - cy;
@@ -6562,6 +6634,21 @@ function padMoveUpdate(ptr, x, y, L){
   padMove(ptr.dx, ptr.dy, L.R);
   padRimDash(mag, L.R, !you || (you.dashCool || 0) <= 0);
 }
+function padLockTap(at){
+  const now = at != null ? at
+            : (typeof performance !== "undefined" ? performance.now() : Date.now());
+  if (now - padLockTapAt < PAD_LOCK_DBLTAP){ padModeLocked = !padModeLocked; padLockTapAt = -Infinity; }
+  else padLockTapAt = now;
+  return padModeLocked;
+}
+function padSwitchMode(mode){
+  if (padSpellMode === mode) return;
+  padSpellMode = mode;
+  savePadMode(mode);
+  // a mode swap mid-charge would otherwise leave a key stuck down from the
+  // gesture that is no longer live
+  if (padPtr.cast){ padCastRelease(padPtr.cast); padPtr.cast = null; }
+}
 function padDown(e){
   if (!padPlaying()) return;
   const L = padLayout();
@@ -6578,8 +6665,29 @@ function padDown(e){
     e.preventDefault();
     return;
   }
+  if (padHit(e, L.lock.x, L.lock.y, L.lock.r + 8)){
+    padLockTap();
+    e.preventDefault();
+    return;
+  }
+  if (padHit(e, L.modeStick.x, L.modeStick.y, L.modeStick.r + 8)){
+    if (!padModeLocked) padSwitchMode("stick");
+    e.preventDefault();
+    return;
+  }
+  if (padHit(e, L.modeWedge.x, L.modeWedge.y, L.modeWedge.r + 8)){
+    if (!padModeLocked) padSwitchMode("wedge");
+    e.preventDefault();
+    return;
+  }
   if (padHit(e, L.cast.x, L.cast.y, L.R * 1.5) && e.clientX > L.vw / 2){
     padPtr.cast = { id: e.pointerId, ox: L.cast.x, oy: L.cast.y, dx: 0, dy: 0, idx: null };
+    if (padSpellMode === "wedge"){
+      // a tap picks its spell on contact — no drag to get right, and holding
+      // still (even off the wedge) keeps charging exactly like a held key
+      const idx = padWedgeSpellAt(e.clientX - L.cast.x, e.clientY - L.cast.y, L.R);
+      if (idx != null) padCastEngage(padPtr.cast, idx);
+    }
     e.preventDefault();
   }
 }
@@ -6592,9 +6700,13 @@ function padMoveEvt(e){
   }
   if (c && c.id === e.pointerId){
     c.dx = e.clientX - c.ox; c.dy = e.clientY - c.oy;
-    const d = HYPOT(c.dx, c.dy);
-    if (d < L.R * 0.32) padCastRelease(c);          // back to the middle: let it go
-    else padCastEngage(c, padSpellAt(padAngle(c.dx, c.dy)));
+    if (padSpellMode === "stick"){
+      const d = HYPOT(c.dx, c.dy);
+      if (d < L.R * 0.32) padCastRelease(c);          // back to the middle: let it go
+      else padCastEngage(c, padSpellAt(padAngle(c.dx, c.dy)));
+    }
+    // wedge mode picked its spell on padDown() and does not re-check as the
+    // thumb moves — that is the whole point of a button over a stick
     e.preventDefault();
   }
 }
@@ -6640,6 +6752,26 @@ function padRing(g, x, y, r, from, to, color, width){
   g.arc(x, y, r, from, to);
   g.strokeStyle = color; g.lineWidth = width; g.lineCap = "round";
   g.stroke();
+}
+/* A drawn padlock rather than a text glyph — the rest of the HUD's buttons
+   (⊕, ▶, ‖) are plain characters, but a padlock is easy to draw as the two
+   or three shapes it actually is and that beats trusting every phone's font
+   to carry the right emoji. Open: an outlined body, the shackle swung to one
+   side. Locked: the body filled solid, the shackle closed over the top —
+   different enough at 13px that the state reads without needing the colour. */
+function padLockGlyph(g, cx, cy, r, locked, color){
+  const bw = r * 1.15, bh = r * 0.85;
+  const bx = cx - bw / 2, by = cy - bh * 0.1;
+  const shR = r * 0.5;
+  g.strokeStyle = color; g.lineWidth = 1.6; g.lineCap = "round";
+  g.beginPath();
+  if (locked) g.arc(cx, by - shR * 0.1, shR, Math.PI, 0, false);
+  else g.arc(cx + shR * 0.35, by - shR * 0.1, shR, Math.PI * 1.1, Math.PI * 0.05, false);
+  g.stroke();
+  g.beginPath();
+  g.rect(bx, by, bw, bh);
+  if (locked){ g.fillStyle = color; g.fill(); }
+  g.strokeStyle = color; g.lineWidth = 1.4; g.stroke();
 }
 /* How full the ring is, and what it means. Beam and Grasp have no charge level
    at all — Beam is a channel you hold open and Grasp is something you are
@@ -6712,59 +6844,114 @@ function drawPad(){
   g.strokeStyle = atRim && live ? ((w && w.tint) || "#8b81a8") : "#8b81a8";
   g.lineWidth = 1.5; g.stroke();
 
-  /* --- spell stick --- */
+  /* --- spell input: the stick, or the wedges, whichever is picked below --- */
   const c = padPtr.cast;
-  g.globalAlpha = c ? 0.95 : 0.62;
-  padRing(g, L.cast.x, L.cast.y, L.R, 0, TAU, "#3b3357", 2);
+  if (padSpellMode === "stick"){
+    g.globalAlpha = c ? 0.95 : 0.62;
+    padRing(g, L.cast.x, L.cast.y, L.R, 0, TAU, "#3b3357", 2);
 
-  // the six names, in their own colours, dimmed when the mana is not there
-  g.textAlign = "center"; g.textBaseline = "middle";
-  g.font = "600 " + Math.round(L.R * 0.19) + "px ui-monospace, monospace";
-  for (let s = 0; s < 6; s++){
-    const idx = PAD_SECTOR[s], sp = SPELLS[idx];
-    const a = PAD_ANGLE[s] * Math.PI / 180;
-    const tx = L.cast.x + COS(a) * L.R * 0.70, ty = L.cast.y + SIN(a) * L.R * 0.70;
-    const poor = w && w.mana < sp.cost * 0.95;
-    if (c && c.idx === idx){
+    // the six names, in their own colours, dimmed when the mana is not there
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "600 " + Math.round(L.R * 0.19) + "px ui-monospace, monospace";
+    for (let s = 0; s < 6; s++){
+      const idx = PAD_SECTOR[s], sp = SPELLS[idx];
+      const a = PAD_ANGLE[s] * Math.PI / 180;
+      const tx = L.cast.x + COS(a) * L.R * 0.70, ty = L.cast.y + SIN(a) * L.R * 0.70;
+      const poor = w && w.mana < sp.cost * 0.95;
+      if (c && c.idx === idx){
+        g.globalAlpha = 1;
+        g.beginPath();
+        g.moveTo(L.cast.x, L.cast.y);
+        g.arc(L.cast.x, L.cast.y, L.R, (PAD_ANGLE[s] - 30) * Math.PI / 180,
+                                       (PAD_ANGLE[s] + 30) * Math.PI / 180);
+        g.closePath();
+        g.fillStyle = rgba(sp.color, 0.16); g.fill();
+      }
+      g.globalAlpha = poor ? 0.3 : (c && c.idx === idx ? 1 : 0.8);
+      g.fillStyle = sp.color;
+      g.fillText(sp.name, tx, ty);
+    }
+
+    // the charge ring, and only when there is really something to show
+    const ch = padCharge(w, c && c.idx);
+    if (ch){
+      const sp = SPELLS[c.idx];
       g.globalAlpha = 1;
+      padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, "rgba(60,52,90,.55)", 4);
+      if (ch.kind === "charge"){
+        padRing(g, L.cast.x, L.cast.y, L.R * 1.14, -Math.PI / 2,
+                -Math.PI / 2 + TAU * ch.lvl, sp.color, 4);
+      } else {
+        // a channel or a carried stone: full ring, breathing, no fake level
+        g.globalAlpha = 0.55 + 0.35 * SIN(performance.now() / 140);
+        padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, sp.color, 4);
+      }
+    }
+
+    // knob
+    g.globalAlpha = c ? 0.95 : 0.62;
+    let sx = L.cast.x, sy = L.cast.y;
+    if (c){
+      const d = HYPOT(c.dx, c.dy) || 1, cl = Math.min(d, L.R * 0.62);
+      sx += c.dx / d * cl; sy += c.dy / d * cl;
+    }
+    g.beginPath(); g.arc(sx, sy, L.R * 0.30, 0, TAU);
+    g.fillStyle = "rgba(140,130,190,.30)"; g.fill();
+    g.strokeStyle = "#8b81a8"; g.lineWidth = 1.5; g.stroke();
+  } else {
+    /* --- spell wedges: same six compass slots as the stick, each its own tap
+       target. No knob to draw — the wedge itself is the whole control, so
+       what would have been the knob's glow becomes that wedge's fill. */
+    const innerR = L.R * PAD_WEDGE_INNER;
+    g.textAlign = "center"; g.textBaseline = "middle";
+    for (let s = 0; s < 6; s++){
+      const idx = PAD_SECTOR[s], sp = SPELLS[idx];
+      const a = PAD_ANGLE[s] * Math.PI / 180;
+      const a0 = a - Math.PI / 6 + 0.045, a1 = a + Math.PI / 6 - 0.045;
+      const engaged = !!(c && c.idx === idx);
+      const poor = w && w.mana < sp.cost * 0.95;
+
       g.beginPath();
-      g.moveTo(L.cast.x, L.cast.y);
-      g.arc(L.cast.x, L.cast.y, L.R, (PAD_ANGLE[s] - 30) * Math.PI / 180,
-                                     (PAD_ANGLE[s] + 30) * Math.PI / 180);
+      g.moveTo(L.cast.x + COS(a0) * innerR, L.cast.y + SIN(a0) * innerR);
+      g.lineTo(L.cast.x + COS(a0) * L.R, L.cast.y + SIN(a0) * L.R);
+      g.arc(L.cast.x, L.cast.y, L.R, a0, a1);
+      g.lineTo(L.cast.x + COS(a1) * innerR, L.cast.y + SIN(a1) * innerR);
+      g.arc(L.cast.x, L.cast.y, innerR, a1, a0, true);
       g.closePath();
-      g.fillStyle = rgba(sp.color, 0.16); g.fill();
-    }
-    g.globalAlpha = poor ? 0.3 : (c && c.idx === idx ? 1 : 0.8);
-    g.fillStyle = sp.color;
-    g.fillText(sp.name, tx, ty);
-  }
+      g.globalAlpha = poor ? 0.3 : (engaged ? 0.9 : 0.6);
+      g.fillStyle = rgba(sp.color, engaged ? 0.26 : 0.10);
+      g.fill();
+      g.strokeStyle = sp.color;
+      g.lineWidth = engaged ? 2.4 : 1.5;
+      g.stroke();
 
-  // the charge ring, and only when there is really something to show
-  const ch = padCharge(w, c && c.idx);
-  if (ch){
-    const sp = SPELLS[c.idx];
-    g.globalAlpha = 1;
-    padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, "rgba(60,52,90,.55)", 4);
-    if (ch.kind === "charge"){
-      padRing(g, L.cast.x, L.cast.y, L.R * 1.14, -Math.PI / 2,
-              -Math.PI / 2 + TAU * ch.lvl, sp.color, 4);
-    } else {
-      // a channel or a carried stone: full ring, breathing, no fake level
-      g.globalAlpha = 0.55 + 0.35 * SIN(performance.now() / 140);
-      padRing(g, L.cast.x, L.cast.y, L.R * 1.14, 0, TAU, sp.color, 4);
+      const midR = (innerR + L.R) * 0.58;
+      const tx = L.cast.x + COS(a) * midR, ty = L.cast.y + SIN(a) * midR;
+      g.globalAlpha = poor ? 0.35 : (engaged ? 1 : 0.85);
+      g.fillStyle = sp.color;
+      g.font = "600 " + Math.round(L.R * 0.155) + "px ui-monospace, monospace";
+      g.fillText(sp.name, tx, ty);
+    }
+    padRing(g, L.cast.x, L.cast.y, innerR * 0.86, 0, TAU, "#3b3357", 1.6);
+
+    // same charge signal as the stick's ring, drawn around the one engaged
+    // wedge instead of the whole circle — there is only one spell it could
+    // possibly be about
+    const ch = padCharge(w, c && c.idx);
+    if (ch){
+      const sp = SPELLS[c.idx];
+      const s = PAD_SECTOR.indexOf(c.idx);
+      const a = PAD_ANGLE[s] * Math.PI / 180;
+      const wa0 = a - Math.PI / 6, wa1 = a + Math.PI / 6;
+      g.globalAlpha = 1;
+      if (ch.kind === "charge"){
+        padRing(g, L.cast.x, L.cast.y, L.R * 1.06, wa0, wa0 + (wa1 - wa0) * ch.lvl, sp.color, 4);
+      } else {
+        g.globalAlpha = 0.55 + 0.35 * SIN(performance.now() / 140);
+        padRing(g, L.cast.x, L.cast.y, L.R * 1.06, wa0, wa1, sp.color, 4);
+      }
     }
   }
-
-  // knob
-  g.globalAlpha = c ? 0.95 : 0.62;
-  let sx = L.cast.x, sy = L.cast.y;
-  if (c){
-    const d = HYPOT(c.dx, c.dy) || 1, cl = Math.min(d, L.R * 0.62);
-    sx += c.dx / d * cl; sy += c.dy / d * cl;
-  }
-  g.beginPath(); g.arc(sx, sy, L.R * 0.30, 0, TAU);
-  g.fillStyle = "rgba(140,130,190,.30)"; g.fill();
-  g.strokeStyle = "#8b81a8"; g.lineWidth = 1.5; g.stroke();
 
   /* --- the two small buttons --- */
   g.globalAlpha = 0.6;
@@ -6777,6 +6964,32 @@ function drawPad(){
     g.font = "600 " + Math.round(L.pause.r * 0.8) + "px ui-monospace, monospace";
     g.fillText(phase === "paused" ? "▶" : "‖", L.pause.x, L.pause.y + 1);
   }
+
+  /* --- spell-input mode switch, and the lock that guards it ---
+
+     Small on purpose: these are a settings control living on a fight screen,
+     not a third thing to watch during one. The locked look (dim, red ring)
+     communicates by itself that tapping ST/WD right now does nothing, so a
+     locked-out tap does not read as a bug. */
+  const stickSel = padSpellMode === "stick", wedgeSel = !stickSel;
+  g.globalAlpha = padModeLocked ? 0.35 : 0.85;
+  padRing(g, L.modeStick.x, L.modeStick.y, L.modeStick.r, 0, TAU,
+          stickSel ? "#a97cff" : "#3b3357", stickSel ? 2.2 : 1.5);
+  g.font = "700 " + Math.round(L.modeStick.r * 0.6) + "px ui-monospace, monospace";
+  g.fillStyle = stickSel ? "#fff" : "#8b81a8";
+  g.fillText("ST", L.modeStick.x, L.modeStick.y + 1);
+
+  padRing(g, L.modeWedge.x, L.modeWedge.y, L.modeWedge.r, 0, TAU,
+          wedgeSel ? "#a97cff" : "#3b3357", wedgeSel ? 2.2 : 1.5);
+  g.fillStyle = wedgeSel ? "#fff" : "#8b81a8";
+  g.fillText("WD", L.modeWedge.x, L.modeWedge.y + 1);
+
+  g.globalAlpha = 0.85;
+  padRing(g, L.lock.x, L.lock.y, L.lock.r, 0, TAU,
+          padModeLocked ? "#ff4d5e" : "#3b3357", padModeLocked ? 2 : 1.5);
+  padLockGlyph(g, L.lock.x, L.lock.y, L.lock.r * 0.62, padModeLocked,
+               padModeLocked ? "#ff4d5e" : "#8b81a8");
+
   g.globalAlpha = 1;
 }
 
@@ -6873,6 +7086,40 @@ window.RPW = {
   padAt: (deg) => ({ spell: SPELLS[padSpellAt(deg)].key,
                      name: SPELLS[padSpellAt(deg)].name,
                      dirs: padDirKeys(deg) }),
+  // the wedges' hit test, driven directly: (dx, dy) from the wedges' own
+  // centre and a radius, same as padPush() drives the dash without a pointer.
+  // Returns a key ("y".."k") or null, exactly what a real touch would engage.
+  padWedgeAt: (dx, dy, R) => {
+    const idx = padWedgeSpellAt(dx, dy, R != null ? R : 100);
+    return idx == null ? null : SPELLS[idx].key;
+  },
+  // the spell-input mode and its lock, exercised the same way a pointerdown
+  // on the buttons would — padLockTap() IS what padDown() calls
+  padMode: () => padSpellMode,
+  // gated exactly the way padDown() gates a real tap on the ST/WD buttons —
+  // a no-op while locked. Tests that need a mode regardless of lock state use
+  // padForceMode() to set up their preconditions instead.
+  padSetMode: (mode) => {
+    if (!padModeLocked) padSwitchMode(mode === "wedge" ? "wedge" : "stick");
+    return padSpellMode;
+  },
+  padForceMode: (mode) => padSwitchMode(mode === "wedge" ? "wedge" : "stick"),
+  // engages a spell the way a real touch would, without needing a pointer
+  // event to synthesize — so a test can put something mid-charge and then
+  // check what a mode switch does to it
+  padDebugEngage: (key) => {
+    const idx = SPELLS.findIndex(s => s.key === key);
+    if (idx < 0) return null;
+    padPtr.cast = { id: -1, ox: 0, oy: 0, dx: 0, dy: 0, idx: null };
+    padCastEngage(padPtr.cast, idx);
+    return padPtr.cast.idx;
+  },
+  padLocked: () => padModeLocked,
+  // test-setup only: pins the lock to a known state directly, so a test does
+  // not have to inherit whatever state the previous test's double-tap left
+  // behind, or spend an assertion re-deriving it via two more taps
+  padForceLocked: (v) => { padModeLocked = !!v; padLockTapAt = -Infinity; return padModeLocked; },
+  padLockTap: (at) => padLockTap(at),
   padInfo: () => ({
     on: TOUCH, playing: padPlaying(), portrait: padPortrait(),
     layout: TOUCH ? padLayout() : null,
@@ -6885,7 +7132,8 @@ window.RPW = {
             cd: DASH_CD, rim: PAD_DASH_RIM, armed: padArmed },
     rapid: { spell: SPELLS[PAD_RAPID].key, hold: PAD_RAPID_HOLD,
              engaged: !!(padPtr.cast && padPtr.cast.idx === PAD_RAPID),
-             releasing: padFiring }
+             releasing: padFiring },
+    spellMode: padSpellMode, spellModeLocked: padModeLocked
   }),
   desyncNote,
   startMatch(opts){
