@@ -133,7 +133,7 @@
   fieldset.levels{border:1px solid var(--edge);border-radius:3px;padding:10px 14px 12px;margin:0;
     display:flex;gap:8px;flex-wrap:wrap;justify-content:center;background:rgba(13,10,24,.5)}
   fieldset.levels legend{font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--muted);padding:0 8px}
-  .lv0{--tint:#5dffab} .lv1{--tint:#4aa3ff} .lv2{--tint:#a97cff} .lv3{--tint:#ff4d5e}
+  .lv0{--tint:#5dffab} .lv1{--tint:#4aa3ff} .lv2{--tint:#a97cff} .lv3{--tint:#ff4d5e} .lv4{--tint:#ff6b9d}
   fieldset.levels button{border-color:color-mix(in srgb, var(--tint) 45%, #1c1730);color:var(--tint);
     display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1.1}
   fieldset.levels button em{font-style:normal;font-size:9px;letter-spacing:.2em;opacity:.62}

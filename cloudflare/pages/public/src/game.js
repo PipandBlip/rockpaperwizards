@@ -182,7 +182,7 @@ const WARD_COS = 0.2, WARD_R = 40;
 // nothing else: a hexstone, a beam or a hurled crate goes through it and takes
 // the wall with it. WARD_FADE is how long a full wall takes to bleed out on its
 // own with nothing hitting it.
-const WARD_BLOCKS = { spark:1, rive:1 };
+const WARD_BLOCKS = { spark:1, rive:1, swarm:1, needle:1 };
 /* Is this a touch device? Declared HERE, at the top, rather than beside the rest
    of the pad code at the bottom: fitCurtain() and show() both consult it, both
    are defined hundreds of lines above the pad, and a `const` read before its
@@ -317,6 +317,8 @@ let mode = "duel";                 // "duel" | "escalation" | "match"
 let p2 = null;
 let runScore = 0, kills = 0, survT = 0;
 let waveNo = 0, waveLive = false, waveGap = 0;
+let bossAlerted = false;            // has this run's boss alert sounded yet (view-only: nothing in the simulation reads it)
+let bossTest = false;            // the menu's "Boss test" run: escalation, starting at the boss
 const TIER_TINT = ["#5dffab", "#4aa3ff", "#c58cff"];
 const TINTS = ["#7ee9ff", "#ffd24a", "#ff9d6b", "#c58cff", "#5dffab", "#ff6b9d"];
 let playerName = "Wizard";
@@ -780,7 +782,7 @@ function releaseCharge(w, idx){
   cast(w, idx, lvl);
   w.charge = null; w.chargeT = 0;
 }
-function cast(w, idx, lvl){
+function cast(w, idx, lvl, ox, oy, aim){
   const s = SPELLS[idx];
   let need = s.cost * (1 + lvl);
   if (w.mana < s.cost * .95){ w.fizzle = .35; puff(w.x,w.y,"#6b6188",6); return; }
@@ -802,7 +804,8 @@ function cast(w, idx, lvl){
     puff(w.x,w.y,s.color,10);
     return;
   }
-  const a = w.facing;
+  const a = aim != null ? aim : w.facing;
+  const fromTip = ox != null;
   if (s.id === "rive"){
     // a fan of light missiles: each one only carries weight 1, but there are
     // more of them the longer you hold, and they weave in on their own.
@@ -813,8 +816,8 @@ function cast(w, idx, lvl){
       const ang = a + off + rnd(-.02,.02);
       const sp = s.speed * rnd(.9,1.1);
       shots.push({
-        x: w.x + COS(a)*20 - SIN(a)*off*46,
-        y: w.y + SIN(a)*20 + COS(a)*off*46,
+        x: (fromTip ? ox : w.x + COS(a)*20) - SIN(a)*off*46,
+        y: (fromTip ? oy : w.y + SIN(a)*20) + COS(a)*off*46,
         vx: COS(ang)*sp, vy: SIN(ang)*sp,
         weight: 1, w0: 1,
         dmg: 9 * (1 + lvl*0.35) * dmgMul(w),
@@ -846,7 +849,7 @@ function cast(w, idx, lvl){
     };
   }
   shots.push({
-    x: w.x + COS(a)*22, y: w.y + SIN(a)*22,
+    x: fromTip ? ox : w.x + COS(a)*22, y: fromTip ? oy : w.y + SIN(a)*22,
     vx: COS(a)*speed, vy: SIN(a)*speed,
     weight, w0: weight,
     dmg: s.dmg * (1 + lvl*0.9) * dmgMul(w),
@@ -900,13 +903,13 @@ function moveWizard(w, ax, ay, dt){
         w.dashT = 0;                       // you do not dash through furniture
       }
     }
-    if (!REDUCED) ghosts.push({ x:w.x, y:w.y, facing:w.facing, friendly:w.friendly, tint:w.tint, t:0, life:.26 });
+    if (!REDUCED) ghosts.push({ x:w.x, y:w.y, facing:w.facing, friendly:w.friendly, tint:w.tint, t:0, life:.26, sc: w.boss ? 2.6 : 1 });
     return;
   }
   const beamSlow = (w.beamOn && w.beamWind >= byId.beam.cast) ? .35 : 1;
   const chargeSlow = w.charge !== null ? .55 : 1;
   const holdSlow = w.held ? .82 : 1;
-  const spd = 190 * beamSlow * chargeSlow * holdSlow;
+  const spd = 190 * beamSlow * chargeSlow * holdSlow * (w.speedMul || 1);
   const m = HYPOT(ax,ay) || 1;
   const tx = (ax/m)*spd*(HYPOT(ax,ay) > .01 ? 1 : 0);
   const ty = (ay/m)*spd*(HYPOT(ax,ay) > .01 ? 1 : 0);
@@ -981,6 +984,7 @@ function stopBeam(w, quiet){
 }
 function dmgMul(w){ return w && w.D && w.D.dmg ? w.D.dmg : 1; }
 function beamPower(w){
+  if (w.boss && w.beamTint) return 40;    // the Prism Lance does not haggle over the orb: it simply overwhelms
   return 0.22 + (w.mana/100)*1.15 + Math.min(w.beamT, 3)*0.04;
 }
 
@@ -1055,11 +1059,11 @@ function incomingThreat(w, foeW){
   }
   return { weight, light, soonest };
 }
-function lineClear(a, b, forShots){
+function lineClear(a, b, forShots, pad = 2){
   for (const d of debris){
     if (d.owner) continue;
     if (forShots ? !d.stopsShot : !d.stopsBeam) continue;
-    if (segCircle(a.x,a.y,b.x,b.y,d.x,d.y,d.r+2)) return false;
+    if (segCircle(a.x,a.y,b.x,b.y,d.x,d.y,d.r+pad)) return false;
   }
   return true;
 }
@@ -1187,6 +1191,7 @@ function aiTick(w, opp, dt){
     const oppBeaming = opp.beamOn && opp.beamWind >= byId.beam.cast;
     if (w.mana < 12 || (!los && w.beamWind < byId.beam.cast)) stopBeam(w);
     else if (!oppBeaming && !los) stopBeam(w);
+    else if (!oppBeaming && !w.beamForced && bossMirrorThreat(opp) && opp.boss.refl) stopBeam(w);     // the glass is up: let go
   }
 
   // ---- offense
@@ -1196,7 +1201,7 @@ function aiTick(w, opp, dt){
     if (losShoot && w.mana > 18){
       const roll = rand();
       if (w.held && rand() < .5) throwHeld(w);
-      else if (roll < .10 && w.mana > 60 && los && w.beamCool <= 0 && (D.power|0) >= 2) { w.beamOn = true; }
+      else if (roll < .10 && w.mana > 60 && los && w.beamCool <= 0 && (D.power|0) >= 2 && !bossMirrorThreat(opp)) { w.beamOn = true; }
       else if (roll < .28 && w.mana > 40 && los && (D.power|0) >= 2) { w.charge = 2; w.chargeT = 0; w.aiChargeTo = byId.hex.maxChg*rnd(.5,1); }
       else if (roll < .55) { w.charge = 1; w.chargeT = 0; w.aiChargeTo = byId.rive.maxChg*rnd(.1,.8); }
       else cast(w, 0, rand()*.4);
@@ -1259,6 +1264,962 @@ function aiTick(w, opp, dt){
   if (w.y < 70) ay += 1; if (w.y > H-70) ay -= 1;
   if (w.charge !== null || (w.beamOn && w.beamWind >= byId.beam.cast)) { ax *= .25; ay *= .25; }
   moveWizard(w, ax, ay, dt);
+}
+
+/* ---------------------------------------------------------- the Alchemist
+   The boss that stands at the end of wave 8. One wizard on the board — it is a
+   real entry in `wizards`, on team 1, with a real hp bar, hurtbox and beam — but
+   it wields FOUR wands and only ever has two of them out.
+
+   Its hat is a reading wheel. A ring of six stones sits on the brim, one for each
+   spell. Every so often the hat spins, the ring spins with it, and two stones
+   settle at the two reading marks: those are the two spells it will use, one
+   in each hand, for the next stretch of the fight. While the hat spins the arms
+   reach behind its back, put the wands they were holding into their sheaths and
+   draw the other pair. Each live wand then charges ITS spell, releases it from
+   ITS tip, and reloads with the same one, until the hat spins again.
+
+   Sometimes the two locked spells are a pair that can be fused. It does not always
+   fuse them — but when it does, both wands come together, a large star flashes
+   round it, and one new spell leaves instead of two.
+
+   Everything in this block is simulation and obeys the simulation's rules: the
+   seeded rand()/rnd() only, the deterministic COS/SIN/ATAN2, no clock. The
+   drawing code (drawBossBody) reads this state but never writes it. */
+const BOSS_AT = 8;                 // the wave whose clearing calls the boss
+const BOSS_SCALE = .625;           // the design below is drawn at this fraction: an Alchemist is about the size of two and a half wizards
+const BOSS_R = 20;
+const BOSS_TINT = "#ff6b9d";
+const BOSS_D = { react:.13, aim:.97, cover:.9, greed:1.3, regen:.9, miss:.02, dash:true, power:3,
+                 dmg:.6, hp:235, tier:"Boss", name:"The Alchemist" };
+/* The Alchemist runs on mana like anyone else. It has the same hundred-point pool
+   you do and pays for every cast out of it; the bar under its health shows what is
+   left. The prices are its own — a wand that fires all day is worth less than one
+   that fires now and then — and a wand that cannot pay simply holds its spell at
+   full charge until it can. When more than one wand has been waiting a while, the
+   hat turns early and picks something it can afford. */
+const BOSS_COST = [16, 24, 40, 24, 30, 14];        // by spell: a burst of sparks, a rive fan, a hexstone, a ward, opening the beam, a grasp
+const BOSS_FUSED_COST = { swarm: 44, needle: 32, wheel: 46, prism: 26 };
+const BOSS_BEAM_DRAIN = .5;        // its beam drains mana at this fraction of the rate yours does
+/* Reflect. A beam aimed at the Alchemist while it has no beam of its own to answer
+   with is met by a mirror: a pane of light held out in front of it, turning to face
+   whoever is beaming. The beam stops at the pane and comes back out of it, at the
+   wizard it came from, for as long as the mirror holds. It costs mana, lasts a
+   moment, and then needs a moment to gather itself again — so the beam is answered,
+   not made useless. */
+const BOSS_REFLECT_COST = 18;      // mana to raise the mirror
+const BOSS_REFLECT_LIFE = 1.8;     // most seconds it holds
+const BOSS_REFLECT_CD = 4;         // seconds after it drops before it can be raised again
+const BOSS_MIRROR_D = 58;          // how far in front of the boss the pane hangs (just past the wand tips)
+const BOSS_MIRROR_HALF = 62;       // half the pane's width
+const BOSS_MIRROR_TURN = 9;        // how fast the pane swings round to face a beam (rad/s)
+const BOSS_MIRROR_SLEW = 1;        // how fast the returned beam can swing after its target (rad/s): the same as its own beam
+const BOSS_MIRROR_KICK = .5;       // it leaves the glass this far off the line back to its target, and swings onto them: time to step aside
+const BOSS_MIRROR_MUL = 1;         // the returned beam burns exactly as hard as the one that was thrown
+/* How the mirror is raised. The front two hands come together in front of it (the
+   glass is only a seam, as wide as the boss itself, so a beam that would hit it is
+   already answered), then fling apart and the pane stretches out between them. */
+const BOSS_MIRROR_CLASP = .34;     // seconds for the hands to meet
+const BOSS_MIRROR_OPEN = .16;      // ...and then to draw the pane out to its full width
+const BOSS_MIRROR_SEAM = 24;       // half the pane's width while the hands are together
+const BOSS_MIRROR_DEPTH = 17;      // half the pane's thickness, as it is drawn (the beam is cut in its middle)
+const BOSS_DRY = 1.5;              // seconds a wand may wait for mana (or a clear shot) before the hat turns early
+// how far off it likes to stand for each spell: by spell index, and for the fused ones
+const BOSS_RANGE = [290, 300, 370, 300, 340, 190];
+const BOSS_RANGE_FUSED = { swarm: 380, needle: 300, wheel: 410, prism: 340 };
+// how much room a shot needs beside a crate to get past it (about its own radius): by spell, and for the fused ones
+const BOSS_PAD = [8, 10, 18, 0, 0, 0];
+const BOSS_PAD_FUSED = { swarm: 9, needle: 7, wheel: 20, prism: 0 };
+const BOSS_PERIOD = 8;             // casts (a fused cast counts as two) between one spin of the hat and the next
+const BOSS_DUR = [.75, 1.0, 1.5, .8, 1.0, .7];       // seconds to charge, by spell index
+const BOSS_POOL = [[0,.27],[1,.24],[2,.17],[3,.11],[4,.11],[5,.10]];
+const BOSS_BEAM_HOLD = 2.0, BOSS_GRASP_HOLD = .55;
+const BOSS_WAND = 24, BOSS_MUZZLE = 82;
+const BOSS_SPIN = 1.25;            // the hat spins, the arms are behind its back
+const BOSS_HOLSTER = .42, BOSS_DRAW = .5;            // seconds for an arm to put a wand away / bring one out
+const BOSS_FUSE_CHARGE = .95, BOSS_FUSE_FLASH = .42; // the two wands come together; the star
+const BOSS_FUSE_P = .7, BOSS_FUSE_CD = 2;  // chance it fuses at each chance / seconds between fusions
+const BOSS_FUSE_PERIOD_P = .85;             // chance that a stretch is one it will fuse in at all
+const BOSS_FUSE_FIRST = .5;                 // seconds after the hat lands before it may first fuse
+const BOSS_FUSE_LOOK = .1;                  // while both wands are early in their charge, how often it considers fusing them
+const BOSS_FUSE_PICK_P = .8;                // chance the hat, with a full enough pool, sets out to pick two spells that fuse
+/* Fused spells, by the two spell indices they are made of (spark 0, rive 1, hex 2,
+   ward 3, beam 4, grasp 5). A pair that is not listed does not fuse: the two
+   wands just go on casting one each. */
+const BOSS_COMBOS = {
+  "1+2": { id:"swarm",  name:"Hexswarm",    color:"#c4561e", sound:"rive"  },   // rive + hex: a stream of homing missiles, launched a beat apart
+  "0+1": { id:"needle", name:"Needle Rain", color:"#6f8dff", sound:"spark" },   // spark + rive: three quick volleys of fast, thin, homing needles
+  "0+2": { id:"wheel",  name:"Sparkwheel",  color:"#ffd36b", sound:"hex"   },   // spark + hex: a spinning homing orb that throws rings of sparks and speeds up as it closes
+  "1+4": { id:"prism",  name:"Prism Lance", color:"#e06bff", sound:"rive"  }    // rive + beam: a beam that throws homing missiles from its tip
+};
+const D2R = Math.PI / 180;
+// Where each arm leaves the hat, and where its elbow (E) and hand (H) sit when it
+// is out ("live") and when it is folded away ("stow": the hand behind the back,
+// wand in its sheath). Local space: +x is the way the boss faces. Pair 0 is
+// front-left + rear-right, pair 1 the other two. `side` is which hand it is.
+const BOSS_ARMS = [
+  { id:"FL", pair:0, side:-1, S:[14,-16], live:{ E:[38,-72], H:[78,-56] }, stow:{ E:[-2,-56],  H:[-50,-24], wa:200 } },
+  { id:"RR", pair:0, side: 1, S:[-8,20],  live:{ E:[22,78],  H:[64,66]  }, stow:{ E:[-34,46],  H:[-60,9],   wa:172 } },
+  { id:"FR", pair:1, side: 1, S:[14,16],  live:{ E:[38,72],  H:[78,56]  }, stow:{ E:[-2,56],   H:[-50,24],  wa:160 } },
+  { id:"RL", pair:1, side:-1, S:[-8,-20], live:{ E:[22,-78], H:[64,-66] }, stow:{ E:[-34,-46], H:[-60,-9],  wa:188 } }
+];
+
+const bzLerp = (a, b, t) => a + (b - a) * t;
+function bzAng(a, b, t){ return a + angDiff(b, a) * t; }
+/* One arm's pose. `k` is how far the arm is out (0: the wand is sheathed behind
+   its back, 1: out and working), P the target in the boss's own frame, `foc` how
+   far the arm has swept to the centre line to channel the beam, `cf` how far it
+   has come in to meet the other hand to fuse a spell. Used by the sim (where the
+   shot leaves) and by the drawing (where the wand is) — one function, so the
+   spell comes out of the wand you see. */
+function bossPose(i, k, P, foc, cf, rc, rw){
+  const a = BOSS_ARMS[i], sd = a.side;
+  const bulge = SIN(Math.PI * k);        // the hand goes round the side of the body, not through the hat
+  let ex = bzLerp(a.stow.E[0], a.live.E[0], k), ey = bzLerp(a.stow.E[1], a.live.E[1], k) + sd * bulge * 14;
+  let hx = bzLerp(a.stow.H[0], a.live.H[0], k), hy = bzLerp(a.stow.H[1], a.live.H[1], k) + sd * bulge * 22;
+  const aim = ATAN2(P[1] - hy, P[0] - hx);
+  let wa = bzAng(a.stow.wa * D2R, aim, k);
+  if (cf > 0){
+    ex = bzLerp(ex, 34, cf); ey = bzLerp(ey, sd * 46, cf);
+    hx = bzLerp(hx, 66, cf); hy = bzLerp(hy, sd * 11, cf);
+    wa = bzAng(wa, -sd * .3, cf);
+  }
+  if (foc > 0){
+    ex = bzLerp(ex, 30, foc); ey = bzLerp(ey, sd * 26, foc);
+    hx = bzLerp(hx, BOSS_MUZZLE - BOSS_WAND, foc); hy = bzLerp(hy, 0, foc);
+    wa = bzAng(wa, 0, foc);
+  }
+  /* The mirror. `rc`: the hands come together in front of the chest, wands up (a clap);
+     `rw`: then the arms fling out to the sides, nearly straight, and the wands point out
+     along the pane they are holding open. Only the two front arms are ever asked for it. */
+  if (rc > 0){
+    ex = bzLerp(ex, 36, rc); ey = bzLerp(ey, sd * 40, rc);
+    hx = bzLerp(hx, 70, rc); hy = bzLerp(hy, sd * 6, rc);
+    wa = bzAng(wa, -sd * .15, rc);
+  }
+  if (rw > 0){
+    ex = bzLerp(ex, 56, rw); ey = bzLerp(ey, sd * 58, rw);
+    hx = bzLerp(hx, 86, rw); hy = bzLerp(hy, sd * 88, rw);
+    wa = bzAng(wa, sd * 1.2, rw);
+  }
+  return { i, id:a.id, S:a.S, E:[ex, ey], H:[hx, hy], w:k, foc,
+           T:[hx + COS(wa)*BOSS_WAND, hy + SIN(wa)*BOSS_WAND] };
+}
+function bossLocalTarget(w){
+  const t = w.target;
+  if (!t) return [150, 0];
+  // in the design's own units (see BOSS_SCALE), so it lines up with bossPose
+  const dx = t.x - w.x, dy = t.y - w.y, c = COS(w.facing), s = SIN(w.facing);
+  return [(dx*c + dy*s) / BOSS_SCALE, (-dx*s + dy*c) / BOSS_SCALE];
+}
+function bossInit(w){
+  const arms = [];
+  for (let i = 0; i < 4; i++)
+    arms.push({ spell: 0, t: 0, dur: 1, st: 3, held: 0, burst: 0, bt: 0, foc: 0, cf: 0, rc: 0, rw: 0, k: 0, fired: 0, dry: 0, wait: 0, force: false, blind: 0 });
+  w.boss = { pair: 0, phase: "intro", pt: 1.3, fires: 0, wake: 0, next: -1, nextCol: null,
+             spinK: 0, spinT: BOSS_SPIN, slots: [0,1,2,3,4,5], prev: [0,1,2,3,4,5], lock: [0,1], lastKey: "", combo: null,
+             fuse: null, fuseCd: 0, look: 0, rolled: false, wantFuse: true, flashN: 0, q: [], prism: null,
+             strafe: 1, strafeT: 1, goal: null, goalT: 0, arms,
+             // the mind: what it has noticed, how long ago, and where it means to go
+             alert: 0, lag: .1, dodge: 0, ex: 0, ey: 0, hideT: 0, coverCd: 0, blind: 0, flanking: false, aim: null,
+             sense: null, actCd: 0, dashes: 0, dodges: 0, wards: 0,
+             refl: null, reflCd: 1, reflN: 0 };
+  bossLock(w);
+  w.speedMul = .82;
+}
+/* How much the hat wants each spell right now. This is the Alchemist reading the
+   room: it will not pick what it cannot pay for or cannot use from where it
+   stands, it goes for the spells that break a ward when you are behind one, it
+   keeps its distance-spells for a long shot and its fast ones for close work, and
+   when it is hurt it reaches for the wall. All of it is simulation state — the
+   target's position, hp, mana and ward — never anything that is drawn. */
+function bossWeight(w, sp){
+  let k = BOSS_POOL[sp][1];
+  const o = w.target;
+  if (w.mana < BOSS_COST[sp] * 2.4) k *= .3;             // it could not keep that up
+  if (!o) return k;
+  const d = HYPOT(o.x - w.x, o.y - w.y), hurtBad = w.hp < w.hpMax * .5;
+  const los = lineClear(w, o, true, BOSS_PAD[sp]);
+  if (!los && sp !== 3) k *= .35;                        // nothing it throws goes through a crate
+  const walled = o.ward > 8;
+  if (sp === 0){ if (d < 250) k *= 1.4; if (walled) k *= .55; }
+  else if (sp === 1){ if (walled) k *= .55; }
+  else if (sp === 2){ if (walled) k *= 2.2; if (d < 170) k *= .6; if (d > 330) k *= 1.2; }
+  else if (sp === 3){ if (hurtBad) k *= 2.2; if (w.ward > 0) k *= .3; }
+  else if (sp === 4){
+    if (!lineClear(w, o, false)) k *= .15;
+    if (walled) k *= 2;
+    if (d > 380) k *= 1.3;
+    if (o.dashCool <= 0) k *= .75;                       // they can still step out of it
+    if (o.mana < 25) k *= 1.6;
+  }
+  else if (sp === 5){ if (d < 260) k *= 1.8; else k *= .5; }
+  return Math.max(.02, k);
+}
+// One draw from the boss's own spell pool. No grasp with nothing to grab.
+function bossPickOne(w, not){
+  for (let tries = 0; tries < 10; tries++){
+    let tot = 0;
+    const ws = [];
+    for (let sp = 0; sp < 6; sp++){ const k = (sp === 5 && !liftable(w)) || sp === not ? 0 : bossWeight(w, sp); ws.push(k); tot += k; }
+    let r = rand() * tot, pick = 0;
+    for (let sp = 0; sp < 6; sp++){ r -= ws[sp]; if (r < 0){ pick = sp; break; } }
+    if (pick === 5 && !liftable(w)) continue;
+    if (pick === not) continue;
+    return pick;
+  }
+  return not === 0 ? 1 : 0;
+}
+const bossKey = (a, b) => (a < b ? a : b) + "+" + (a < b ? b : a);
+/* The hat chooses. Two different spells, one for each hand; half the time the
+   second is picked to fuse with the first. The ring's six stones are then laid
+   out so that the two chosen ones end up under the two reading marks (slots 0
+   and 2) when the ring comes to rest, and the other four fill in the rest. */
+function bossLock(w){
+  const B = w.boss;
+  let a = 0, b = 1, set = false;
+  // With the mana for it, the hat mostly sets out to pick a pair that fuses (one it can pay for, and not the one it just made if there is another)
+  if (rand() < (w.mana >= 55 ? BOSS_FUSE_PICK_P : w.mana >= 36 ? .5 : .15)){
+    const opts = [];
+    for (const k in BOSS_COMBOS){
+      const id = BOSS_COMBOS[k].id;
+      if (k === B.lastKey || w.mana < BOSS_FUSED_COST[id] + (id === "prism" ? 26 : 4)) continue;      // the price it will be asked for a moment later
+      if (id === "prism" && (w.beamOn || w.beamBurn > 0)) continue;
+      opts.push(k);
+    }
+    if (opts.length){
+      let tot = 0;
+      for (const k of opts) tot += k === "1+4" ? .6 : 1;
+      let r = rand() * tot, pick = opts[0];
+      for (const k of opts){ r -= k === "1+4" ? .6 : 1; if (r < 0){ pick = k; break; } }
+      const ab = pick.split("+");
+      a = +ab[0]; b = +ab[1]; set = true;
+    }
+  }
+  for (let tries = 0; !set && tries < 6; tries++){
+    a = bossPickOne(w, -1);
+    const mates = [];
+    for (let s = 0; s < 6; s++) if (s !== a && BOSS_COMBOS[bossKey(a, s)]) mates.push(s);
+    // a full pool wants to fuse; a thin one does not have the mana to
+    if (mates.length && rand() < (w.mana >= 55 ? .6 : .3)) b = mates[(rand() * mates.length) | 0];
+    else b = bossPickOne(w, a);
+    if (bossKey(a, b) !== B.lastKey) break;
+  }
+  if (rand() < .5){ const t = a; a = b; b = t; }
+  B.lock = [a, b]; B.lastKey = bossKey(a, b); B.combo = BOSS_COMBOS[B.lastKey] || null;
+  for (let i = 0; i < 4; i++) B.arms[i].spell = BOSS_ARMS[i].side < 0 ? a : b;
+  const rest = [];
+  for (let s = 0; s < 6; s++) if (s !== a && s !== b) rest.push(s);
+  for (let i = rest.length - 1; i > 0; i--){ const j = (rand() * (i + 1)) | 0; const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
+  B.prev = B.slots;
+  B.slots = [a, rest[0], b, rest[1], rest[2], rest[3]];
+}
+function bossTip(w, i){
+  const B = w.boss, A = B.arms[i], p = bossPose(i, A.k, bossLocalTarget(w), A.foc, A.cf, A.rc, A.rw);
+  const c = COS(w.facing), s = SIN(w.facing);
+  const tx = p.T[0] * BOSS_SCALE, ty = p.T[1] * BOSS_SCALE;
+  return { x: w.x + c*tx - s*ty, y: w.y + s*tx + c*ty };
+}
+/* Where to aim so a shot of this speed meets the target rather than where the
+   target was. It leads a walking target and does not lead a dash (which is over
+   before the shot arrives), and never turns the aim more than half a radian. */
+function bossLead(w, x, y, speed){
+  const t = w.target;
+  if (!t) return w.facing;
+  const direct = ATAN2(t.y - y, t.x - x);
+  if (t.dashT > 0) return direct;
+  let px = t.x, py = t.y;
+  for (let k = 0; k < 2; k++){
+    const tt = clamp(HYPOT(px - x, py - y) / speed, 0, .8);
+    px = t.x + (t.vx || 0) * tt * .9; py = t.y + (t.vy || 0) * tt * .9;
+  }
+  return direct + clamp(angDiff(ATAN2(py - y, px - x), direct), -.5, .5);
+}
+// cast() charges the standard price and refuses below it; the Alchemist pays its own
+// (BOSS_COST), so the wand casts for free and the price comes off the bar here.
+function bossFreeCast(w, spell, lvl, x, y, ang){
+  const m = w.mana;
+  w.mana = 999;
+  cast(w, spell, lvl, x, y, ang);
+  w.mana = m;
+}
+function bossShoot(w, i, spell, lvl){
+  const tip = bossTip(w, i);
+  const ang = spell === 0 ? bossLead(w, tip.x, tip.y, byId.spark.speed)
+            : w.target ? ATAN2(w.target.y - tip.y, w.target.x - tip.x) : w.facing;
+  bossFreeCast(w, spell, lvl, tip.x, tip.y, ang);
+}
+/* A homing missile out of one wand tip: the shared body of the fused spells.
+   `o` carries how it flies (see bossCombo); `o.off` fans it off the aim. */
+function bossMissile(w, i, o){
+  const tip = bossTip(w, i);
+  const base = w.target ? ATAN2(w.target.y - tip.y, w.target.x - tip.x) : w.facing;
+  const ang = base + o.off + rnd(-.03, .03);
+  const sp = o.v0 * rnd(.92, 1.08);
+  shots.push({ x: tip.x, y: tip.y, vx: COS(ang)*sp, vy: SIN(ang)*sp, weight: 1, w0: 1,
+               dmg: o.dmg * dmgMul(w), r: o.r, color: o.color, kind: o.kind, owner: w, life: o.life, trail: [], spin: 0,
+               seek: { turn: o.turn, wob: o.wob, vMin: sp, vMax: o.v1 ? o.v1 * (sp / o.v0) : sp, phase: rand()*TAU },
+               glow: o.glow || 16, lvl: 0 });
+  swish(w, o.color, "cast");
+}
+function bossLive(B, i){ return BOSS_ARMS[i].pair === B.pair; }
+function bossTempo(w){ return w.hp < w.hpMax * .4 ? .78 : 1; }
+// the hat spins: pick two spells, and the arms go round behind the back
+function bossSpin(w, flip){
+  const B = w.boss;
+  if (flip) B.pair ^= 1;
+  B.phase = "spin"; B.spinT = BOSS_SPIN * (w.hp < w.hpMax * .4 ? .82 : 1); B.pt = B.spinT; B.spinK = 0; B.wake = 0;
+  B.fuse = null; B.q = []; B.prism = null;
+  for (let i = 0; i < 4; i++){ const A = B.arms[i]; A.st = 3; A.t = 0; A.held = 0; A.burst = 0; A.dry = 0; A.wait = 0; A.force = false; A.blind = 0; }
+  bossLock(w);
+  B.wantFuse = rand() < BOSS_FUSE_PERIOD_P;                 // some stretches it never fuses at all, even with a pair that could
+  spinSound(true);
+}
+// the spin is over: the live pair draws its wands and goes to work, the second a beat behind the first
+function bossBegin(w){
+  const B = w.boss, tempo = bossTempo(w);
+  let n = 0;
+  for (let i = 0; i < 4; i++){
+    const A = B.arms[i];
+    if (!bossLive(B, i)){ A.st = 3; A.t = 0; continue; }
+    A.st = 0; A.t = -(BOSS_DRAW * .7 + .45 * n++); A.dur = BOSS_DUR[A.spell] * tempo;
+  }
+  B.phase = "live"; B.fires = 0; B.wake = 0; B.spinK = 0; B.fuseCd = BOSS_FUSE_FIRST; B.rolled = false; B.look = 0;
+  spinSound(false);
+  lockSound();
+}
+// A wand has spent its spell: the same spell goes back in, and either it goes
+// again or, once the pair has cast enough, the hat starts to turn.
+function bossReload(w, i){
+  const B = w.boss, A = B.arms[i], tempo = bossTempo(w);
+  A.fired = .3;
+  B.fires++; B.rolled = false;
+  A.dur = BOSS_DUR[A.spell] * tempo;
+  A.t = -rnd(.12, .35);
+  if (A.spell === 3 && w.ward > 0) A.t -= rnd(.6, 1.4);      // its wall is still standing: no hurry to raise another
+  A.st = B.phase === "live" ? 0 : 3;
+  if (B.phase === "live" && B.fires >= BOSS_PERIOD){ B.phase = "warn"; B.pt = .7; }
+  else if (B.phase === "live") bossTryFuse(w, i);
+}
+// two wands that are both winding up, holding spells that fuse, may come together instead
+function bossTryFuse(w, i){
+  const B = w.boss, A = B.arms[i], P = B.arms[i ^ 1];
+  if (!B.combo || !B.wantFuse || B.fuse || B.fuseCd > 0 || B.fires > BOSS_PERIOD - 2) return;
+  if (A.st !== 0 || P.st !== 0 || A.t > A.dur * .5 || P.t > P.dur * .5) return;
+  if (B.combo.id === "prism" && (w.beamOn || w.beamBurn > 0)) return;
+  if (w.mana < BOSS_FUSED_COST[B.combo.id] + (B.combo.id === "prism" ? 26 : 4)) return;     // it will not start what it cannot finish
+  if (w.target && !lineClear(w, w.target, B.combo.id !== "prism", BOSS_PAD_FUSED[B.combo.id])) return;                  // nor throw one into a crate
+  if (B.rolled) return;                       // one roll for each time the wands wind up: not one every look
+  if (rand() >= BOSS_FUSE_P){ B.rolled = true; return; }
+  B.fuse = { t: 0, stage: 0, flash: 0 };
+  A.st = 4; P.st = 4; A.t = P.t = 0;
+}
+/* The fused spell leaves. Both wands are spent; the star has already flashed. */
+function bossCombo(w){
+  const B = w.boss, C = B.combo, tempo = bossTempo(w);
+  const aL = B.arms.findIndex((A, i) => bossLive(B, i) && BOSS_ARMS[i].side < 0);
+  const aR = B.arms.findIndex((A, i) => bossLive(B, i) && BOSS_ARMS[i].side > 0);
+  B.fuse = null; B.fuseCd = BOSS_FUSE_CD; B.fires += 2; B.rolled = false;
+  const arm = n => n & 1 ? aR : aL;
+  w.mana = Math.max(0, w.mana - BOSS_FUSED_COST[C.id]);
+  if (C.id === "swarm"){
+    // a stream of ten, alternating hands, each a little further off the line than the last:
+    // they leave a beat apart, so they land a beat apart
+    for (let n = 0; n < 10; n++){
+      const sgn = n & 1 ? 1 : -1;
+      B.q.push({ t: n * .075, arm: arm(n), off: sgn * (.1 + .09 * (n >> 1)), kind: "swarm", color: C.color,
+                 v0: 200, v1: 430, turn: 1.7, wob: .7, dmg: 7, r: 7.5, life: 4.6, glow: 20 });
+    }
+  } else if (C.id === "needle"){
+    for (let v = 0; v < 3; v++) for (let k = 0; k < 5; k++)
+      B.q.push({ t: v * .16, arm: arm(k), off: (k - 2) * .12, kind: "needle", color: C.color,
+                 v0: 560, turn: .55, wob: .3, dmg: 4.5, r: 5, life: 3.2, glow: 14 });
+  } else if (C.id === "wheel"){
+    // one heavy spinning orb. It homes like a hexstone, and like a hexstone it
+    // comes on faster the nearer it gets; every third of a second it throws a ring of
+    // sparks out from its rim, the ring turning a half-gap each time so the holes
+    // in it wander. The rings come faster as it closes.
+    const tip = bossTip(w, aL), a = w.target ? ATAN2(w.target.y - tip.y, w.target.x - tip.x) : w.facing;
+    shots.push({ x: tip.x, y: tip.y, vx: COS(a)*95, vy: SIN(a)*95, weight: 7, w0: 7,
+                 dmg: 32 * dmgMul(w), r: 16, glow: 32, color: C.color, kind: "wheel", owner: w, life: 6.2, trail: [], spin: 0,
+                 seek: { turn: 1.5, wob: .3, vMin: 95, vMax: 620, phase: rand()*TAU },
+                 ring: { t: .22, every: .36, n: 9, k: 0, v: 230 }, lvl: .7 });
+    swish(w, C.color, "cast");
+  } else if (C.id === "prism"){
+    const bi = B.arms.findIndex((A, i) => bossLive(B, i) && A.spell === 4);
+    // the Prism Lance does not wind up like an ordinary beam: it is already live the
+    // instant the wands fuse, so beamWind starts at the ordinary beam's own cast time
+    // rather than at zero
+    w.beamOn = true; w.beamWind = byId.beam.cast; w.charge = null; w.beamTint = C.color;
+    B.arms[bi].st = 1; B.arms[bi].held = 0; B.arms[bi ^ 1].st = 5;
+    B.prism = { arm: bi, t: .2 };
+  }
+  // (the orb has its own sound, played as it is launched and only then: not as the wands come together, not at the star)
+  if (C.id === "wheel") cue("hexspark", hexsparkSfx, HEXSPARK_VOL);
+  else if (C.id === "needle") cue("sparkrive", sparkriveSfx, SPARKRIVE_VOL);
+  else if (C.id === "swarm") cue("hexrive", hexriveSfx, HEXRIVE_VOL);
+  else if (C.id === "prism") cue("prismlance", prismlanceSfx, PRISMLANCE_VOL, { tail: .3 });
+  else castSound(w, C.sound);
+  shake = Math.min(shake + (REDUCED ? 0 : 5), 9);
+  if (C.id !== "prism"){
+    for (const i of [aL, aR]){
+      const A = B.arms[i];
+      A.fired = .3; A.dur = BOSS_DUR[A.spell] * tempo; A.t = -rnd(.6, 1); A.st = 0;      // (a longer breather after a fused spell: it is the one you have to answer)
+    }
+    if (B.fires >= BOSS_PERIOD){ B.phase = "warn"; B.pt = .7; }
+  }
+}
+function bossPrismEnd(w){
+  const B = w.boss, tempo = bossTempo(w);
+  fadeOutCue("prismlance", PRISMLANCE_FADE);   // cut off sharply, not left ringing like a held beam
+  stopBeam(w, true); w.beamTint = null; B.prism = null;
+  for (let i = 0; i < 4; i++){
+    const A = B.arms[i];
+    if (!bossLive(B, i) || A.st === 3) continue;
+    A.fired = .3; A.dur = BOSS_DUR[A.spell] * tempo; A.t = -rnd(.25, .6); A.st = 0; A.held = 0;
+  }
+  if (B.fires >= BOSS_PERIOD){ B.phase = "warn"; B.pt = .7; }
+}
+// what wand `i` has to have in the bar to let go of its spell
+function bossNeed(w, i){
+  const sp = w.boss.arms[i].spell;
+  if (sp === 4) return w.beamOn ? 0 : BOSS_COST[0];     // the beam was paid for when it opened
+  if (sp === 5 && (w.held || !liftable(w))) return BOSS_COST[0];
+  return BOSS_COST[sp];
+}
+function bossRelease(w, i){
+  const B = w.boss, A = B.arms[i];
+  let sp = A.spell;
+  A.wait = 0; A.dry = 0; A.force = false;
+  if (sp === 4 && !w.beamOn) sp = 0;                   // beam is armed when its charge starts; this is the fallback
+  if (sp === 5){
+    if (!w.held && liftable(w)){ w.castLock = 0; beginCharge(w, 5); A.st = 1; A.held = 0; return; }   // beginCharge takes grasp's own price
+    sp = 0;
+  }
+  if (sp === 4){ A.st = 1; A.held = 0; A.blind = 0; return; }       // the beam is now open: hold it
+  w.mana = Math.max(0, w.mana - BOSS_COST[sp]);
+  if (sp === 0){ bossShoot(w, i, 0, 0); A.burst = 2; A.bt = .1; A.st = 2; return; }
+  if (sp === 1) bossShoot(w, i, 1, .5);
+  else if (sp === 2) bossShoot(w, i, 2, .6);
+  else if (sp === 3){ bossShoot(w, i, 3, .6); B.wards++; }
+  bossReload(w, i);
+}
+/* ---- the mirror
+   Simulation, like everything here: positions, the seeded stream (not even that —
+   nothing below rolls anything), the deterministic trig. The glitter it throws off
+   goes to the view-only particle list with vrand(), as a clashing beam's does. */
+// is the beam one of the two spells it is holding right now, or already open?
+function bossBeamUp(w){
+  const B = w.boss;
+  if (w.beamOn) return true;
+  return B.arms.some((A, i) => bossLive(B, i) && A.spell === 4 && A.st !== 3 && A.st !== 5);
+}
+/* The AI's view of the mirror: is aiming a beam at this wizard about to be a mistake? A bot
+   that knows the Alchemist has a mirror does not open a beam on it while the mirror is up or
+   is about to be ready, and lets go of one it has open when the glass goes up. (Anything that
+   is not the Alchemist has no mirror; a beam at it is as good an idea as ever.) */
+function bossMirrorThreat(b){
+  if (!b || !b.boss || b.dead) return false;
+  const B = b.boss;
+  if (B.refl) return true;
+  return b.mana >= BOSS_REFLECT_COST && !bossBeamUp(b) && B.reflCd < 2.5;
+}
+function bossReflectReady(w){
+  const B = w.boss;
+  return !w.dead && !B.refl && B.phase !== "intro" && B.reflCd <= 0 && w.mana >= BOSS_REFLECT_COST && !bossBeamUp(w);
+}
+// how far the pane has been drawn out (0 while the hands are still coming together, 1 at full width)
+function bossMirrorOpenK(R){
+  const k = clamp((R.t - BOSS_MIRROR_CLASP) / BOSS_MIRROR_OPEN, 0, 1);
+  return 1 - (1 - k) * (1 - k) * (1 - k);
+}
+function bossMirrorHalf(R){ return BOSS_MIRROR_SEAM + (BOSS_MIRROR_HALF - BOSS_MIRROR_SEAM) * bossMirrorOpenK(R); }
+function bossReflectOpen(w, src){
+  const B = w.boss;
+  w.mana = Math.max(0, w.mana - BOSS_REFLECT_COST);
+  const a = src ? ATAN2(src.y - w.y, src.x - w.x) : w.facing;
+  B.refl = { t: 0, ang: a, want: a, quiet: 0, out: [], burn: 0, half: BOSS_MIRROR_SEAM, snapped: false, bounced: false };
+  B.reflN++;
+  const cx = w.x + COS(a) * BOSS_MIRROR_D * .8, cy = w.y + SIN(a) * BOSS_MIRROR_D * .8;
+  rings.push({ x: cx, y: cy, r: 22, max: 6, t: 0, life: BOSS_MIRROR_CLASP, color: "#bff4ff", width: 1.6 });   // a ring gathering in on the hands
+  puff(cx, cy, "#bff4ff", 6);
+  cue("reflect", reflectSfx, REFLECT_SND.vol, { tail: .6 });     // (the file starts a moment before its big hit, which lands as the hands come apart)
+}
+function bossReflectClose(w){
+  const B = w.boss, R = B.refl;
+  if (!R) return;
+  const c = COS(R.ang), s = SIN(R.ang), cx = w.x + c * BOSS_MIRROR_D, cy = w.y + s * BOSS_MIRROR_D;
+  // the pane comes apart: a spray of glitter along its length
+  for (let k = 0; k < (REDUCED ? 4 : 22); k++){
+    const u = vrnd(-1, 1), sp = vrnd(30, 150);
+    bits.push({ x: cx - s * u * R.half, y: cy + c * u * R.half, vx: c * sp * .6 - s * vrnd(-60, 60), vy: s * sp * .6 + c * vrnd(-60, 60),
+                life: vrnd(.25, .6), t: 0, color: vrand() < .5 ? "#ffffff" : "#8fe9ff", r: vrnd(1, 2.6) });
+  }
+  rings.push({ x: cx, y: cy, r: 10, max: 60, t: 0, life: .28, color: "#8fe9ff", width: 1.6 });
+  fadeOutCue("reflect", REFLECT_SND.out); fadeOutCue("reflect3", REFLECT_SND.out);       // the glass is gone: its sound dies away, it does not stop dead
+  B.refl = null;
+  B.reflCd = BOSS_REFLECT_CD;
+}
+// where along a→b the segment c→d is crossed (0..1), or -1
+function segSegT(ax, ay, bx, by, cx, cy, dx, dy){
+  const rx = bx - ax, ry = by - ay, sx = dx - cx, sy = dy - cy;
+  const den = rx * sy - ry * sx;
+  if (den > -1e-9 && den < 1e-9) return -1;
+  const qx = cx - ax, qy = cy - ay;
+  const t = (qx * sy - qy * sx) / den, u = (qx * ry - qy * rx) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : -1;
+}
+// how far a beam that leaves (x, y) at angle a gets: to a wall, or to a crate that stops it
+function beamReachAt(x, y, a){
+  const dx = COS(a), dy = SIN(a);
+  let best = 1400;
+  if (dx > 0.001) best = Math.min(best, (W-4 - x)/dx);
+  if (dx < -0.001) best = Math.min(best, (4 - x)/dx);
+  if (dy > 0.001) best = Math.min(best, (H-4 - y)/dy);
+  if (dy < -0.001) best = Math.min(best, (4 - y)/dy);
+  for (const d of debris){
+    if (d.gone || !blocksBeam(d)) continue;
+    const t = rayCircle(x + dx*4, y + dy*4, dx, dy, d.x, d.y, d.r);
+    if (t > 0 && t + 4 < best) best = t + 4;
+  }
+  return best;
+}
+/* One tick of the mirror, run once the beams' lengths are known and before anything
+   is burnt. With no mirror up it looks for the beam that is burning the boss and was
+   not seen coming (the mind raises the mirror early when it does see one). With a
+   mirror up it turns the pane to face the beam, cuts every enemy beam that reaches
+   it off at the glass, and sends each one back out of the point where it landed. */
+function bossMirrorStep(w, dt){
+  const B = w.boss;
+  B.reflCd = Math.max(0, B.reflCd - dt);
+  if (w.dead){ B.refl = null; return; }
+  const cast = byId.beam.cast;
+  if (!B.refl){
+    if (!bossReflectReady(w)) return;
+    for (const f of wizards){
+      if (f.dead || f.team === w.team || !f.beamOn || f.beamWind < cast) continue;
+      if (segCircle(f.x, f.y, f.x + COS(f.facing)*f.beamLen, f.y + SIN(f.facing)*f.beamLen, w.x, w.y, w.r + 4)){ bossReflectOpen(w, f); break; }
+    }
+    if (!B.refl) return;
+  }
+  const R = B.refl;
+  R.t += dt;
+  R.half = bossMirrorHalf(R);
+  if (!R.snapped && R.t >= BOSS_MIRROR_CLASP){
+    // the hands meet, and fling apart: a flash, a ring, the pane's edges shooting out
+    R.snapped = true;
+    const c0 = COS(R.ang), s0 = SIN(R.ang), mx = w.x + c0 * BOSS_MIRROR_D, my = w.y + s0 * BOSS_MIRROR_D;
+    impact(mx, my, 2.6, "#ffffff");
+    rings.push({ x: mx, y: my, r: 8, max: 96, t: 0, life: .32, color: "#bff4ff", width: 2.6 });
+    rings.push({ x: mx, y: my, r: 4, max: 60, t: 0, life: .22, color: "#ffffff", width: 1.8 });
+    puff(mx, my, "#ffffff", 10);
+    if (!REDUCED) for (let k = 0; k < 16; k++){
+      const side = k & 1 ? 1 : -1, sp = vrnd(200, 420);
+      bits.push({ x: mx, y: my, vx: -s0 * side * sp + c0 * vrnd(-40, 40), vy: c0 * side * sp + s0 * vrnd(-40, 40),
+                  life: vrnd(.2, .45), t: 0, color: vrand() < .5 ? "#ffffff" : "#8fe9ff", r: vrnd(1, 2.6) });
+    }
+    shake = Math.min(shake + (REDUCED ? 0 : 3), 9);
+  }
+  // whoever is beaming most nearly along the line to the boss is the one it faces
+  let feed = false, best = 1e9, pick = null;
+  for (const f of wizards){
+    if (f.dead || f.team === w.team || !f.beamOn) continue;
+    feed = true;
+    const fx = COS(f.facing), fy = SIN(f.facing), rx = w.x - f.x, ry = w.y - f.y;
+    const across = rx*fx + ry*fy > 0 ? Math.abs(-rx*fy + ry*fx) : 1e8;
+    if (across < best){ best = across; pick = f; }
+  }
+  R.quiet = feed ? 0 : R.quiet + dt;
+  if (pick) R.want = ATAN2(pick.y - w.y, pick.x - w.x);
+  R.ang += clamp(angDiff(R.want, R.ang), -BOSS_MIRROR_TURN*dt, BOSS_MIRROR_TURN*dt);
+  const ca = COS(R.ang), sa = SIN(R.ang);
+  const cx = w.x + ca * BOSS_MIRROR_D, cy = w.y + sa * BOSS_MIRROR_D;
+  const p1x = cx + sa * R.half, p1y = cy - ca * R.half;
+  const p2x = cx - sa * R.half, p2y = cy + ca * R.half;
+  const prev = R.out;
+  R.out = [];
+  for (const f of wizards){
+    if (f.dead || f.team === w.team || !f.beamOn || f.beamWind < cast || !(f.beamLen > 0)) continue;
+    const bx = f.x + COS(f.facing) * f.beamLen, by = f.y + SIN(f.facing) * f.beamLen;
+    const t = segSegT(f.x, f.y, bx, by, p1x, p1y, p2x, p2y);
+    if (t < 0) continue;
+    const px = f.x + (bx - f.x) * t, py = f.y + (by - f.y) * t;
+    f.beamLen *= t;                                               // the beam goes no further than the glass
+    const want = ATAN2(f.y - py, f.x - px);
+    let o = prev.find(q => q.id === f.id), fresh = false;
+    if (!o){
+      // off the glass a little to the side its beam was aimed off the boss's centre, then round onto its target
+      const side = angDiff(f.facing, ATAN2(w.y - f.y, w.x - f.x)) >= 0 ? 1 : -1;
+      o = { id: f.id, ang: want + side * BOSS_MIRROR_KICK, x: px, y: py, len: 0 }; fresh = true;
+    }
+    else o.ang += clamp(angDiff(want, o.ang), -BOSS_MIRROR_SLEW*dt, BOSS_MIRROR_SLEW*dt);
+    o.x = px; o.y = py;
+    o.len = beamReachAt(px, py, o.ang);
+    const ex = px + COS(o.ang) * o.len, ey = py + SIN(o.ang) * o.len;
+    for (const q of wizards){
+      if (q.dead || q.team === w.team) continue;
+      if (segCircle(px, py, ex, ey, q.x, q.y, q.r + 4))
+        strike(q, byId.beam.dmg * dt * dmgMul(f) * BOSS_MIRROR_MUL, px, py, "beam", true, w);
+    }
+    R.out.push(o);
+    if (fresh){
+      if (!R.bounced){ R.bounced = true; cue("reflect3", reflect3Sfx, REFLECT_SND.vol3, { tail: .5 }); }     // a beam has come back off the glass: once per mirror
+      impact(px, py, 3.2, "#ffffff");
+      rings.push({ x: px, y: py, r: 6, max: 70, t: 0, life: .3, color: "#ffffff", width: 2.4 });
+      puff(px, py, "#ffffff", 10);
+    }
+    if (!REDUCED) for (let k = 0; k < 2; k++){                    // sparks thrown off the point of reflection, back the way it came
+      const a = R.ang + Math.PI + vrnd(-1.1, 1.1), sp = vrnd(120, 300);
+      bits.push({ x: px, y: py, vx: COS(a) * sp, vy: SIN(a) * sp, life: vrnd(.15, .4), t: 0, color: vrand() < .5 ? "#ffffff" : "#8fe9ff", r: vrnd(1, 2.6) });
+    }
+  }
+  // the glass glitters
+  if (!REDUCED && vrand() < .85){
+    const u = vrnd(-1, 1), sp = vrnd(15, 70);
+    bits.push({ x: cx - sa * u * R.half, y: cy + ca * u * R.half, vx: ca * sp + vrnd(-20, 20), vy: sa * sp + vrnd(-20, 20),
+                life: vrnd(.25, .55), t: 0, color: vrand() < .5 ? "#ffffff" : "#8fe9ff", r: vrnd(.8, 2) });
+  }
+  if (!R.hold && (R.t >= BOSS_REFLECT_LIFE || (R.t > .25 && R.quiet > .3))) bossReflectClose(w);
+}
+/* ---- the Alchemist's mind
+   Everything below is simulation: it reads positions, velocities, hp and mana
+   of things in the world and the seeded rand(); it never reads `you` and never
+   anything that is only drawn. */
+
+/* What is coming at it. For each hostile shot it finds the moment the shot passes
+   closest to the boss and whether that pass is a hit; a homing shot gets a wider
+   net, since it will bend in. `ex, ey` (a unit vector, or zero) is the way to
+   step that takes it out of the most dangerous lanes. A beam that is winding up
+   or firing along a line through the boss is a threat too, and the way out of
+   a beam is at right angles to it. */
+function bossSense(w){
+  const S = { hit: 0, weight: 0, light: 0, soonest: 9, beam: false, beamSrc: null, ex: 0, ey: 0 };
+  const R = w.r + 8;
+  const lane = (px, py, vx, vy, r, weight, kind, seeks) => {
+    const sp2 = vx*vx + vy*vy;
+    if (sp2 < 1) return;
+    const rx = w.x - px, ry = w.y - py;
+    const t = (rx*vx + ry*vy) / sp2;                       // when the shot is nearest to the boss
+    if (t < 0 || t > 1.5) return;                          // going away, or too far off to matter yet
+    const m = HYPOT(px + vx*t - w.x, py + vy*t - w.y);
+    if (m > r + R + (seeks ? 22 + 30*t : 0)) return;       // it misses
+    S.hit++; S.weight += weight;
+    if (WARD_BLOCKS[kind]) S.light += weight;
+    if (t < S.soonest) S.soonest = t;
+    const sp = HYPOT(vx, vy), nx = -vy/sp, ny = vx/sp;     // the shot's own normal: sidestep along it
+    const side = (rx*nx + ry*ny) >= 0 ? 1 : -1;
+    const g = weight / (.25 + t);
+    S.ex += nx*side*g; S.ey += ny*side*g;
+  };
+  for (const s of shots){
+    if (!s.owner || s.owner.team === w.team) continue;
+    lane(s.x, s.y, s.vx, s.vy, s.r, s.weight, s.kind, !!s.seek);
+  }
+  for (const d of debris)
+    if (d.thrown > 0 && !d.gone) lane(d.x, d.y, d.vx, d.vy, d.r, 3, "debris", false);
+  for (const f of wizards){
+    if (f.dead || f.team === w.team || !f.beamOn || f.beamWind < byId.beam.cast * .35) continue;
+    const fx = COS(f.facing), fy = SIN(f.facing), rx = w.x - f.x, ry = w.y - f.y;
+    if (rx*fx + ry*fy <= 0) continue;                      // behind the wand
+    const across = -rx*fy + ry*fx;                         // signed distance from the beam's line
+    if (Math.abs(across) > 64 || !lineClear(f, w, false)) continue;
+    S.beam = true;
+    if (!S.beamSrc) S.beamSrc = f;
+    const sg = across >= 0 ? 1 : -1;
+    S.ex += -fy*sg*9; S.ey += fx*sg*9;
+  }
+  const L = HYPOT(S.ex, S.ey);
+  if (L > .001){ S.ex /= L; S.ey /= L; } else { S.ex = S.ey = 0; }
+  return S;
+}
+// A dash goes 150 px. Is there room along this direction (not a wall, not a crate)?
+// A shot's line can be crossed the wrong way, so a shot only allows the one side;
+// a beam is fine to leave either way.
+function bossDashDir(w, ex, ey, both){
+  const L = HYPOT(ex, ey);
+  if (L < .01) return null;
+  ex /= L; ey /= L;
+  for (let pass = 0; pass < (both ? 2 : 1); pass++){
+    const sx = pass ? -ex : ex, sy = pass ? -ey : ey;
+    let ok = true;
+    for (let k = 1; k <= 3 && ok; k++){
+      const px = w.x + sx*50*k, py = w.y + sy*50*k;
+      if (px < 34 || px > W - 34 || py < 34 || py > H - 34){ ok = false; break; }
+      for (const d of debris)
+        if (d.solid && !d.gone && !d.owner && HYPOT(px - d.x, py - d.y) < d.r + w.r + 6){ ok = false; break; }
+    }
+    if (ok) return [sx, sy];
+  }
+  return null;
+}
+// Somewhere at fighting range from `opp` that it can see them from and that is open ground
+function bossFlank(w, opp, range){
+  let best = null, bd = 1e9;
+  const a0 = ATAN2(w.y - opp.y, w.x - opp.x);
+  for (let k = 0; k < 12; k++){
+    const a = a0 + (k - 5.5) * (TAU / 12);
+    const c = { x: opp.x + COS(a)*range, y: opp.y + SIN(a)*range };
+    if (c.x < 80 || c.x > W - 80 || c.y < 80 || c.y > H - 80) continue;
+    if (debris.some(d => d.solid && !d.gone && !d.owner && HYPOT(c.x - d.x, c.y - d.y) < d.r + BOSS_R + 26)) continue;
+    if (!lineClear(c, opp, true, 16)) continue;
+    const dd = HYPOT(c.x - w.x, c.y - w.y);
+    if (dd < bd){ bd = dd; best = c; }
+  }
+  return best;
+}
+// how far off it wants to stand: what its wands are holding, and how the fight is going
+function bossRange(w){
+  const B = w.boss;
+  let r = (BOSS_RANGE[B.lock[0]] + BOSS_RANGE[B.lock[1]]) / 2;
+  if (B.combo && B.wantFuse) r = (r + BOSS_RANGE_FUSED[B.combo.id]) / 2;
+  if (w.hp < w.hpMax * .35) r += 50;                        // hurt: keep away
+  if (w.target && w.target.mana < 22) r -= 50;              // they are dry: close in
+  return r;
+}
+/* Threat response. It does not react at the frame the shot appears: it notices
+   after a short lag (.06 - .16 s), then chooses, at most every quarter-second:
+   drop the ward if the wand holding it can and what is coming is light enough to
+   hold; dash out of the lane if it is heavy, unblockable or close and the dash is
+   ready; otherwise sidestep. */
+function bossReact(w, S, dt){
+  const B = w.boss;
+  B.dodge = Math.max(0, B.dodge - dt);
+  B.coverCd = Math.max(0, B.coverCd - dt);
+  B.hideT = Math.max(0, B.hideT - dt);
+  B.actCd = Math.max(0, B.actCd - dt);
+  if (!S || (!S.hit && !S.beam)){ B.alert = 0; return; }
+  if (B.alert === 0) B.lag = rnd(.06, .16);
+  B.alert += dt;
+  if (B.alert < B.lag || B.actCd > 0) return;
+  // a beam coming and no beam of its own to answer it: a mirror, not a sidestep
+  if (S.beam && S.beamSrc && bossReflectReady(w)){ bossReflectOpen(w, S.beamSrc); B.dodge = 0; B.actCd = .3; return; }
+  if (S.beam && !S.hit && B.refl){ B.dodge = 0; return; }        // and it stands behind it while it holds
+  const t = S.beam ? Math.min(.5, S.soonest) : S.soonest;
+  const heavy = S.weight - S.light >= 1 || S.weight >= 4;
+  if (!S.beam && w.ward <= 3 && S.light >= 2 && S.light >= S.weight * .7 && t > .1 && w.mana >= BOSS_COST[3]){
+    const wi = B.arms.findIndex((A, i) => bossLive(B, i) && A.spell === 3 && A.st === 0);
+    if (wi >= 0){ B.arms[wi].force = true; B.arms[wi].t = Math.max(B.arms[wi].t, B.arms[wi].dur); B.actCd = .3; return; }
+  }
+  const dir = bossDashDir(w, S.ex, S.ey, S.beam);
+  if (dir && w.dashCool <= 0 && !w.beamOn && t < (S.beam ? .7 : .34) && (heavy || S.beam || S.hit >= 3)){
+    tryDash(w, dir[0], dir[1]);
+    B.dashes++; B.dodge = .3; B.ex = dir[0]; B.ey = dir[1]; B.actCd = .3;
+    return;
+  }
+  // once it has picked a way out it keeps to it: no flicking from one side to the other every few frames
+  if (B.dodge > .2 && B.ex*S.ex + B.ey*S.ey < 0 && t > .3){ B.actCd = .15; return; }
+  B.dodge = S.beam ? .8 : .5; B.ex = S.ex; B.ey = S.ey; B.dodges++; B.actCd = .2;
+}
+/* Where to be. Hold the range its spells want; circle, but never into a wall or a
+   crate; go round a crate that is between it and its target instead of firing
+   into it; step behind cover when it is hurt and under fire; and if the target
+   crowds it, open the gap with a dash. */
+function bossMove(w, opp, S, dt){
+  const B = w.boss;
+  B.strafeT -= dt;
+  const dx = w.x - opp.x, dy = w.y - opp.y, d = HYPOT(dx, dy) || 1, ux = dx/d, uy = dy/d;
+  const los = lineClear(w, opp, true, 16);
+  B.blind = los ? 0 : B.blind + dt;
+  const open = sg => {
+    const px = w.x - uy*sg*140, py = w.y + ux*sg*140;
+    return px > 90 && px < W - 90 && py > 90 && py < H - 90 &&
+           !debris.some(q => q.solid && !q.gone && !q.owner && HYPOT(px - q.x, py - q.y) < q.r + 36);
+  };
+  if (B.strafeT <= 0){ if (rand() < .65) B.strafe = -B.strafe; B.strafeT = rnd(.9, 2.3); }
+  if (!open(B.strafe) && open(-B.strafe)){ B.strafe = -B.strafe; B.strafeT = rnd(.8, 1.6); }
+
+  const want = bossRange(w);
+  const push = clamp((want - d) / 100, -1, 1);
+  let ax = ux*push - uy*B.strafe*.9, ay = uy*push + ux*B.strafe*.9;
+
+  // crowded: make room
+  if (d < 165 && w.dashCool <= 0 && !w.beamOn && !B.fuse && B.dodge <= 0){
+    const dir = bossDashDir(w, ux - uy*B.strafe*.5, uy + ux*B.strafe*.5, false);
+    if (dir){ tryDash(w, dir[0], dir[1]); B.dashes++; }
+  }
+  // no way to shoot from here: find one
+  if (B.blind > .45 && !B.goal && B.hideT <= 0){
+    const g = bossFlank(w, opp, want);
+    if (g){ B.goal = g; B.goalT = 1.8; B.flanking = true; }
+  }
+  if (B.flanking && los){ B.goal = null; B.flanking = false; }
+  // hurt and under fire: get a crate between you
+  if (S && S.hit && w.hp < w.hpMax * .4 && B.coverCd <= 0 && B.dodge <= 0){
+    const spot = nearestCover(w, opp);
+    if (spot){ B.goal = spot; B.goalT = 1.5; B.hideT = 1.8; B.coverCd = 5; B.flanking = false; }
+  }
+  // stuck on a crate? sample progress twice a second and pick somewhere open
+  w.stuckT = (w.stuckT || 0) + dt;
+  if (w.stuckT >= .5){
+    const moved = HYPOT(w.x - (w.lastPX == null ? w.x : w.lastPX), w.y - (w.lastPY == null ? w.y : w.lastPY));
+    if (moved < 10){
+      w.stuckFor = (w.stuckFor || 0) + w.stuckT;
+      if (w.stuckFor > 1.2){ const away = navPickOpen(w); if (away){ B.goal = away; B.goalT = 1.6; B.flanking = false; } w.stuckFor = 0; }
+    } else w.stuckFor = 0;
+    w.lastPX = w.x; w.lastPY = w.y; w.stuckT = 0;
+  }
+  if (B.goal && (B.goalT -= dt) > 0){
+    const wp = HYPOT(B.goal.x - w.x, B.goal.y - w.y) < 60 ? null : navNext(w.x, w.y, B.goal.x, B.goal.y);
+    ax = (wp ? wp.x : B.goal.x) - w.x; ay = (wp ? wp.y : B.goal.y) - w.y;
+    if (HYPOT(B.goal.x - w.x, B.goal.y - w.y) < 30){ B.goal = null; B.flanking = false; }
+  } else { B.goal = null; B.flanking = false; }
+  // a sidestep overrides the rest, and the circling follows it round
+  if (B.dodge > 0 && (B.ex || B.ey)){
+    ax = ax*.3 + B.ex*3; ay = ay*.3 + B.ey*3;
+    if ((B.ex * -uy + B.ey * ux) * B.strafe < 0) B.strafe = -B.strafe;
+  }
+  if (w.x < 90) ax += 1.4; if (w.x > W - 90) ax -= 1.4;
+  if (w.y < 90) ay += 1.4; if (w.y > H - 90) ay -= 1.4;
+  if (w.beamOn && w.beamWind >= byId.beam.cast){ ax *= .3; ay *= .3; }
+  if (B.fuse){ ax *= .4; ay *= .4; }
+  moveWizard(w, ax, ay, dt);
+  // a beam is led: the wand swings to where the target is going, not where it was
+  B.aim = null;
+  if (w.beamOn && opp.dashT <= 0){
+    const tt = clamp(d / 900, .2, .5) + .15;
+    B.aim = ATAN2(opp.y + (opp.vy || 0)*tt - w.y, opp.x + (opp.vx || 0)*tt - w.x);
+  }
+}
+function bossTick(w, opp, dt){
+  const B = w.boss;
+  // the arms: out (1) while their pair is working, behind the back (0) otherwise
+  const working = B.phase === "live" || B.phase === "warn";
+  const M = B.refl;
+  for (let i = 0; i < 4; i++){
+    const A = B.arms[i];
+    // the two front hands raise the mirror, whichever pair is out: they come out from behind the back for it
+    const mirArm = M && (i === 0 || i === 2);
+    const live = working && bossLive(B, i);
+    const want = live || mirArm ? 1 : 0;
+    const rate = dt / (want ? (mirArm && !live ? .2 : BOSS_DRAW) : BOSS_HOLSTER);
+    A.k = A.k < want ? Math.min(want, A.k + rate) : Math.max(want, A.k - rate);
+    A.cf += ((A.st === 4 ? 1 : 0) - A.cf) * Math.min(1, dt * 8);
+    if (mirArm){ A.rc += (1 - A.rc) * Math.min(1, dt * 14); A.rw = bossMirrorOpenK(M); }
+    else { A.rc -= A.rc * Math.min(1, dt * 7); A.rw = Math.max(0, A.rw - dt * 5); }
+    A.fired = Math.max(0, A.fired - dt);
+  }
+  B.fuseCd = Math.max(0, B.fuseCd - dt);
+  const S = B.phase === "intro" ? null : bossSense(w);
+  B.sense = S;
+  bossReact(w, S, dt);
+
+  if (B.phase === "intro"){
+    B.pt -= dt;
+    if (B.pt <= 0) bossSpin(w, false);
+  } else if (B.phase === "spin"){
+    B.pt -= dt;
+    B.spinK = clamp(1 - B.pt / B.spinT, 0, 1);
+    if (B.pt <= 0) bossBegin(w);
+  } else if (!B.refl){
+    // (while the mirror is up its hands are busy: every wand holds where it is, and nothing is cast, fused or changed over)
+    // ---- the live wands
+    for (let i = 0; i < 4; i++){
+      const A = B.arms[i];
+      if (A.st === 3 || A.st === 4 || A.st === 5 || !bossLive(B, i)) continue;
+      if (A.st === 0){
+        const t0 = A.t;
+        A.t += dt;
+        if (A.spell === 4 && t0 < 0 && A.t >= 0){           // the beam opens the moment its wand starts charging
+          if (!w.beamOn && B.phase === "live" && w.mana >= BOSS_COST[4] + 6 && (!opp || lineClear(w, opp, false))){
+            w.beamOn = true; w.beamWind = 0; w.charge = null; w.mana -= BOSS_COST[4];
+          } else { A.t = -.4; A.dry += .4; }                 // not free, not paid for, or no clear line: try again in a moment
+        }
+        if (A.t >= A.dur){
+          A.t = A.dur;
+          // a full wand lets go if it can pay, has a line, and (for the wall) has a reason
+          const need = A.spell === 4 && w.beamOn ? 0 : bossNeed(w, i);
+          if (w.mana < need) A.dry += dt;
+          else if (A.spell !== 3 && A.spell !== 4 && opp && !lineClear(w, opp, true, BOSS_PAD[A.spell])) A.dry += dt;
+          else if (A.spell === 3 && !A.force && A.wait < 2.4 && w.ward <= 0){ A.wait += dt; }
+          else bossRelease(w, i);
+        }
+      } else if (A.st === 1){
+        A.held += dt;
+        A.blind = (A.spell === 4 && opp && !lineClear(w, opp, false)) ? A.blind + dt : 0;
+        if (A.spell === 4){
+          if (B.prism){
+            // a fused beam throws missiles from its tip once it is really firing
+            if (w.beamWind >= byId.beam.cast && (B.prism.t -= dt) <= 0){
+              B.prism.t += .2;
+              bossMissile(w, i, { off: rnd(-.6, .6), kind: "swarm", color: w.beamTint,
+                                  v0: 380, turn: 1.2, wob: .5, dmg: 5, r: 6, life: 3.4, glow: 18 });
+            }
+            // no wind-up to add back in: the lance was already live the instant it fused
+            if (A.held >= BOSS_BEAM_HOLD || !w.beamOn || A.blind > .5) bossPrismEnd(w);
+          } else if (A.held >= BOSS_BEAM_HOLD || !w.beamOn || A.blind > .5){ stopBeam(w, true); bossReload(w, i); }
+        } else if (A.held >= BOSS_GRASP_HOLD || !w.held){
+          if (w.held) throwHeld(w);
+          bossReload(w, i);
+        }
+      } else if (A.st === 2){
+        A.bt -= dt;
+        if (A.bt <= 0){
+          if (A.burst > 0){ bossShoot(w, i, 0, 0); A.burst--; A.bt = .1; }
+          else bossReload(w, i);
+        }
+      }
+    }
+    // ---- a wand that has waited too long for mana or a clear shot: turn the hat and choose again
+    if (B.phase === "live" && !B.fuse && B.arms.some((A, i) => bossLive(B, i) && A.dry > BOSS_DRY)){ B.phase = "warn"; B.pt = .3; }
+    // ---- a chance to fuse is not only at a reload: while both wands are still early in their charge it looks, now and then
+    if (B.phase === "live" && !B.fuse && B.combo && B.wantFuse && (B.look -= dt) <= 0){ B.look = BOSS_FUSE_LOOK; bossTryFuse(w, B.pair * 2); }
+    // ---- two wands come together
+    if (B.fuse){
+      const F = B.fuse;
+      F.t += dt;
+      if (F.stage === 0){
+        if (F.t >= BOSS_FUSE_CHARGE){ F.stage = 1; F.t = 0; B.flashN++; impact(w.x, w.y, 2.4, B.combo.color); }
+      } else {
+        F.flash = clamp(F.t / BOSS_FUSE_FLASH, 0, 1);
+        if (F.t >= BOSS_FUSE_FLASH) bossCombo(w);
+      }
+    }
+    // ---- shots that leave a beat apart
+    if (B.q.length){
+      const keep = [];
+      for (const e of B.q){ e.t -= dt; if (e.t <= 0) bossMissile(w, e.arm, e); else keep.push(e); }
+      B.q = keep;
+    }
+    // ---- the changeover
+    if (B.phase === "warn"){
+      B.pt = Math.max(0, B.pt - dt);
+      B.wake = 1 - B.pt / .7;
+      const busy = B.fuse || B.q.length || B.prism || B.arms.some((A, i) => bossLive(B, i) && (A.st === 1 || A.st === 2));
+      if (B.pt <= 0 && !busy){
+        // whatever was still winding up is dropped: the wands go back in their sheaths
+        if (w.beamOn && w.beamWind < byId.beam.cast) stopBeam(w, true);
+        bossSpin(w, true);
+      }
+    }
+  }
+  // each wand swings to the centre line while it holds the beam
+  for (let i = 0; i < 4; i++){
+    const A = B.arms[i];
+    const want = (A.spell === 4 && A.st !== 3 && bossLive(B, i) && (A.st === 1 || A.t > 0)) ? 1 : 0;
+    A.foc += (want - A.foc) * Math.min(1, dt * 9);
+  }
+  // the cone tip shows whichever live wand is closest to going off, or the colour of the fused spell
+  let next = -1, best = -1;
+  B.nextCol = null;
+  if (B.phase === "live" || B.phase === "warn"){
+    if (B.fuse) B.nextCol = B.combo.color;
+    else for (let i = 0; i < 4; i++){
+      const A = B.arms[i];
+      if (!bossLive(B, i) || A.st === 3 || A.st === 5) continue;
+      const k = A.st === 0 ? clamp(A.t / A.dur, 0, 1) : 1;
+      if (k > best){ best = k; next = A.spell; }
+    }
+  }
+  B.next = next;
+
+  if (B.phase === "intro"){ w.vx = w.vy = 0; return; }
+  bossMove(w, opp, S, dt);
+}
+// the boss turns to face you at a limited rate, and slower still while a beam is
+// open — that is what makes its beam something you can step out of
+function bossTurn(w, want, dt){
+  const rate = (w.beamOn && w.beamWind >= byId.beam.cast) ? 1.0 : 5.5;
+  return w.facing + clamp(angDiff(want, w.facing), -rate*dt, rate*dt);
 }
 
 /* ---------------------------------------------------------- damage */
@@ -1393,7 +2354,7 @@ function update(dt){
     if (w.human){
       moveWizard(w, w.moveX || 0, w.moveY || 0, dt);
     } else if (w.target){
-      aiTick(w, w.target, dt);
+      if (w.boss) bossTick(w, w.target, dt); else aiTick(w, w.target, dt);
     }
   }
 
@@ -1403,7 +2364,8 @@ function update(dt){
     if (w.target){
       if (perceives(w, w.target)){
         w.seenX = w.target.x; w.seenY = w.target.y; w.seenT = 0;
-        w.facing = ATAN2(w.target.y - w.y, w.target.x - w.x);
+        w.facing = w.boss ? bossTurn(w, w.boss.aim != null ? w.boss.aim : ATAN2(w.target.y - w.y, w.target.x - w.x), dt)
+                          : ATAN2(w.target.y - w.y, w.target.x - w.x);
       } else if (w.seenX != null){
         w.facing = ATAN2(w.seenY - w.y, w.seenX - w.x);
       }
@@ -1442,21 +2404,22 @@ function update(dt){
       w.beamWind = Math.min(w.beamWind + dt, byId.beam.cast);
       if (w.beamWind >= byId.beam.cast){
         w.beamT += dt;
-        w.mana -= byId.beam.cost * dt;
+        w.mana -= byId.beam.cost * dt * (w.boss ? BOSS_BEAM_DRAIN : 1);
         if (w.mana <= 0){ w.mana = 0; stopBeam(w); }
       } else {
-        w.mana -= 10*dt;
+        w.mana -= 10*dt * (w.boss ? BOSS_BEAM_DRAIN : 1);
       }
     } else { w.beamT = 0; }
+    const isPrism = !!(w.boss && w.beamTint);          // the Prism Lance has its own cue, not the ordinary beam's hum and drone
     const firing = w.beamOn && w.beamWind >= byId.beam.cast;
     if (firing !== w.beamSounding){
-      beamSound(w, firing);
+      if (!isPrism) beamSound(w, firing);
       w.beamSounding = firing;
       if (firing) swish(w, byId.beam.color, "cast");
     }
     const winding = w.beamOn && w.beamWind < byId.beam.cast;
     if (winding !== w.beamCharging){
-      chargeSound(w, winding);
+      if (!isPrism) chargeSound(w, winding);
       w.beamCharging = winding;
     }
     if (winding && !REDUCED){
@@ -1493,6 +2456,21 @@ function update(dt){
     w.clash = false;
     w.clashOrb = null;
   }
+  // the Prism Lance fizzles rather than glowing steady: sparks kicked off at random
+  // points along its length, the whole time it is live
+  if (!REDUCED) for (const w of wizards){
+    if (!(w.boss && w.beamTint) || !firing(w)) continue;
+    const n = 2 + (vrand()*3|0);
+    for (let i = 0; i < n; i++){
+      const t = vrand();
+      const px = w.x + COS(w.facing)*w.beamLen*t, py = w.y + SIN(w.facing)*w.beamLen*t;
+      const ang = vrnd(0, TAU), sp = vrnd(30, 150);
+      bits.push({ x:px, y:py, vx:COS(ang)*sp, vy:SIN(ang)*sp, life: vrnd(.1, .28), t:0,
+                  color: vrand() < .35 ? "#ffffff" : w.beamTint, r: vrnd(1, 2.6) });
+    }
+  }
+  // the Alchemist's mirror: a beam that reaches the glass goes no further, and comes back
+  for (const w of wizards) if (w.boss) bossMirrorStep(w, dt);
   const wasClashing = clashes;
   clashes = [];
   for (let i = 0; i < wizards.length; i++){
@@ -1512,8 +2490,10 @@ function update(dt){
       const pA = beamPower(a), pB = beamPower(b);
       const target = pA / (pA + pB);
       const even = Math.abs(target - 0.5) < 0.045;
-      // the orb slides, it never snaps: whoever has the mana walks it forward
-      const rate = 0.5 * dt;
+      // the orb slides, it never snaps: whoever has the mana walks it forward — except the
+      // Prism Lance, which does not haggle at all: it is already through on the first frame
+      const overwhelm = (a.boss && a.beamTint) || (b.boss && b.beamTint);
+      const rate = overwhelm ? 1 : 0.5 * dt;
       t += clamp(target - t, -rate, rate);
       t = clamp(t, 0.04, 0.96);
 
@@ -1625,10 +2605,26 @@ function update(dt){
       const step = clamp(angDiff(desired, cur), -s.seek.turn*dt, s.seek.turn*dt);
       const na = cur + step;
       s.vx = COS(na)*want; s.vy = SIN(na)*want;
-      s.spin += dt*(2.5 + prox*9);
+      s.spin += dt*(s.ring ? 7 + prox*20 : 2.5 + prox*9);
       if (!REDUCED && vrand() < prox*0.5*(0.3 + (s.lvl||0)*0.9))
         bits.push({ x:s.x, y:s.y, vx:vrnd(-30,30), vy:vrnd(-30,30), life:vrnd(.2,.45), t:0, color:byId.hex.color, r:vrnd(1,2.4) });
       }
+    }
+    if (s.ring && (s.ring.t -= dt) <= 0){
+      // the Alchemist's sparkwheel throws a ring of sparks off its rim as it comes. Each ring
+      // is turned half a gap from the last, so the holes in it wander, and they come faster
+      // the nearer the wheel gets.
+      const R = s.ring, mk = s.owner.target;
+      const prox = mk ? clamp(1 - HYPOT(mk.x - s.x, mk.y - s.y)/560, 0, 1) : 0;
+      R.t += R.every * (1 - .6*prox);
+      const off = s.spin + R.k * (Math.PI / R.n);
+      for (let j = 0; j < R.n; j++){
+        const a = off + j * TAU / R.n;
+        shots.push({ x: s.x, y: s.y, vx: COS(a)*R.v, vy: SIN(a)*R.v, weight: 1, w0: 1, dmg: 5 * dmgMul(s.owner), r: 5.5,
+                     color: s.color, kind: "spark", owner: s.owner, life: 1.7, trail: [], spin: 0, seek: null, glow: 14, lvl: 0 });
+      }
+      R.k++;
+      rings.push({ x: s.x, y: s.y, r: s.r, max: s.r + 34, t: 0, life: .28, color: s.color, width: 1.8 });
     }
     s.trail.push({x:s.x, y:s.y});
     if (s.trail.length > 9) s.trail.shift();
@@ -1823,6 +2819,7 @@ function draw(){
   const lit = o => !dark || canSee(you, o);
   for (const s of shots) if (lit(s)) drawShot(s);
   for (const w of wizards) if (w.beamOn && !w.dead && (w === you || lit(w))) drawBeam(w);
+  for (const w of wizards) if (w.boss && w.boss.refl && !w.dead && (w === you || lit(w))) drawMirror(w);
   for (const g of ghosts) if (lit(g)) drawGhost(g);
   for (const r of rings) if (lit(r)) drawRing(r);
   for (const b of bits){
@@ -1929,6 +2926,8 @@ function draw(){
     ctx.beginPath(); ctx.arc(you.x, you.y, fr*0.98, 0, TAU); ctx.stroke();
   }
 
+  drawBossBar();
+
   if (flash > 0.004){
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
@@ -1963,6 +2962,7 @@ function drawGhost(g){
   ctx.globalCompositeOperation = "lighter";
   ctx.translate(g.x, g.y);
   ctx.rotate(g.facing);
+  if (g.sc) ctx.scale(g.sc, g.sc);
   ctx.globalAlpha = k * .5;
   ctx.strokeStyle = tint;
   ctx.shadowColor = tint; ctx.shadowBlur = 12;
@@ -2295,7 +3295,32 @@ function drawShot(s){
   // the bolt itself and its white heart, both from the sprite cache
   blitSprite(glowSprite(s.color, s.r, s.glow || 22), s.x, s.y);
   blitSprite(glowSprite("#ffffff", s.r*0.42, 8, s.color), s.x, s.y);
-  if (s.seek && s.kind === "hex" && s.lvl > .4){
+  if (s.kind === "wheel"){
+    // a spoked wheel, turning fast: nine spokes with a bead on each tip, a rim, and a
+    // counter-turning hexagon inside. The rings of sparks leave from the spoke tips.
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.spin);
+    ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = 2;
+    ctx.globalAlpha = .95;
+    ctx.beginPath();
+    for (let j = 0; j < 9; j++){
+      const a = j * TAU / 9;
+      ctx.moveTo(COS(a)*s.r*.55, SIN(a)*s.r*.55); ctx.lineTo(COS(a)*s.r*1.75, SIN(a)*s.r*1.75);
+    }
+    ctx.stroke();
+    for (let j = 0; j < 9; j++){
+      const a = j * TAU / 9;
+      ctx.beginPath(); ctx.arc(COS(a)*s.r*1.95, SIN(a)*s.r*1.95, 2.6, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = .7; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(0, 0, s.r*1.25, 0, TAU); ctx.stroke();
+    ctx.rotate(-s.spin * 2.3);
+    ctx.globalAlpha = .85;
+    ctx.beginPath();
+    for (let j = 0; j < 6; j++){ const a = j / 6 * TAU; ctx[j ? "lineTo" : "moveTo"](COS(a)*s.r*.8, SIN(a)*s.r*.8); }
+    ctx.closePath(); ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (s.seek && s.kind === "hex" && s.lvl > .4){
     ctx.translate(s.x, s.y);
     ctx.rotate(s.spin);
     ctx.strokeStyle = s.color; ctx.lineWidth = 1 + s.lvl; ctx.globalAlpha = .35 + s.lvl*.55;
@@ -2593,34 +3618,146 @@ function strokeJag(pts, color, width, alpha){
   ctx.stroke();
   ctx.globalAlpha = 1;
 }
+/* The Alchemist's mirror. Its front hands clap together and the glass begins as a bright seam
+   between them; then the hands fling apart and a pane is drawn out between them, a sheet of
+   pale glass seen from above with a lattice of triangles running through it that shimmer,
+   each on its own beat, with a brighter band sweeping across. A brightening marks where a beam
+   lands, and each beam it is turning back is drawn coming out of that point, in the colour it
+   went in. All of this is the drawing of `boss.refl`, which it never writes. */
+const MIRROR_TRI = 17, MIRROR_TINTS = ["#8fe9ff", "#bff4ff", "#c9b6ff", "#ffffff", "#a8ffe6"];
+function drawMirror(w){
+  const R = w.boss.refl, now = performance.now();
+  const ca = COS(R.ang), sa = SIN(R.ang);
+  const cx = w.x + ca * BOSS_MIRROR_D, cy = w.y + sa * BOSS_MIRROR_D;
+  const seed = clamp(R.t / .1, 0, 1);                                     // the seam catches light
+  const half = R.half * (.3 + .7 * seed);
+  const open = bossMirrorOpenK(R);                                        // 0 while the hands are together, 1 once they are out
+  const hd = BOSS_MIRROR_DEPTH * (.35 + .65 * open);                      // the pane thickens as it is drawn out
+  const life = clamp((BOSS_REFLECT_LIFE - R.t) / .25, 0, 1);              // it thins in its last moments
+  const a = (.55 + .45 * life) * (.3 + .7 * seed);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(R.ang);                                                      // local x runs toward whoever is beaming, y along the pane
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  // a faint halo, then the glass itself: dark and cool (drawn over the arena, not added to it, so the lattice in it can be seen)
+  ctx.fillStyle = "#8fe9ff";
+  ctx.globalAlpha = .06 * a; ctx.beginPath(); ctx.ellipse(0, 0, hd + 18, half + 18, 0, 0, TAU); ctx.fill();
+  ctx.globalAlpha = .1 * a;  ctx.beginPath(); ctx.ellipse(0, 0, hd + 7, half + 7, 0, 0, TAU); ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-hd, -half, hd * 2, half * 2); ctx.clip();
+  ctx.globalAlpha = .62 * a; ctx.fillStyle = "#0b2238"; ctx.fillRect(-hd, -half, hd * 2, half * 2);
+  const gl = ctx.createLinearGradient(0, -half, 0, half);
+  gl.addColorStop(0, "rgba(143,233,255,.05)"); gl.addColorStop(.25, "rgba(143,233,255,.2)"); gl.addColorStop(.5, "rgba(191,244,255,.34)");
+  gl.addColorStop(.75, "rgba(143,233,255,.2)"); gl.addColorStop(1, "rgba(143,233,255,.05)");
+  ctx.globalAlpha = a; ctx.fillStyle = gl; ctx.fillRect(-hd, -half, hd * 2, half * 2);
+  // the triangles: a lattice of them across the pane, each glinting on its own beat
+  const S = MIRROR_TRI, hgt = S * .866, sweep = -half - 30 + ((now / 900) % 1) * (half * 2 + 60);   // a bright band crossing the glass
+  const rows = Math.max(1, Math.ceil(hd * 2 / hgt));
+  ctx.lineWidth = .8; ctx.strokeStyle = "#dff8ff";
+  for (let r = 0; r < rows; r++){
+    const x0 = -hd + r * hgt, off = (r & 1) * S * .5;
+    for (let k = -1; k * S - half < half + S; k++){
+      const y0 = -half + k * S + off;
+      for (let t = 0; t < 2; t++){
+        const ph = ((r * 7 + (k + 9) * 13 + t * 5) * .61803) % 1;
+        const cy2 = y0 + S * (t ? 1 : .5);
+        const tw = SIN(now / 190 + ph * TAU + k * .5), glint = tw > 0 ? tw * tw : 0;
+        const band = Math.max(0, 1 - Math.abs(cy2 - sweep) / 24);
+        ctx.fillStyle = MIRROR_TINTS[(ph * MIRROR_TINTS.length) | 0];
+        ctx.globalAlpha = Math.min(.95, a * (.1 + .42 * glint + .5 * band));
+        ctx.beginPath();
+        if (t === 0){ ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + S); ctx.lineTo(x0 + hgt, y0 + S * .5); }
+        else { ctx.moveTo(x0 + hgt, y0 + S * .5); ctx.lineTo(x0 + hgt, y0 + S * 1.5); ctx.lineTo(x0, y0 + S); }
+        ctx.closePath(); ctx.fill();
+        ctx.globalAlpha = a * (.22 + .35 * glint + .3 * band); ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+  ctx.globalCompositeOperation = "lighter";
+  // the frame of it: an edge, and the bright line down the middle where a beam is cut
+  ctx.strokeStyle = "#bff4ff"; ctx.globalAlpha = .75 * a; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.rect(-hd, -half, hd * 2, half * 2); ctx.stroke();
+  const g = ctx.createLinearGradient(0, -half, 0, half);
+  g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(.3, "rgba(255,255,255,.9)"); g.addColorStop(.5, "rgba(255,255,255,1)");
+  g.addColorStop(.7, "rgba(255,255,255,.9)"); g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.strokeStyle = g; ctx.globalAlpha = a * (.55 + .45 * open); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, -half); ctx.lineTo(0, half); ctx.stroke();
+  // the end-caps of a pane of glass: where the hands hold it
+  for (const ey of [-half, half]){
+    ctx.fillStyle = "#fff"; ctx.globalAlpha = (.4 + .45 * open) * a; ctx.beginPath(); ctx.arc(0, ey, 2.4 + 2.6 * open, 0, TAU); ctx.fill();
+    ctx.globalAlpha = (.1 + .2 * open) * a; ctx.beginPath(); ctx.arc(0, ey, 7 + 7 * open, 0, TAU); ctx.fill();
+  }
+  // glints running along the middle
+  if (!REDUCED) for (let k = 0; k < 3; k++){
+    const u = ((now / 520 + k / 3) % 1) * 2 - 1;
+    const fade = 1 - Math.abs(u);
+    ctx.globalAlpha = .9 * a * fade; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-5, u * half - 6); ctx.lineTo(5, u * half + 6); ctx.stroke();
+  }
+  // the flash as the hands fling apart
+  const fl = R.t - BOSS_MIRROR_CLASP;
+  if (fl > -.02 && fl < .22){
+    const k = 1 - clamp(fl / .22, 0, 1);
+    ctx.globalAlpha = k * .85; ctx.strokeStyle = "#fff"; ctx.lineWidth = 12 * k + 2;
+    ctx.beginPath(); ctx.moveTo(0, -half); ctx.lineTo(0, half); ctx.stroke();
+  }
+  ctx.restore();
+  // each beam it is sending back
+  for (const o of R.out){
+    const src = wizards.find(q => q.id === o.id);
+    const tint = src && src.beamTint || byId.beam.color;
+    const hx = o.x, hy = o.y;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const pulse = 1 + SIN(now / 45) * .12;
+    bzGlow(hx, hy, 5 * pulse, 20, "#ffffff", .75);
+    bzGlow(hx, hy, 8, 32, tint, .45);
+    if (!REDUCED){
+      const n = 4 + (vrand() * 3 | 0);
+      for (let k = 0; k < n; k++){
+        const ang = R.ang + Math.PI + vrnd(-1.3, 1.3), L2 = vrnd(14, 50);
+        strokeJag(jag(hx, hy, hx + COS(ang) * L2, hy + SIN(ang) * L2, 4, 8), k & 1 ? "#fff" : "#bff4ff", 1.4, .8);
+      }
+    }
+    ctx.restore();
+    // the returned beam: drawn by the beam's own drawing, from a stand-in that sits on the glass
+    drawBeam({ x: hx - COS(o.ang) * 18, y: hy - SIN(o.ang) * 18, facing: o.ang, beamLen: o.len + 18, beamWind: byId.beam.cast,
+               beamTint: tint, friendly: false, clash: false, clashOrb: null });
+  }
+}
 function drawBeam(w){
+  const BC = w.beamTint || byId.beam.color;         // the Alchemist's fused beam wears its own colour
   const winding = w.beamWind < byId.beam.cast;
   const a = w.facing;
-  const len = winding ? 90 : w.beamLen;
+  const mz = w.boss ? BOSS_MUZZLE * BOSS_SCALE - 1 : 0;          // the Alchemist holds its beam out at the wand tip
+  const len = winding ? 90 + mz : w.beamLen;
   const ex = w.x + COS(a)*len, ey = w.y + SIN(a)*len;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   if (winding){
     const k = w.beamWind/byId.beam.cast;
-    ctx.strokeStyle = byId.beam.color;
+    ctx.strokeStyle = BC;
     ctx.globalAlpha = .35 + k*.5;
     ctx.lineWidth = 1 + k*2;
     ctx.setLineDash([6, 8]);
     ctx.beginPath();
-    ctx.moveTo(w.x + COS(a)*20, w.y + SIN(a)*20);
-    ctx.lineTo(w.x + COS(a)*(20 + 600*k), w.y + SIN(a)*(20 + 600*k));
+    ctx.moveTo(w.x + COS(a)*(20 + mz), w.y + SIN(a)*(20 + mz));
+    ctx.lineTo(w.x + COS(a)*(20 + mz + 600*k), w.y + SIN(a)*(20 + mz + 600*k));
     ctx.stroke();
     ctx.setLineDash([]);
-    blitSprite(glowSprite(byId.beam.color, 3 + k*7, 20*k),
-               w.x + COS(a)*22, w.y + SIN(a)*22);
-    const tx = w.x + COS(a)*24, ty = w.y + SIN(a)*24;
+    blitSprite(glowSprite(BC, 3 + k*7, 20*k),
+               w.x + COS(a)*(22 + mz), w.y + SIN(a)*(22 + mz));
+    const tx = w.x + COS(a)*(24 + mz), ty = w.y + SIN(a)*(24 + mz);
     if (!REDUCED){
       const now = performance.now();
       const dots = 8;
       for (let i = 0; i < dots; i++){
         const ang = now/280 * (w.friendly ? 1 : -1) + i/dots*TAU;
         const rad = 8 + 42*(1-k) + SIN(now/130 + i)*2.5;
-        blitSprite(glowSprite(i % 3 ? byId.beam.color : "#ffd6df", .9 + 2.2*k, 12),
+        blitSprite(glowSprite(i % 3 ? BC : "#ffd6df", .9 + 2.2*k, 12),
                    tx + COS(ang)*rad, ty + SIN(ang)*rad, .3 + .65*k);
       }
       ctx.globalAlpha = 1;
@@ -2631,38 +3768,40 @@ function drawBeam(w){
     }
   } else {
     const now = performance.now();
-    const flick = 1 + SIN(now/40)*0.12;
-    const sx = w.x + COS(a)*18, sy = w.y + SIN(a)*18;
-    ctx.shadowColor = byId.beam.color; ctx.shadowBlur = 26;
-    ctx.strokeStyle = byId.beam.color;
-    ctx.globalAlpha = .5;
-    ctx.lineWidth = 17*flick;
+    const sharp = !!(w.boss && w.beamTint);     // the Prism Lance: an instant bolt, not a sustained glowing channel
+    const flick = 1 + SIN(now/40)*(sharp ? 0.3 : 0.12);
+    const sx = w.x + COS(a)*(18 + mz), sy = w.y + SIN(a)*(18 + mz);
+    ctx.shadowColor = BC; ctx.shadowBlur = sharp ? 15 : 26;
+    ctx.strokeStyle = BC;
+    ctx.globalAlpha = sharp ? .32 : .5;
+    ctx.lineWidth = (sharp ? 9 : 17)*flick;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
     ctx.globalAlpha = 1;
-    ctx.lineWidth = 6*flick;
+    ctx.lineWidth = (sharp ? 3 : 6)*flick;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = sharp ? 1.3 : 2;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
 
     // arcing filaments crawling along the shaft
     if (!REDUCED){
       const segs = Math.max(4, Math.min(22, (len/26)|0));
-      ctx.shadowBlur = 14;
-      strokeJag(jag(sx, sy, ex, ey, segs, 11), "#ffd8e6", 1.6, .85);
-      strokeJag(jag(sx, sy, ex, ey, segs, 19), byId.beam.color, 1.2, .55);
+      ctx.shadowBlur = sharp ? 9 : 14;
+      strokeJag(jag(sx, sy, ex, ey, segs, sharp ? 21 : 11), "#ffd8e6", sharp ? 1.3 : 1.6, sharp ? .95 : .85);
+      strokeJag(jag(sx, sy, ex, ey, segs, sharp ? 32 : 19), BC, 1.2, .55);
+      if (sharp) strokeJag(jag(sx, sy, ex, ey, segs, 13), "#fff", 1, .85);   // a whiter, jumpier core crackle
       // forks that leap off the shaft
-      const forks = 1 + (vrand()*3|0);
+      const forks = (sharp ? 3 : 1) + (vrand()*3|0);
       for (let f = 0; f < forks; f++){
         const t = vrand();
         const bx = sx + (ex-sx)*t, by = sy + (ey-sy)*t;
         const ang = a + Math.PI/2*(vrand()<.5?1:-1) + vrnd(-.6,.6);
-        const L2 = vrnd(14,46);
+        const L2 = vrnd(14, sharp ? 62 : 46);
         strokeJag(jag(bx, by, bx + COS(ang)*L2, by + SIN(ang)*L2, 4, 7), "#fff", 1.1, .5);
       }
       ctx.shadowBlur = 0;
     }
     // muzzle bloom at the wand
-    ctx.fillStyle = "#fff"; ctx.shadowColor = byId.beam.color; ctx.shadowBlur = 30;
+    ctx.fillStyle = "#fff"; ctx.shadowColor = BC; ctx.shadowBlur = 30;
     ctx.beginPath(); ctx.arc(sx, sy, 5 + SIN(now/50)*1.6, 0, TAU); ctx.fill();
 
     if (w.clash && w.clashOrb){
@@ -2674,7 +3813,7 @@ function drawBeam(w){
       const r = 15 + pulse*4 + orb.press*7;
       const lead = orb.lead ? orb.lead.tint : "#fff";
       ctx.shadowBlur = 45;
-      ctx.fillStyle = byId.beam.color; ctx.globalAlpha = .5;
+      ctx.fillStyle = BC; ctx.globalAlpha = .5;
       ctx.beginPath(); ctx.arc(ox, oy, r*2.1, 0, TAU); ctx.fill();
       ctx.globalAlpha = .35 + orb.press*.45;
       ctx.fillStyle = lead;
@@ -2690,7 +3829,7 @@ function drawBeam(w){
           const ang = vrnd(0, TAU);
           const L2 = vrnd(18, 62);
           strokeJag(jag(ex, ey, ex + COS(ang)*L2, ey + SIN(ang)*L2, 5, 9),
-                    i % 2 ? "#fff" : byId.beam.color, 1.5, .75);
+                    i % 2 ? "#fff" : BC, 1.5, .75);
         }
         ctx.strokeStyle = "#fff"; ctx.globalAlpha = .35; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(ex, ey, r*2.6 + (now/6 % 26), 0, TAU); ctx.stroke();
@@ -3287,7 +4426,778 @@ function drawCape(w){
   ctx.restore();
 }
 
+/* ------------------------------------------------------- the Alchemist, drawn
+   Ported from Opus's boss concept (v2) concept (v2): the game's own cloth language
+   — one colour fading to see-through down its length, a tint glow edge, white
+   seams and a hem band — with the "hat tell" on top. A gem sits in the brim where
+   each arm leaves the hat, lit in that arm's next spell; the live ones carry a
+   white ring that closes as the cast comes due, the holstered ones are embers
+   that wake just before the arms trade places, and the cone tip burns in the
+   colour of whatever fires first.
+
+   The soft parts are alive. Everything below the "view" line — the ribbons and
+   the mantle (a real chain of springy cloth, dragged by the boss's movement and
+   turns, kicked by its casts) and the arms (spring-damped, so they overshoot the
+   pose the simulation asks for and settle) — is VIEW STATE. It lives in
+   `w.view`, advances on real frame time in updateBossView(), and is never read
+   by the simulation, so a machine that draws it differently, or not at all,
+   still agrees with every other on where the boss is and what it is casting. */
+const BZ = {
+  cloth:"#c42a5c", brim:"#1c0b13", cone:"#6a1c36", lit:"#e0668a",
+  arm:"#3a1620", armLit:"#d0607f", outline:"#08030a", joint:"#5a1a2e",
+  hs:2.15, coneLen:34
+};
+const BZ_BRIM = 15 * BZ.hs;
+function bzGlow(x, y, r, blur, color, a){
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r + blur);
+  const k = r / (r + blur);
+  g.addColorStop(0, rgba(color, a)); g.addColorStop(k, rgba(color, a));
+  g.addColorStop(Math.min(1, k + (1 - k)*.35), rgba(color, a*.32)); g.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r + blur, 0, TAU); ctx.fill();
+}
+function bzHalo(r, blur, color, a){
+  const g = ctx.createRadialGradient(0, 0, r*.9, 0, 0, r + blur);
+  g.addColorStop(0, rgba(color, 0)); g.addColorStop(.1, rgba(color, a)); g.addColorStop(.45, rgba(color, a*.3)); g.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r + blur, 0, TAU); ctx.fill();
+}
+function bzEdge(tint){
+  ctx.lineJoin = "round"; ctx.strokeStyle = tint;
+  ctx.globalAlpha = .12; ctx.lineWidth = 5.5; ctx.stroke();
+  ctx.globalAlpha = .26; ctx.lineWidth = 2.8; ctx.stroke();
+  ctx.globalAlpha = .85; ctx.lineWidth = 1.1; ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+/* ---------------------------------------------------------- the soft parts (view) */
+const BZV_H = 1 / 120;                        // physics sub-step, seconds
+// arms: an elbow, a hand and a wand angle, each a damped spring chasing the pose the
+// simulation asks for. omega = how quickly, zeta = how bouncy (1 would settle
+// without overshooting; these do not). The wand is loosest, so it whips.
+const BZV_ARM = { E:{ w:15, z:.55 }, H:{ w:12, z:.38 }, A:{ w:15, z:.26 } };
+const BZV_FACE = { w:19, z:.62 };
+// the hat and its ring of stones spin up and settle: a spring after the sim's spin curve, so they click home
+const BZV_HAT = { w:24, z:.5 }, BZV_RING = { w:20, z:.45 };
+const BZ_HAT_TURNS = 3, BZ_RING_TURNS = 2;    // full turns the hat / the ring make in one spin
+const BZV_COLS = 5, BZV_ROWS = 11;             // the cloak: five strands of cloth side by side, eleven links each
+const RIDE = [0, 0];
+const BZ_SWING = 2.05;                       // the furthest a link of cloth may swing from straight behind the body (about 117 degrees)
+const BZV_UCOLS = 3;                          // and a longer, darker under-cloak behind it
+function bzChain(n, restLocal, kTop, kTip, zTop, zTip){
+  const ch = { n, rest: restLocal, x: [], y: [], vx: [], vy: [], k: [], c: [], seg: 0, cap: .3, nb: null, lat: 0, kick: 1, amp: 30 };
+  for (let i = 0; i < n; i++){
+    const t = i / (n - 1);
+    const om = kTop + (kTip - kTop) * t, z = zTop + (zTip - zTop) * t;
+    ch.k.push(om * om); ch.c.push(2 * z * om);
+    ch.x.push(0); ch.y.push(0); ch.vx.push(0); ch.vy.push(0);
+  }
+  let d = 0;
+  for (let i = 1; i < n; i++) d += HYPOT(restLocal[i][0] - restLocal[i-1][0], restLocal[i][1] - restLocal[i-1][1]);
+  ch.seg = d / (n - 1);
+  return ch;
+}
+function bzPlace(w, ch, face){                // drop a chain onto its rest pose
+  const c = COS(face), s = SIN(face);
+  for (let i = 0; i < ch.n; i++){
+    const r = ch.rest[i];
+    ch.x[i] = w.x + c*r[0] - s*r[1]; ch.y[i] = w.y + s*r[0] + c*r[1];
+    ch.vx[i] = ch.vy[i] = 0;
+  }
+}
+function bzKick(ch, fx, fy, from){           // an impulse, felt more towards the hem
+  for (let i = 1; i < ch.n; i++){
+    const k = (i / (ch.n - 1)); const g = k * k * (from == null ? 1 : from) * ch.kick;
+    ch.vx[i] += fx * g; ch.vy[i] += fy * g;
+  }
+}
+/* Where the under-cloak wants to be: on the main cloak. `s` is how far down the cloth
+   the node is, `lat` how far to the side of the centre line. Past the main cloak's
+   hem it carries on in the direction that hem was going. */
+function bzRide(lead, s, lat, out){
+  const n = lead.n, seg = lead.seg, f = s / seg;
+  let i0 = Math.min(n - 2, f | 0), u = f - i0;
+  const dx = lead.x[i0 + 1] - lead.x[i0], dy = lead.y[i0 + 1] - lead.y[i0], L = HYPOT(dx, dy) || 1;
+  out[0] = lead.x[i0] + dx * u + dy / L * lat;
+  out[1] = lead.y[i0] + dy * u - dx / L * lat;
+}
+function bzStepChain(w, ch, face, h, t, ph, amp, gust, v, lead){
+  const c = COS(face), s = SIN(face), n = ch.n;
+  // the drag: when the boss is streaking (a dash) the cloth is laid out along the line it came, like a
+  // scarf in a slipstream, and holds there a moment before it comes home
+  const st = v.stream, ks = 1 + 1.6*st, cs = Math.sqrt(ks);
+  const scr = COS(v.srel), scs = SIN(v.srel);
+  // the root is nailed to the body
+  ch.x[0] = w.x + c*ch.rest[0][0] - s*ch.rest[0][1];
+  ch.y[0] = w.y + s*ch.rest[0][0] + c*ch.rest[0][1];
+  ch.vx[0] = ch.vy[0] = 0;
+  // the rest pose hangs from the cloth's own heading, a slower one than the body's (see bzAdvance), so a
+  // quick turn of the body swings the cloth round after it rather than flicking it
+  const C2 = COS(v.cf), S2 = SIN(v.cf);
+  const nx = -S2, ny = C2;                     // across the cloth
+  const px = [], py = [];
+  px.push(ch.x[0]); py.push(ch.y[0]);
+  for (let i = 1; i < n; i++){
+    const r = ch.rest[i], k = i / (n - 1);
+    let rx = w.x + C2*r[0] - S2*r[1], ry = w.y + S2*r[0] + C2*r[1];
+    let hx = rx, hy = ry;                       // where it would hang if the boss stood still
+    if (st > .002){
+      // ...and where it streams to: straight out along the slipstream, its spread narrowed and turned with it,
+      // a wave running down it that is felt most at the hem
+      const lat = r[1] - ch.rest[0][1], lx = -S2*lat*.4, ly = C2*lat*.4;
+      const rip = SIN(t*26 - i*.85 + ph*2) * 8 * k * st * v.calm;
+      const qx = ch.x[0] + v.sdx*i*ch.seg + lx*scr - ly*scs - v.sdy*rip;
+      const qy = ch.y[0] + v.sdy*i*ch.seg + lx*scs + ly*scr + v.sdx*rip;
+      const wg = st * (.2 + .8*k);
+      rx += (qx - rx) * wg; ry += (qy - ry) * wg;
+    }
+    if (lead){
+      // the under-cloak lies on the cloak: it is pulled towards the cloak's own shape, so it follows the
+      // cloak (a beat behind) instead of flapping about under it on its own
+      bzRide(lead, i * ch.seg, r[1] - ch.rest[0][1], RIDE);
+      rx += (RIDE[0] - rx) * .8; ry += (RIDE[1] - ry) * .8;
+    }
+    // spring to where the cloth would hang, damping, and a flutter that lives in
+    // the force (never the positions) so it cannot kink the chain
+    const fl = (SIN(t*3.4 - i*.55 + ph)*.6 + SIN(t*5.3 - i*.31 + ph*1.7)*.4) * amp * (.25 + .75*k) * (.5 + gust) * (1 - st);
+    let fx = (rx - ch.x[i]) * ch.k[i] * ks, fy = (ry - ch.y[i]) * ch.k[i] * ks;
+    if (ch.nb){
+      // neighbouring strands pull each other's displacement into step: that is what
+      // makes five strands one sheet of cloth instead of five ribbons
+      let sx = 0, sy = 0;
+      for (const nb of ch.nb){
+        const q = nb.rest[i];
+        sx += nb.x[i] - (w.x + C2*q[0] - S2*q[1]); sy += nb.y[i] - (w.y + S2*q[0] + C2*q[1]);
+      }
+      sx /= ch.nb.length; sy /= ch.nb.length;
+      const kl = ch.lat * (.3 + .7*k) * (1 - st);
+      fx += (sx - (ch.x[i] - hx)) * kl; fy += (sy - (ch.y[i] - hy)) * kl;
+    }
+    ch.vx[i] += (fx - ch.vx[i] * ch.c[i] * cs + nx * fl) * h;
+    ch.vy[i] += (fy - ch.vy[i] * ch.c[i] * cs + ny * fl) * h;
+    px.push(ch.x[i] + ch.vx[i]*h); py.push(ch.y[i] + ch.vy[i]*h);
+  }
+  /* Lay the chain out again from the root, one link at a time: each link keeps
+     exactly its length (that is what makes it cloth and not a wobbling spring)
+     and bends no more than `cap` from the link before it (so it cannot fold
+     through itself). Built forwards from a node that is already final, so both
+     rules hold exactly and there is nothing left to iterate or to argue about. */
+  let a0 = 0;
+  const rear = v.cf + Math.PI;
+  for (let i = 1; i < n; i++){
+    let a1 = ATAN2(py[i] - py[i-1], px[i] - px[i-1]);
+    if (i > 1){
+      const rel = angleTo(a0, a1);
+      if (rel > ch.cap) a1 = a0 + ch.cap; else if (rel < -ch.cap) a1 = a0 - ch.cap;
+    }
+    // a cape hangs behind its wearer: no link of it is allowed to point round the front of the body
+    const off = angleTo(rear, a1);
+    if (off > BZ_SWING) a1 = rear + BZ_SWING; else if (off < -BZ_SWING) a1 = rear - BZ_SWING;
+    px[i] = px[i-1] + COS(a1) * ch.seg; py[i] = py[i-1] + SIN(a1) * ch.seg;
+    a0 = a1;
+  }
+  for (let i = 1; i < n; i++){
+    let vx = (px[i] - ch.x[i]) / h, vy = (py[i] - ch.y[i]) / h;
+    const sp = HYPOT(vx, vy);
+    if (sp > 700){ vx *= 700 / sp; vy *= 700 / sp; }
+    ch.vx[i] = vx; ch.vy[i] = vy;
+    ch.x[i] = px[i]; ch.y[i] = py[i];
+  }
+}
+// target pose for one arm, seen from the boss's drawn frame
+function bzTarget(w, i, face){
+  const B = w.boss, t = w.target, A = B.arms[i];
+  let P = [150, 0];
+  if (t){
+    const dx = t.x - w.x, dy = t.y - w.y, c = COS(face), s = SIN(face);
+    P = [(dx*c + dy*s) / BOSS_SCALE, (-dx*s + dy*c) / BOSS_SCALE];
+  }
+  return bossPose(i, A.k, P, A.foc, A.cf, A.rc, A.rw);
+}
+// one sheet of cloth: `n` strands hung side by side from the collar, joined so they move as one
+function bzSheet(n, len, fan, root, kTop, kTip, zTop, zTip, lat, cut, opt){
+  const strands = [];
+  for (let c = 0; c < n; c++){
+    const sp = n === 1 ? 0 : (c - (n - 1) / 2) / ((n - 1) / 2);          // -1 .. 1 across the cloak
+    const L = len - cut * sp * sp;                                       // the middle runs longest
+    const rest = [];
+    for (let i = 0; i < BZV_ROWS; i++){
+      const t = i / (BZV_ROWS - 1);
+      rest.push([-(6 + L * t) * BOSS_SCALE, sp * (root + fan * t) * BOSS_SCALE]);
+    }
+    const ch = bzChain(BZV_ROWS, rest, kTop, kTip, zTop, zTip);
+    ch.cap = opt.cap; ch.lat = lat; ch.kick = opt.kick; ch.amp = opt.amp;
+    strands.push(ch);
+  }
+  for (let c = 0; c < n; c++){
+    const nb = [];
+    if (c > 0) nb.push(strands[c - 1]);
+    if (c < n - 1) nb.push(strands[c + 1]);
+    strands[c].nb = nb;
+  }
+  return strands;
+}
+function bzView(w){
+  let v = w.view;
+  if (v) return v;
+  const B = w.boss;
+  v = w.view = { t: 0, face: w.facing, fv: 0, x: w.x, y: w.y, arms: [], cloak: [], under: [],
+                 fired: [0,0,0,0], hurt: 0, prevK: [0,0,0,0], swap: 0, ph: (w.id || 0) * 1.3,
+                 hat: 0, hatv: 0, ring: 0, ringv: 0, spinning: false, flashN: B.flashN, star: null,
+                 cf: w.facing, stream: 0, sx0: -COS(w.facing), sy0: -SIN(w.facing), sdx: -COS(w.facing), sdy: -SIN(w.facing), srel: 0, calm: 1,
+                 tr: [[], [], [], []] };
+  for (let i = 0; i < 4; i++){
+    const T = bzTarget(w, i, v.face);
+    v.arms.push({ E: T.E.slice(), Ev: [0,0], H: T.H.slice(), Hv: [0,0], a: ATAN2(T.T[1]-T.H[1], T.T[0]-T.H[0]), av: 0 });
+  }
+  // the under-cloak is the longer, thinner cloth behind the main one. It used to be the loosest thing on
+  // the boss (a slack spring, hardly any damping, the strongest flutter) and it thrashed; it is now
+  // the heavier, better-damped of the two, so it follows the cloak rather than fighting it.
+  v.under = bzSheet(BZV_UCOLS, 150, 26, 10, 22, 11, .95, .82, 110, 26, { cap: .3, kick: .35, amp: 12 });
+  v.cloak = bzSheet(BZV_COLS, 124, 38, 14, 26, 10, .85, .5, 140, 18, { cap: .22, kick: .8, amp: 22 });
+  for (const ch of v.under) bzPlace(w, ch, v.face);
+  for (const ch of v.cloak) bzPlace(w, ch, v.face);
+  return v;
+}
+function bzCloth(v){ return v.cloak.concat(v.under); }
+// how far through its spin the hat has come (0..1) -> how far round it has turned (0..1)
+function bzSpinEase(K){ const q = 1 - K; return K < .5 ? 4*K*K*K : 1 - 4*q*q*q; }
+function bzAdvance(w, dt){
+  const B = w.boss, v = bzView(w);
+  const moved = HYPOT(w.x - v.x, w.y - v.y) > 120;
+  if (moved){                                    // it arrived, or was moved: do not drag the cloth across the arena
+    v.face = w.facing; v.fv = 0; v.stream = 0; v.cf = w.facing;
+    for (const ch of bzCloth(v)) bzPlace(w, ch, v.face);
+    for (const q of v.tr) q.length = 0;
+  }
+  const mvx = moved ? 0 : (w.x - v.x) / Math.max(dt, 1e-3), mvy = moved ? 0 : (w.y - v.y) / Math.max(dt, 1e-3);
+  const speed = HYPOT(mvx, mvy);
+  v.x = w.x; v.y = w.y;
+  const calm = REDUCED ? .35 : 1;
+  v.calm = calm;
+  /* The drag. A walk does not stream the cloth; a dash (five times the pace) does, at once, and lets go
+     slowly — so the cloth lies out along the line the boss came for a beat after it has stopped, then
+     comes home without a flap. The way it streams is opposite to the way it went, but never round the
+     front of the body: a dash backwards throws it out to the side instead. */
+  v.cf += angleTo(v.cf, v.face) * (1 - Math.exp(-6 * dt));      // the cloth's heading: the body's, a beat late
+  const sk = clamp((speed - 260) / 420, 0, 1);
+  v.stream += (sk - v.stream) * (1 - Math.exp(-(sk > v.stream ? 26 : 2.1) * dt));
+  if (speed > 200){ v.sx0 = -mvx / speed; v.sy0 = -mvy / speed; }
+  {
+    const rear = v.face + Math.PI, rel = clamp(angleTo(rear, ATAN2(v.sy0, v.sx0)), -1.75, 1.75), a = rear + rel;
+    v.srel = rel; v.sdx = COS(a); v.sdy = SIN(a);
+  }
+  const nsub = Math.max(1, Math.ceil(dt / BZV_H)), h = dt / nsub;
+  const cloth = bzCloth(v);
+
+  // events the cloth and arms should react to (read from the sim, never written to it)
+  for (let i = 0; i < 4; i++){
+    const A = B.arms[i], seen = v.fired[i];
+    if (A.fired > seen + .02){                   // a wand just went off: recoil, and the cloth is thrown back
+      const T = bzTarget(w, i, v.face), a = v.arms[i];
+      const dx = T.T[0] - T.H[0], dy = T.T[1] - T.H[1], d = HYPOT(dx, dy) || 1;
+      a.Hv[0] -= dx/d * 150 * calm; a.Hv[1] -= dy/d * 150 * calm;
+      a.av += (i % 2 ? -1 : 1) * 9 * calm;
+      const c = COS(v.face), s = SIN(v.face);
+      const bx = -(c*dx/d - s*dy/d), by = -(s*dx/d + c*dy/d);
+      for (const ch of cloth) bzKick(ch, bx * 20 * calm, by * 20 * calm);
+    }
+    v.fired[i] = A.fired;
+  }
+  if (w.hurt > v.hurt + .15){                    // flinch
+    for (const ch of cloth) bzKick(ch, vrnd(-32, 32) * calm, vrnd(-32, 32) * calm);
+  }
+  v.hurt = w.hurt;
+  let du = 0;                                    // arms going round the back stir the air
+  for (let i = 0; i < 4; i++){ du += Math.abs(B.arms[i].k - v.prevK[i]); v.prevK[i] = B.arms[i].k; }
+  du /= Math.max(dt, 1e-3);
+  v.swap += (Math.min(1.6, du) - v.swap) * Math.min(1, dt * 6);
+  if (B.flashN !== v.flashN){                    // the star: a blast of air out from the boss
+    v.flashN = B.flashN;
+    v.star = { t: 0, color: B.combo ? B.combo.color : BOSS_TINT };
+    if (!REDUCED){ flash = Math.max(flash, .22); flashColor = v.star.color; }
+    for (const ch of cloth) bzKick(ch, -COS(v.face) * 70 * calm, -SIN(v.face) * 70 * calm);
+  }
+  if (v.star){ v.star.t += dt; if (v.star.t > .85) v.star = null; }
+
+  // the hat's spin: the sim says how far through it we are; these follow with a little spring
+  const spinning = B.phase === "spin";
+  if (v.spinning && !spinning){ v.hat -= TAU * BZ_HAT_TURNS; v.ring -= TAU * BZ_RING_TURNS; }   // it landed on a whole number of turns
+  v.spinning = spinning;
+  const e = spinning ? bzSpinEase(B.spinK) : 0;
+  const hatT = TAU * BZ_HAT_TURNS * e, ringT = TAU * BZ_RING_TURNS * e;
+
+  for (let s = 0; s < nsub; s++){
+    v.t += h;
+    // body facing: a slightly under-damped spring chasing the simulated facing, plus a slow breath
+    const want = w.facing + .028 * SIN(v.t * 2.3 + v.ph) * calm;
+    const dF = angleTo(v.face, want);
+    v.fv += (dF * BZV_FACE.w * BZV_FACE.w - v.fv * 2 * BZV_FACE.z * BZV_FACE.w) * h;
+    v.face += v.fv * h;
+    v.hatv += ((hatT - v.hat) * BZV_HAT.w * BZV_HAT.w - v.hatv * 2 * BZV_HAT.z * BZV_HAT.w) * h;
+    v.hat += v.hatv * h;
+    v.ringv += ((ringT - v.ring) * BZV_RING.w * BZV_RING.w - v.ringv * 2 * BZV_RING.z * BZV_RING.w) * h;
+    v.ring += v.ringv * h;
+    // arms
+    for (let i = 0; i < 4; i++){
+      const T = bzTarget(w, i, v.face), a = v.arms[i], A = B.arms[i];
+      let tE = T.E, tH = T.H;
+      const dx = T.T[0] - T.H[0], dy = T.T[1] - T.H[1], d = HYPOT(dx, dy) || 1;
+      if (A.st === 0 && bossLive(B, i) && A.t > 0){        // winding up: the hand draws back a touch against the coming cast
+        const k = clamp(A.t / A.dur, 0, 1), pull = k * k * 4.5;
+        tH = [tH[0] - dx/d*pull, tH[1] - dy/d*pull];
+      }
+      const tA = ATAN2(T.T[1] - T.H[1], T.T[0] - T.H[0]);
+      for (let q = 0; q < 2; q++){
+        a.Ev[q] += ((tE[q] - a.E[q]) * BZV_ARM.E.w*BZV_ARM.E.w - a.Ev[q] * 2*BZV_ARM.E.z*BZV_ARM.E.w) * h;
+        a.E[q] += a.Ev[q] * h;
+        a.Hv[q] += ((tH[q] - a.H[q]) * BZV_ARM.H.w*BZV_ARM.H.w - a.Hv[q] * 2*BZV_ARM.H.z*BZV_ARM.H.w) * h;
+        a.H[q] += a.Hv[q] * h;
+      }
+      a.av += (angleTo(a.a, tA) * BZV_ARM.A.w*BZV_ARM.A.w - a.av * 2*BZV_ARM.A.z*BZV_ARM.A.w) * h;
+      a.a += a.av * h;
+    }
+    // cloth: the strands of one sheet ripple a little out of step with each other, so waves travel across it
+    const gust = Math.min(1.5, speed / 150 + v.swap * .5 + Math.min(1, Math.abs(v.hatv) / 16));
+    for (let c = 0; c < v.cloak.length; c++) bzStepChain(w, v.cloak[c], v.face, h, v.t, c * .55 + v.ph, v.cloak[c].amp * calm, gust, v);
+    for (let c = 0; c < v.under.length; c++) bzStepChain(w, v.under[c], v.face, h, v.t * .9, c * .7 + v.ph + 1.9, v.under[c].amp * calm, gust, v, v.cloak[v.cloak.length >> 1]);
+  }
+  // where the hems have been, while it streams: the streak the drag leaves in the air
+  for (const q of v.tr) for (const p of q) p.t += dt;
+  for (const q of v.tr) while (q.length && q[0].t > .5) q.shift();
+  if (v.stream > .25 && !REDUCED){
+    const src = [v.cloak[0], v.cloak[2], v.cloak[4], v.under[1]];
+    for (let i = 0; i < 4; i++){ const ch = src[i], N = ch.n - 1; v.tr[i].push({ x: ch.x[N], y: ch.y[N], t: 0 }); }
+  }
+}
+function updateBossView(dt){
+  if (!(dt > 0)) return;
+  const step = Math.min(dt, 1 / 30);
+  for (const w of wizards) if (w.boss && !w.dead) bzAdvance(w, step);
+}
+// world chain -> the boss's drawn frame, in design units
+function bzLocalChain(w, ch, face){
+  const c = COS(face), s = SIN(face), out = [];
+  for (let i = 0; i < ch.n; i++){
+    const dx = ch.x[i] - w.x, dy = ch.y[i] - w.y;
+    out.push([(dx*c + dy*s) / BOSS_SCALE, (-dx*s + dy*c) / BOSS_SCALE]);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------- the cloak, drawn */
+/* A cloak is one sheet: the outline runs down the left edge, along a soft hem drawn
+   through the tips of the strands, and back up the right; between the strands the
+   cloth is pleated (alternate light and dark panels that shift as it moves) and each
+   strand is a fold line. `o` sets the colours. */
+function bzSheetDraw(cols, o){
+  const C = cols.length, N = cols[0].length, hem = cols.map(c => c[N - 1]);
+  const trace = () => {
+    ctx.beginPath(); ctx.moveTo(cols[0][0][0], cols[0][0][1]);
+    for (let i = 1; i < N; i++) ctx.lineTo(cols[0][i][0], cols[0][i][1]);
+    for (let c = 1; c < C - 1; c++) ctx.quadraticCurveTo(hem[c][0], hem[c][1], (hem[c][0] + hem[c+1][0]) / 2, (hem[c][1] + hem[c+1][1]) / 2);
+    ctx.lineTo(hem[C-1][0], hem[C-1][1]);
+    for (let i = N - 2; i >= 0; i--) ctx.lineTo(cols[C-1][i][0], cols[C-1][i][1]);
+    ctx.closePath();
+  };
+  const mid = cols[C >> 1];
+  ctx.save();
+  ctx.globalAlpha = .3; ctx.fillStyle = "#04050b"; ctx.save(); ctx.translate(1.8, 3); trace(); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1;
+  const g = ctx.createLinearGradient(mid[0][0], mid[0][1], mid[N-1][0], mid[N-1][1]);
+  g.addColorStop(0, rgba(o.col, o.a0)); g.addColorStop(.6, rgba(o.col, o.a1)); g.addColorStop(1, rgba(o.col, o.a2));
+  trace(); ctx.fillStyle = g; ctx.fill();
+  ctx.save(); trace(); ctx.clip();
+  // pleats
+  for (let c = 0; c < C - 1; c++){
+    ctx.beginPath(); ctx.moveTo(cols[c][0][0], cols[c][0][1]);
+    for (let i = 1; i < N; i++) ctx.lineTo(cols[c][i][0], cols[c][i][1]);
+    for (let i = N - 1; i >= 0; i--) ctx.lineTo(cols[c+1][i][0], cols[c+1][i][1]);
+    ctx.closePath();
+    ctx.globalAlpha = o.pleat; ctx.fillStyle = c & 1 ? "#05060c" : "#fff"; ctx.fill();
+  }
+  // the folds: one line down each inner strand, a pale one with a dark one beside it
+  for (let c = 1; c < C - 1; c++){
+    ctx.beginPath(); cols[c].forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+    ctx.globalAlpha = .22; ctx.strokeStyle = "#05070f"; ctx.lineWidth = 3.4; ctx.save(); ctx.translate(1.4, .6); ctx.stroke(); ctx.restore();
+    ctx.globalAlpha = o.fold; ctx.strokeStyle = "#fff"; ctx.lineWidth = .85; ctx.stroke();
+  }
+  // a pale band along the hem
+  ctx.globalAlpha = o.band; ctx.fillStyle = "#fff";
+  ctx.beginPath(); for (let c = 0; c < C; c++){ const p = cols[c][N - 3]; c ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); }
+  for (let c = C - 1; c >= 0; c--) ctx.lineTo(cols[c][N-1][0], cols[c][N-1][1]);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  trace(); bzEdge(o.edge || BOSS_TINT);
+  if (o.hem){
+    ctx.globalAlpha = .8; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.05;
+    ctx.beginPath(); ctx.moveTo(hem[0][0], hem[0][1]);
+    for (let c = 1; c < C - 1; c++) ctx.quadraticCurveTo(hem[c][0], hem[c][1], (hem[c][0] + hem[c+1][0]) / 2, (hem[c][1] + hem[c+1][1]) / 2);
+    ctx.lineTo(hem[C-1][0], hem[C-1][1]); ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+// the streaks the hems leave while the boss is being dragged along: drawn in the world, so they stay where they were
+function bzTrailDraw(w, v){
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+  // the cloth's own wake: the ribbon between the two outer hems
+  const A = v.tr[0], Bq = v.tr[2];
+  if (A.length > 1 && A.length === Bq.length){
+    const pa = bzLocalChain(w, { n: A.length, x: A.map(p => p.x), y: A.map(p => p.y) }, v.face);
+    const pb = bzLocalChain(w, { n: Bq.length, x: Bq.map(p => p.x), y: Bq.map(p => p.y) }, v.face);
+    ctx.fillStyle = BOSS_TINT;
+    for (let j = 1; j < pa.length; j++){
+      const k = 1 - A[j].t / .5;
+      if (k <= 0) continue;
+      ctx.globalAlpha = .3 * k * k;
+      ctx.beginPath(); ctx.moveTo(pa[j-1][0], pa[j-1][1]); ctx.lineTo(pa[j][0], pa[j][1]); ctx.lineTo(pb[j][0], pb[j][1]); ctx.lineTo(pb[j-1][0], pb[j-1][1]); ctx.closePath(); ctx.fill();
+    }
+  }
+  for (let i = 0; i < v.tr.length; i++){
+    const q = v.tr[i];
+    if (q.length < 2) continue;
+    const pts = bzLocalChain(w, { n: q.length, x: q.map(p => p.x), y: q.map(p => p.y) }, v.face);
+    for (let j = 1; j < pts.length; j++){
+      const k = 1 - q[j].t / .5;
+      if (k <= 0) continue;
+      ctx.strokeStyle = i === 1 ? "#ffffff" : BOSS_TINT;
+      ctx.globalAlpha = .8 * k * k * (i === 3 ? .6 : 1);
+      ctx.lineWidth = (i === 1 ? 3 : 5) * (.3 + .7 * k);
+      ctx.beginPath(); ctx.moveTo(pts[j-1][0], pts[j-1][1]); ctx.lineTo(pts[j][0], pts[j][1]); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function bzCloakDraw(w, v){
+  bzTrailDraw(w, v);
+  bzSheetDraw(v.under.map(ch => bzLocalChain(w, ch, v.face)),
+              { col: "#7a1838", a0: .9, a1: .62, a2: .34, pleat: .10, fold: .16, band: .08, edge: "#c4487a", hem: false });
+  bzSheetDraw(v.cloak.map(ch => bzLocalChain(w, ch, v.face)),
+              { col: BZ.cloth, a0: .97, a1: .82, a2: .56, pleat: .085, fold: .26, band: .17, hem: true });
+}
+// the sheaths on the back the wands go into while the hat spins: four loops on a curved plate
+function bzBack(v){
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.globalAlpha = .9; ctx.strokeStyle = BZ.outline; ctx.lineWidth = 6.4;
+  ctx.beginPath(); ctx.arc(0, 0, 64, Math.PI - .62, Math.PI + .62); ctx.stroke();
+  ctx.strokeStyle = BZ.joint; ctx.lineWidth = 4.2; ctx.stroke();
+  ctx.globalAlpha = .55; ctx.strokeStyle = BOSS_TINT; ctx.lineWidth = 1; ctx.stroke();
+  ctx.globalAlpha = 1;
+  for (const a of BOSS_ARMS){
+    ctx.fillStyle = BZ.outline; ctx.beginPath(); ctx.arc(a.stow.H[0], a.stow.H[1], 4.6, 0, TAU); ctx.fill();
+    ctx.strokeStyle = BOSS_TINT; ctx.globalAlpha = .6; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(a.stow.H[0], a.stow.H[1], 4.6, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function bzSeg(p, q, w, col, a, dx, dy){
+  dx = dx || 0; dy = dy || 0;
+  ctx.globalAlpha = a == null ? 1 : a; ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(p[0] + dx, p[1] + dy); ctx.lineTo(q[0] + dx, q[1] + dy); ctx.stroke(); ctx.globalAlpha = 1;
+}
+function bzArm(a){
+  const w1 = 5, w2 = 4.2;
+  bzSeg(a.S, a.E, w1 + 7, BOSS_TINT, .10); bzSeg(a.E, a.H, w2 + 7, BOSS_TINT, .10);
+  bzSeg(a.S, a.E, w1 + 2.4, BZ.outline); bzSeg(a.E, a.H, w2 + 2.4, BZ.outline);
+  bzSeg(a.S, a.E, w1 + 2.4, BOSS_TINT, .35 + .25*a.w);
+  bzSeg(a.S, a.E, w1, BZ.arm); bzSeg(a.E, a.H, w2, BZ.arm);
+  bzSeg(a.S, a.E, w1*.3, BZ.armLit, .75, -.8, -.9); bzSeg(a.E, a.H, w2*.3, BZ.armLit, .75, -.7, -.8);
+  ctx.fillStyle = BZ.joint; ctx.strokeStyle = BOSS_TINT; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.arc(a.E[0], a.E[1], w1*.95, 0, TAU); ctx.fill(); ctx.globalAlpha = .85; ctx.stroke(); ctx.globalAlpha = 1;
+  bzSeg(a.H, a.T, 3.8, BZ.outline); bzSeg(a.H, a.T, 2.4, "#c8b48a");
+  ctx.fillStyle = BZ.joint; ctx.beginPath(); ctx.arc(a.H[0], a.H[1], w2*1.05, 0, TAU); ctx.fill();
+  ctx.strokeStyle = BOSS_TINT; ctx.globalAlpha = .6; ctx.stroke(); ctx.globalAlpha = 1;
+}
+function bzTip(a, color, k){
+  if (a.w < .5) return;
+  const x = a.T[0], y = a.T[1];
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  bzGlow(x, y, 1.5 + k*4.5, 5 + k*15, color, .55 + .4*k);
+  bzGlow(x, y, 1.2 + k*1.6, 1.5, "#ffffff", .9);
+  ctx.globalAlpha = .55; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y, 4 + k*9, -Math.PI/2, -Math.PI/2 + TAU*k); ctx.stroke();
+  ctx.restore();
+}
+function bzCone(dx, dy){
+  const cl = BZ.coneLen;
+  ctx.beginPath(); ctx.arc(2.5 + dx, dy, 7.2, -Math.PI*.5, Math.PI*.5);
+  ctx.quadraticCurveTo(-5 + dx, 6.4 + dy, -cl + dx, dy);
+  ctx.quadraticCurveTo(-5 + dx, -6.4 + dy, 2.5 + dx, -7.2 + dy); ctx.closePath();
+}
+/* The hat. The cone turns with the hat; the ring of six stones on the brim turns
+   with it and a little more, and comes to rest with the two chosen stones under
+   the two reading marks. st = { hat, ring, ringv, spin, lockK, wake, fuseK, col[6], k[2], next, nextCol, comboCol } */
+function bzHat(w, st){
+  const s = BZ.hs, hurt = w.hurt > 0;
+  ctx.save(); ctx.scale(s, s);
+  ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.beginPath(); ctx.ellipse(1, 3, 16, 15, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(5.5, 0, 10.5, 13, 0, 0, TAU);
+  ctx.fillStyle = shade(BZ.brim, -.25); ctx.fill(); ctx.globalAlpha = .45; ctx.strokeStyle = BOSS_TINT; ctx.lineWidth = 1.3; ctx.stroke(); ctx.globalAlpha = 1;
+  bzHalo(15, hurt ? 24 : 9, BOSS_TINT, .7);
+  ctx.beginPath(); ctx.arc(0, 0, 15, 0, TAU); ctx.fillStyle = BZ.brim; ctx.fill();
+  ctx.strokeStyle = BOSS_TINT; ctx.lineWidth = 2; ctx.stroke();
+  ctx.globalAlpha = .16; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+
+  // the cone, turning
+  ctx.save(); ctx.rotate(st.hat);
+  ctx.globalAlpha = .5; ctx.fillStyle = "#05060c"; bzCone(1.6, 2.8); ctx.fill(); ctx.globalAlpha = 1;
+  bzCone(0, 0); ctx.fillStyle = hurt ? "#ff7d89" : BZ.cone; ctx.fill(); ctx.strokeStyle = BOSS_TINT; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.save(); bzCone(0, 0); ctx.clip(); ctx.globalAlpha = .55; ctx.fillStyle = BZ.lit;
+  ctx.beginPath(); ctx.moveTo(12, -10); ctx.quadraticCurveTo(-4, -8.4, -18, -1.4); ctx.lineTo(-18, -4); ctx.lineTo(12, -4); ctx.closePath(); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1;
+  ctx.globalAlpha = .55; ctx.strokeStyle = "#0a0d16"; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.arc(2.5, 0, 7.2, -Math.PI*.38, Math.PI*.38); ctx.stroke(); ctx.globalAlpha = 1;
+  // the cone tip burns in the colour of whatever fires first (or of the fused spell)
+  const tx = -BZ.coneLen + .8, tc = st.nextCol || st.next;
+  if (tc){
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    bzGlow(tx, 0, 1.8, 5.5, tc, .85); bzGlow(tx, 0, .9, .6, "#ffffff", 1); ctx.restore();
+  } else { ctx.fillStyle = BOSS_TINT; ctx.globalAlpha = .9; ctx.beginPath(); ctx.arc(tx, 0, 1.9, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; }
+  ctx.restore();
+
+  // the reading marks: two small wedges on the brim, where a stone must sit to count
+  for (const sg of [-1, 1]){
+    const a = sg * 60 * D2R, ca = COS(a), sa = SIN(a);
+    const lit = .35 + .5 * st.lockK + .3 * st.wake * (.5 + .5 * SIN(w.view.t * 40));
+    ctx.globalAlpha = Math.min(1, lit); ctx.fillStyle = BOSS_TINT;
+    ctx.beginPath();
+    ctx.moveTo(ca * 16.9, sa * 16.9);
+    ctx.lineTo(ca * 20.8 - sa * 2.2, sa * 20.8 + ca * 2.2);
+    ctx.lineTo(ca * 20.8 + sa * 2.2, sa * 20.8 - ca * 2.2);
+    ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+  }
+  // the ring of stones
+  const R = 14.2, spin = st.spin, sm = Math.min(.55, Math.abs(st.ringv) * .028) * spin;
+  for (let j = 0; j < 6; j++){
+    const lock = j === 0 || j === 2;
+    const ang = st.ring + (-60 + 60 * j) * D2R;
+    const c = st.col[j];
+    const lk = lock ? st.lockK : 0;
+    const live = lock && lk > .5 && !spin;
+    const k = live ? st.k[j === 0 ? 0 : 1] : 0;
+    const wob = lock && st.wake > 0 ? SIN(w.view.t * 55 + j) * .5 * st.wake : 0;
+    const x = COS(ang) * (R + wob), y = SIN(ang) * (R + wob);
+    const r = spin ? 3.5 + 1.2 * lk : (lock ? 2.9 + 1.9 * lk : 2.9);
+    if (sm > .03){                                   // motion smear: the stone leaves a comet's tail behind it
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+      const dir = st.ringv > 0 ? -1 : 1;
+      ctx.globalAlpha = .5; ctx.strokeStyle = c; ctx.lineWidth = r * 1.5;
+      ctx.beginPath(); ctx.arc(0, 0, R, ang, ang + dir * sm * 2.4, dir < 0); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = "#12060c"; ctx.beginPath(); ctx.arc(x, y, r + 1.6, 0, TAU); ctx.fill();
+    ctx.strokeStyle = live ? "#ffffff" : BOSS_TINT; ctx.globalAlpha = live ? .75 : .5; ctx.lineWidth = 1; ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    bzGlow(x, y, r * .8, live ? 4 + 9 * k : 2.5 + 3 * spin + 5 * lk, c, live ? .45 + .45 * k : .2 + .3 * spin + .3 * lk);
+    ctx.restore();
+    ctx.globalAlpha = live || spin ? 1 : .55 + .45 * lk; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(255,255,255," + (live ? .35 + .6 * k : .15 + .3 * spin + .3 * lk) + ")";
+    ctx.beginPath(); ctx.arc(x - r * .25, y - r * .25, r * .38, 0, TAU); ctx.fill();
+    if (live){
+      ctx.globalAlpha = .28; ctx.strokeStyle = c; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(x, y, r + 3.3, 0, TAU); ctx.stroke();
+      ctx.globalAlpha = .95; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(x, y, r + 3.3, -Math.PI/2, -Math.PI/2 + TAU * k); ctx.stroke(); ctx.globalAlpha = 1;
+    } else if (lock && lk > 0 && lk < 1){            // just locking: a ring snaps shut round it
+      ctx.globalAlpha = .9 * (1 - lk * .6); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(x, y, r + 3.3 + (1 - lk) * 6, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+  // the two stones are joined while their spells are being fused
+  if (st.fuseK > 0){
+    const a0 = -60 * D2R, a1 = 60 * D2R;
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+    ctx.strokeStyle = st.comboCol; ctx.globalAlpha = .35 + .5 * st.fuseK; ctx.lineWidth = 1 + 2.2 * st.fuseK;
+    ctx.beginPath(); ctx.moveTo(COS(a0) * R, SIN(a0) * R); ctx.quadraticCurveTo(R * 1.15, 0, COS(a1) * R, SIN(a1) * R); ctx.stroke();
+    ctx.globalAlpha = .9; ctx.strokeStyle = "#fff"; ctx.lineWidth = .8;
+    ctx.beginPath(); ctx.moveTo(COS(a0) * R, SIN(a0) * R); ctx.quadraticCurveTo(R * 1.15, 0, COS(a1) * R, SIN(a1) * R); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+// the whole boss for one frame. The caller has translated to the boss and rotated
+// to its DRAWN facing (the spring-smoothed one), exactly as drawWizard does for
+// everyone else.
+function drawBossBody(w){
+  const B = w.boss, v = bzView(w);
+  const intro = B.phase === "intro" ? clamp(1 - B.pt/1.3, 0, 1) : 1;
+  const flashK = clamp(w.hurt, 0, 1);
+  const F = B.fuse, fk = F ? (F.stage === 0 ? F.t / BOSS_FUSE_CHARGE : 1) : 0;
+  const arms = [];
+  for (let i = 0; i < 4; i++){
+    const T = bzTarget(w, i, v.face), a = v.arms[i];
+    arms.push({ i, id: T.id, S: T.S, w: T.w, E: a.E, H: a.H,
+                T: [a.H[0] + COS(a.a)*BOSS_WAND, a.H[1] + SIN(a.a)*BOSS_WAND] });
+  }
+  const armK = i => {
+    const A = B.arms[i];
+    if (!bossLive(B, i) || A.st === 3 || A.st === 5) return 0;
+    if (A.st === 0) return clamp(A.t / A.dur, 0, 1);
+    if (A.st === 4) return fk;
+    return 1;
+  };
+  const spinning = B.phase === "spin";
+  const src = spinning && B.spinK < .48 ? B.prev : B.slots;
+  const st = { hat: v.hat, ring: v.ring, ringv: v.ringv, spin: spinning ? 1 : 0,
+               lockK: spinning ? clamp((B.spinK - .8) / .2, 0, 1) : (B.phase === "intro" ? 0 : 1),
+               wake: B.wake, fuseK: fk, comboCol: B.combo ? B.combo.color : "#fff",
+               col: src.map(s => SPELLS[s].color),
+               k: [armK(B.pair === 0 ? 0 : 3), armK(B.pair === 0 ? 1 : 2)],
+               next: B.next >= 0 ? SPELLS[B.next].color : null, nextCol: B.nextCol };
+  const breath = 1 + .014 * SIN(v.t * 3.1 + v.ph);
+  ctx.save();
+  ctx.scale(BOSS_SCALE * breath, BOSS_SCALE * breath);
+  if (intro < 1){ const sc = .55 + .45*intro; ctx.scale(sc, sc); ctx.globalAlpha = .25 + .75*intro; }
+  ctx.save(); ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(4, 6, 50, 46, 0, 0, TAU); ctx.fill(); ctx.restore();
+  bzCloakDraw(w, v);
+  bzBack(v);
+  arms.slice().sort((a, b) => a.w - b.w).forEach(bzArm);
+  bzHat(w, st);
+  for (const a of arms){
+    const A = B.arms[a.i];
+    if (!bossLive(B, a.i) || A.st === 3) continue;
+    bzTip(a, SPELLS[A.spell].color, A.spell === 4 && A.st === 1 ? 1 : armK(a.i));
+  }
+  {
+    // the mirror: light gathers between the two front hands as they clap, and a thread of it is drawn out between them as they fling apart
+    const rcK = Math.min(B.arms[0].rc, B.arms[2].rc), rwK = Math.min(B.arms[0].rw, B.arms[2].rw);
+    if (rcK > .03){
+      const h0 = arms[0].H, h2 = arms[2].H, t0 = arms[0].T, t2 = arms[2].T;
+      const mx = (h0[0] + h2[0]) / 2, my = (h0[1] + h2[1]) / 2, g = rcK * (1 - rwK * .75);
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+      if (g > .03){
+        bzGlow(mx + 8, my, 3 + 5 * g, 8 + 16 * g, "#8fe9ff", .3 + .35 * g);
+        bzGlow(mx + 8, my, 1.6 + 1.4 * g, 2.5, "#ffffff", .8);
+      }
+      if (rwK > .02){
+        ctx.strokeStyle = "#bff4ff"; ctx.globalAlpha = .3 + .5 * rwK; ctx.lineWidth = 2.6 + 3 * rwK;
+        ctx.beginPath(); ctx.moveTo(h0[0], h0[1]); ctx.lineTo(h2[0], h2[1]); ctx.stroke();
+        ctx.strokeStyle = "#fff"; ctx.globalAlpha = .9 * rwK; ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      for (const t of [t0, t2]) bzGlow(t[0], t[1], 1.5 + 2 * rcK, 6 + 10 * rcK, "#8fe9ff", .5 * rcK);
+      ctx.restore();
+    }
+  }
+  if (F){                                   // the two wands meet: light gathers between them
+    const l = arms.filter(a => bossLive(B, a.i));
+    if (l.length === 2){
+      const c = B.combo.color, mx = (l[0].T[0] + l[1].T[0]) / 2, my = (l[0].T[1] + l[1].T[1]) / 2;
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      strokeJag(jag(l[0].T[0], l[0].T[1], l[1].T[0], l[1].T[1], 5, 4 + 6 * fk), c, 1 + 2 * fk, .5 + .4 * fk);
+      strokeJag(jag(l[0].T[0], l[0].T[1], l[1].T[0], l[1].T[1], 5, 2 + 3 * fk), "#fff", 1, .7);
+      bzGlow(mx, my, 2 + 8 * fk, 8 + 22 * fk, c, .8);
+      bzGlow(mx, my, 1.5 + 3 * fk, 2, "#ffffff", .95);
+      ctx.restore();
+    }
+  }
+  if (flashK > .02){
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = flashK*.55; ctx.fillStyle = flashK > .55 ? "#ffffff" : "#ff4d5e";
+    ctx.beginPath(); ctx.arc(0, 0, BZ_BRIM, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+/* The star. A fused spell is announced by a large eight-pointed flash round the boss:
+   four long spikes, four short, a bloom at the heart and two rings, all in the colour
+   the new spell will be. World-space and unrotated: it does not turn with the boss. */
+function bzStar(w, star){
+  const t = star.t, T = .85;
+  if (t > T) return;
+  const grow = 1 - Math.pow(1 - Math.min(1, t / .26), 3);
+  const fade = t < .3 ? 1 : Math.max(0, 1 - (t - .3) / (T - .3));
+  const R = 175 * (.3 + .7 * grow);
+  ctx.save(); ctx.globalCompositeOperation = "lighter";      // (the caller has already moved to the boss)
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R * .6);
+  g.addColorStop(0, rgba("#ffffff", .95 * fade)); g.addColorStop(.3, rgba(star.color, .6 * fade)); g.addColorStop(1, rgba(star.color, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R * .6, 0, TAU); ctx.fill();
+  const rot = -.4 + t * 1.1;
+  for (let k = 0; k < 8; k++){
+    const long = !(k & 1), len = (long ? 1 : .52) * R, wd = (long ? .085 : .06) * R;
+    ctx.save(); ctx.rotate(rot + k * Math.PI / 4);
+    const gg = ctx.createLinearGradient(0, 0, len, 0);
+    gg.addColorStop(0, rgba("#ffffff", .95 * fade)); gg.addColorStop(.35, rgba(star.color, .65 * fade)); gg.addColorStop(1, rgba(star.color, 0));
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.moveTo(0, -wd); ctx.lineTo(len, 0); ctx.lineTo(0, wd); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.lineWidth = 1 + 3 * (1 - Math.min(1, t / T));
+  ctx.strokeStyle = rgba(star.color, .85 * fade); ctx.beginPath(); ctx.arc(0, 0, R * (.2 + .8 * grow), 0, TAU); ctx.stroke();
+  ctx.lineWidth = 1.4; ctx.strokeStyle = rgba("#ffffff", .6 * fade); ctx.beginPath(); ctx.arc(0, 0, R * .45 * grow + 8, 0, TAU); ctx.stroke();
+  ctx.restore();
+}
+function drawBossWizard(w){
+  const v = bzView(w);
+  ctx.save();
+  ctx.translate(w.x, w.y);
+  drawWardArc(w, w.facing, WARD_R + 26);
+  ctx.save();
+  ctx.rotate(v.face);
+  drawBossBody(w);
+  ctx.restore();
+  if (v.star) bzStar(w, v.star);
+  ctx.restore();
+}
+// the boss's health, big, across the top of the arena
+function drawBossBar(){
+  const b = wizards.find(q => q.boss && !q.dead);
+  if (!b) return;
+  const bw = 380, bh = 9, x = (W - bw)/2, y = 18;
+  const k = clamp(b.hp / b.hpMax, 0, 1);
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.font = "700 13px Cinzel, Georgia, serif";
+  ctx.fillStyle = BOSS_TINT; ctx.globalAlpha = .95;
+  ctx.fillText("THE ALCHEMIST", W/2, y - 4);
+  ctx.globalAlpha = .55; ctx.fillStyle = "#0a0410"; ctx.fillRect(x - 2, y - 2, bw + 4, bh + 4);
+  ctx.globalAlpha = 1; ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(x, y, bw, bh);
+  ctx.fillStyle = b.hp < b.hpMax*.4 ? "#ff4d5e" : BOSS_TINT; ctx.fillRect(x, y, bw*k, bh);
+  ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1; ctx.strokeRect(x - .5, y - .5, bw + 1, bh + 1);
+  // and under it, its mana: the wands run on it, and when it is low they hold
+  const my = y + bh + 5, mh = 5, mk = clamp(b.mana / 100, 0, 1);
+  const dry = b.boss && b.boss.arms.some(A => A.dry > .05);
+  ctx.globalAlpha = .55; ctx.fillStyle = "#0a0410"; ctx.fillRect(x - 2, my - 2, bw + 4, mh + 4);
+  ctx.globalAlpha = 1; ctx.fillStyle = "rgba(255,255,255,.1)"; ctx.fillRect(x, my, bw, mh);
+  const mg = ctx.createLinearGradient(x, 0, x + bw, 0);
+  mg.addColorStop(0, "#3f7fff"); mg.addColorStop(1, "#5aa9ff");
+  ctx.fillStyle = dry ? "#8a9bc4" : mg; ctx.fillRect(x, my, bw*mk, mh);
+  ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.strokeRect(x - .5, my - .5, bw + 1, mh + 1);
+  ctx.restore();
+}
+
+
+// the wall held in front of a wizard. Same arc that blocks; `R` is how far out it stands
+function drawWardArc(w, a, R){
+  if (w.ward > 0){
+    const k = w.ward / Math.max(1,w.wardMax);
+    ctx.save();
+    ctx.rotate(a);
+    ctx.strokeStyle = byId.ward.color;
+    ctx.shadowColor = byId.ward.color; ctx.shadowBlur = 18;
+    // the drawn arc is the arc that blocks: same radius, same half-angle
+    const half = Math.acos(WARD_COS);
+    ctx.globalAlpha = .35 + k*.5;
+    ctx.lineWidth = 3 + k*4;
+    ctx.beginPath(); ctx.arc(0, 0, R, -half, half); ctx.stroke();
+    ctx.globalAlpha = .18;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 0, R - 6, -half, half); ctx.stroke();
+    // motes running the length of the wall, thinning out as it is spent
+    const motes = 5 + Math.round(k*5);
+    const spin = performance.now()/1100;
+    ctx.shadowBlur = 14;
+    for (let i = 0; i < motes; i++){
+      const f = ((i/motes) + spin) % 1;
+      const ang = -half + f*half*2;
+      const rr = (R - 3) + SIN(spin*7 + i*1.7)*3.5;
+      ctx.globalAlpha = (.35 + k*.6) * SIN(f*Math.PI);
+      ctx.fillStyle = i % 4 ? byId.ward.color : "#dcffec";
+      ctx.beginPath();
+      ctx.arc(COS(ang)*rr, SIN(ang)*rr, 1.3 + k*1.7, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 function drawWizard(w){
+  if (w.boss){ drawBossWizard(w); return; }
   const a = w.facing;
   const tint = w.tint;
   /* The wizard wears their rank, not their side. Hat, brim and robe all come
@@ -3319,37 +5229,7 @@ function drawWizard(w){
     ctx.restore();
   }
 
-  // ward
-  if (w.ward > 0){
-    const k = w.ward / Math.max(1,w.wardMax);
-    ctx.save();
-    ctx.rotate(a);
-    ctx.strokeStyle = byId.ward.color;
-    ctx.shadowColor = byId.ward.color; ctx.shadowBlur = 18;
-    // the drawn arc is the arc that blocks: same radius, same half-angle
-    const half = Math.acos(WARD_COS);
-    ctx.globalAlpha = .35 + k*.5;
-    ctx.lineWidth = 3 + k*4;
-    ctx.beginPath(); ctx.arc(0, 0, WARD_R, -half, half); ctx.stroke();
-    ctx.globalAlpha = .18;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(0, 0, WARD_R - 6, -half, half); ctx.stroke();
-    // motes running the length of the wall, thinning out as it is spent
-    const motes = 5 + Math.round(k*5);
-    const spin = performance.now()/1100;
-    ctx.shadowBlur = 14;
-    for (let i = 0; i < motes; i++){
-      const f = ((i/motes) + spin) % 1;
-      const ang = -half + f*half*2;
-      const rr = (WARD_R - 3) + SIN(spin*7 + i*1.7)*3.5;
-      ctx.globalAlpha = (.35 + k*.6) * SIN(f*Math.PI);
-      ctx.fillStyle = i % 4 ? byId.ward.color : "#dcffec";
-      ctx.beginPath();
-      ctx.arc(COS(ang)*rr, SIN(ang)*rr, 1.3 + k*1.7, 0, TAU);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
+  drawWardArc(w, a, WARD_R);
 
   ctx.rotate(a);
   const flashK = clamp(w.hurt, 0, 1);
@@ -3585,8 +5465,10 @@ function syncHUD(){
     const alive = Math.max(1, livingOf(1).length);
     const party = seats.length > 1
       ? ` · ${livingOf(0).length}/${seats.length} standing` : "";
+    const boss = wizards.some(q => q.boss && !q.dead);
     el("roundLabel").textContent =
-      `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ${alive} ${alive === 1 ? "rival" : "rivals"}${party}`;
+      `${Math.round(runScore).toLocaleString()} pts · Wave ${Math.max(1, waveNo)} · ` +
+      (boss ? "BOSS" : `${alive} ${alive === 1 ? "rival" : "rivals"}`) + party;
   } else {
     el("roundLabel").textContent = matchCfg.mode === "lives"
       ? `Lives · ${matchCfg.lives} each`
@@ -3596,7 +5478,7 @@ function syncHUD(){
 }
 
 /* ---------------------------------------------------------- music */
-const bgm = el("bgm"), lobbyBgm = el("lobbyBgm"), bgmBtn = el("bgmBtn");
+const bgm = el("bgm"), lobbyBgm = el("lobbyBgm"), bossBgm = el("bossBgm"), bgmBtn = el("bgmBtn");
 const beamSfx = { you: el("sfxBeamA"), foe: el("sfxBeamB") };
 const chargeSfx = { you: el("sfxChargeA"), foe: el("sfxChargeB") };
 const clashSfx = el("sfxClash");
@@ -3614,7 +5496,7 @@ function stopSfx(a){
 }
 function chargeSound(w, on){
   const a = w.friendly ? chargeSfx.you : chargeSfx.foe;
-  if (on) playSfx(a, w.friendly ? 0.6 : 0.45); else stopSfx(a);
+  if (on){ logCast("charge", w, w.friendly || w.boss ? 0.6 : 0.45); playSfx(a, w.friendly || w.boss ? 0.6 : 0.45); } else stopSfx(a);
 }
 function clashSound(on){
   if (on) playSfx(clashSfx, 0.7); else stopSfx(clashSfx);
@@ -3645,26 +5527,111 @@ function fromPool(pool, key, vol, jitter){
 function castSound(w, id){
   const pool = castSfx[id];
   if (!pool) return;
-  fromPool(pool, id, w.friendly ? 0.55 : 0.4, pool.length < 3);
+  const vol = w.friendly || w.boss ? 0.55 : 0.4;          // the Alchemist's own spells sound as yours do
+  logCast("cast:" + id, w, vol);
+  fromPool(pool, id, vol, pool.length < 3);
+}
+// (a short list of the spell sounds asked for, by name and by whom, for the test rig and nothing else)
+function logCast(name, w, vol){
+  sfxLog.push({ name, vol, boss: !!w.boss });
+  if (sfxLog.length > 48) sfxLog.shift();
 }
 function hitSound(w, amount){
   const big = amount >= 14;
   fromPool(big ? hitSfx.big : hitSfx.small, big ? "hitB" : "hitS",
            (big ? 0.7 : 0.5) * (w.friendly ? 1 : 0.85), true);
 }
+const PLAYER_DASH_VOL = 0.5;
+const BOSS_DASH_VOL = PLAYER_DASH_VOL * 0.8;    // 20% quieter than the player's own dash
 function dashSound(w){
   if (dashS) { try { dashS.playbackRate = 1 + vrnd(-.06,.06); } catch (e) {} }
-  playSfx(dashS, w.friendly ? 0.5 : 0.34);
+  const vol = w.friendly ? PLAYER_DASH_VOL : w.boss ? BOSS_DASH_VOL : 0.34;
+  logCast("dash", w, vol);
+  playSfx(dashS, vol);
 }
+/* One-off cues for the boss: the hat locking in and turning, the mirror, the fused orb, and the
+   alert that comes before it. Each is logged by name as well as played (a short list, for the
+   test rig and nothing else), so the rig can tell a cue was asked for even where there is nothing
+   to play it.
+
+   A cue can be shaped as it plays. `env` is { in, out, tail }: seconds to fade up from nothing at
+   the start, seconds to fade down when it is told to stop (fadeOutCue), and seconds of the file's
+   own end to fade down over, so it never ends on a step. audioTick runs the envelopes, on real
+   time, like the music; nothing in the simulation ever reads them. */
+const lockSfx = [el("sfxLockin"), el("sfxLockin3")];
+const alertSfx = el("sfxBossAlert"), reflectSfx = el("sfxReflect"), reflect3Sfx = el("sfxReflect3");
+const hexsparkSfx = el("sfxHexspark"), spinnerSfx = el("sfxSpinner"), slotSfx = el("sfxSlot");
+const sparkriveSfx = el("sfxSparkrive");
+const hexriveSfx = el("sfxHexrive"), prismlanceSfx = el("sfxPrismlance");
+const sfxLog = [];
+const fades = [];                                   // the cues that are being shaped right now
+const easeIO = k => k * k * (3 - 2 * k);            // a smooth start and a smooth stop
+function cue(name, a, vol, env){
+  sfxLog.push({ name, vol });
+  if (sfxLog.length > 48) sfxLog.shift();
+  for (let i = fades.length - 1; i >= 0; i--) if (fades[i].name === name) fades.splice(i, 1);    // played again: the old envelope is done
+  if (env) fades.push({ name, a, vol, t: 0, inT: env.in || 0, outT: env.out || 0, tail: env.tail || 0, out: -1, k: env.in ? 0 : 1 });
+  if (!a || muted) return;
+  a.volume = env && env.in ? 0 : vol;
+  try { a.currentTime = 0; } catch (e) {}
+  const p = a.play();
+  if (p && p.catch) p.catch(() => {});
+}
+// let a shaped cue go: it fades down over `secs` (or the `out` it was given) and then stops
+function fadeOutCue(name, secs){
+  for (const f of fades) if (f.name === name && f.out < 0){ f.out = 0; if (secs > 0) f.outT = secs; if (!(f.outT > 0)) f.outT = .3; }
+}
+function fadeTick(dt){
+  for (let i = fades.length - 1; i >= 0; i--){
+    const f = fades[i], a = f.a;
+    f.t += dt;
+    let k = 1;
+    if (f.inT > 0) k *= easeIO(Math.min(1, f.t / f.inT));
+    if (f.out >= 0){ f.out += dt; k *= easeIO(Math.max(0, 1 - f.out / f.outT)); }
+    const len = a && a.duration > 0 ? a.duration : 0;
+    if (f.tail > 0 && len > 0) k *= easeIO(Math.max(0, Math.min(1, (len - f.t) / f.tail)));
+    f.k = k;
+    if (a && !muted) a.volume = Math.max(0, Math.min(1, f.vol * k));
+    if ((f.out >= 0 && f.out >= f.outT) || (len > 0 && f.t >= len + .05) || (a && a.ended)){ stopSfx(a); fades.splice(i, 1); }
+  }
+}
+// the hat has stopped and the two spells have locked in: two sounds at once, one sharp and one long
+function lockSound(){
+  cue("lockin", lockSfx[0], .6);
+  cue("lockin3", lockSfx[1], .55);
+}
+// the hat whirls: a steady whirr that comes up as it starts and goes down as it stops
+const SPIN_SND = { vol: .6, in: .35, out: .45 };
+// ...and under it the slot-machine reels: they start at once, run for as long as the hat turns, and are stopped dead (a few
+// hundredths of a second so it does not click) the moment the spells lock in, where the lock-in sounds take over
+const SLOT_SND = { vol: .55, out: .06 };
+function spinSound(on){
+  if (on){
+    cue("spinner", spinnerSfx, SPIN_SND.vol, { in: SPIN_SND.in, out: SPIN_SND.out, tail: .4 });
+    cue("slotspin", slotSfx, SLOT_SND.vol, { out: SLOT_SND.out, tail: .3 });
+  } else {
+    fadeOutCue("spinner", SPIN_SND.out);
+    fadeOutCue("slotspin", SLOT_SND.out);
+  }
+}
+// the mirror: the raise (the hit lands as the hands come apart) and the beam going back out are two files, together
+const REFLECT_SND = { vol: .6, vol3: .5, out: .5 };
+const HEXSPARK_VOL = .6;           // the fused orb (Sparkwheel) as it leaves the wand
+const SPARKRIVE_VOL = .6;          // the needle volley (Needle Rain) as it leaves the wand
+const HEXRIVE_VOL = .6;            // the missile stream (Hexswarm) as it starts
+const PRISMLANCE_VOL = .6;         // the Prism Lance the instant it fires
+const PRISMLANCE_FADE = .12;       // how fast it is cut off when the lance ends — sharp, not a ring-out
 let muted = false;
-if (bgm) bgm.volume = 0;          // both tracks start silent; the crossfade raises one
+if (bgm) bgm.volume = 0;          // all three tracks start silent; the crossfade raises one
 if (lobbyBgm) lobbyBgm.volume = 0;
+if (bossBgm) bossBgm.volume = 0;
 function beamSound(w, on){
   const a = w.friendly ? beamSfx.you : beamSfx.foe;
   if (!a) return;
   if (on){
+    logCast("beam", w, w.friendly || w.boss ? 0.6 : 0.42);
     if (muted) return;
-    a.volume = w.friendly ? 0.6 : 0.42;
+    a.volume = w.friendly || w.boss ? 0.6 : 0.42;
     try { a.currentTime = 0; } catch (e) {}
     const p = a.play();
     if (p && p.catch) p.catch(() => {});
@@ -3679,6 +5646,9 @@ function hushBeams(){
   stopSfx(chargeSfx.you); stopSfx(chargeSfx.foe);
   stopSfx(clashSfx);
   for (const k in castSfx) for (const a of castSfx[k]) stopSfx(a);
+  for (const a of lockSfx.concat([alertSfx, reflectSfx, reflect3Sfx, hexsparkSfx, spinnerSfx, slotSfx, sparkriveSfx, hexriveSfx, prismlanceSfx])) stopSfx(a);
+  fades.length = 0;
+  alertQ.state = 0; duckTo = 1; musicDuck = 1;
 }
 /* Two tracks, one at a time: the lobby waits on the menu, the battle theme takes
  * over the moment a match starts, and each hands over by fading rather than
@@ -3686,22 +5656,63 @@ function hushBeams(){
  * their volume that moves — restarting an <audio> mid-fade clicks, and browsers
  * will not begin playback at all until the page has been touched.
  */
-const MUSIC_VOL = { lobby: 0.38, battle: 0.42 };
+const MUSIC_VOL = { lobby: 0.38, battle: 0.42, boss: 0.42 };
 const FADE_MS = 900;
+/* The boss alert. When the last ordinary wave falls (or the boss test begins) the music is
+   pulled down to a third of its level, the alert plays over it, and when the alert is done the
+   music comes back up slowly. It is driven from the frame loop (audioTick), on real time, and
+   nothing in the simulation ever reads it. */
+const BOSS_ALERT_DUCK = .33;       // the music's level under the alert, as a fraction of its own
+const BOSS_ALERT_LEAD = .6;        // seconds the music takes to go down before the alert begins
+const BOSS_ALERT_VOL = .7;
+const BOSS_ALERT_LEN = 6.9;        // how long it plays, if the browser will not say
+const BOSS_ALERT_DOWN = .5, BOSS_ALERT_UP = 1.8;   // seconds to fade the music down, and back up
+const BOSS_ALERT_IN = .6, BOSS_ALERT_OUT = 1.4;    // the alert itself fades up from nothing, and down over the end of the file
+const BOSS_ALERT_OVERLAP = .5;     // the music starts back up this long before the alert has quite finished
+let musicDuck = 1, duckTo = 1;
+const alertQ = { state: 0, t: 0 };   // 0 idle, 1 the music is going down, 2 the alert is playing
+function bossAlert(){
+  if (alertQ.state || muted || !musicStarted) return;
+  if (alertSfx && (alertSfx.error || alertSfx.networkState === 3)) return;     // the file did not load: no dip in the music for a sound that will not come
+  alertQ.state = 1; alertQ.t = 0; duckTo = BOSS_ALERT_DUCK;
+}
+function applyDuck(){
+  if (fadeTimer) return;                 // a crossfade is under way: it reads musicDuck itself
+  const a = trackEl(musicTrack);
+  if (a && !muted && musicStarted) a.volume = MUSIC_VOL[musicTrack] * musicDuck;
+}
+function audioTick(dt){
+  dt = Math.min(Math.max(dt, 0), .1);
+  if (alertQ.state === 1){
+    alertQ.t += dt;
+    if (alertQ.t >= BOSS_ALERT_LEAD){ alertQ.state = 2; alertQ.t = 0; cue("bossalert", alertSfx, BOSS_ALERT_VOL, { in: BOSS_ALERT_IN, tail: BOSS_ALERT_OUT }); }
+  } else if (alertQ.state === 2){
+    alertQ.t += dt;
+    const len = alertSfx && alertSfx.duration > 0 ? alertSfx.duration : BOSS_ALERT_LEN;
+    if (alertQ.t >= len - BOSS_ALERT_OVERLAP) duckTo = 1;          // the music comes back under the tail of the alert
+    if (alertQ.t >= len + .1 || (alertQ.t > 1 && alertSfx && alertSfx.ended)){ alertQ.state = 0; duckTo = 1; }
+  }
+  fadeTick(dt);
+  if (musicDuck !== duckTo){
+    const step = (1 - BOSS_ALERT_DUCK) * dt / (duckTo < musicDuck ? BOSS_ALERT_DOWN : BOSS_ALERT_UP);
+    musicDuck = duckTo < musicDuck ? Math.max(duckTo, musicDuck - step) : Math.min(duckTo, musicDuck + step);
+    applyDuck();
+  }
+}
 let musicTrack = "lobby";        // which one should be audible right now
 let musicStarted = false;        // have we been allowed to play at all yet?
 let fadeTimer = 0;
-function trackEl(which){ return which === "lobby" ? lobbyBgm : bgm; }
+function trackEl(which){ return which === "lobby" ? lobbyBgm : which === "boss" ? bossBgm : bgm; }
 function fadeMusic(){
   if (typeof clearInterval === "function" && fadeTimer) clearInterval(fadeTimer);
   if (typeof setInterval !== "function") return;
   const stepMs = 50, step = stepMs / FADE_MS;
   fadeTimer = setInterval(() => {
     let settled = true;
-    for (const which of ["lobby", "battle"]){
+    for (const which of ["lobby", "battle", "boss"]){
       const a = trackEl(which);
       if (!a) continue;
-      const want = (muted || !musicStarted || which !== musicTrack) ? 0 : MUSIC_VOL[which];
+      const want = (muted || !musicStarted || which !== musicTrack) ? 0 : MUSIC_VOL[which] * musicDuck;
       const now = a.volume;
       if (Math.abs(now - want) < 0.02){
         a.volume = want;
@@ -3745,8 +5756,10 @@ function toggleMusic(){
   if (muted){
     if (bgm) bgm.pause();
     if (lobbyBgm) lobbyBgm.pause();
+    if (bossBgm) bossBgm.pause();
     if (bgm) bgm.volume = 0;
     if (lobbyBgm) lobbyBgm.volume = 0;
+    if (bossBgm) bossBgm.volume = 0;
     if (fadeTimer && typeof clearInterval === "function"){ clearInterval(fadeTimer); fadeTimer = 0; }
     hushBeams();
   } else {
@@ -3780,7 +5793,7 @@ let seatLevels = null;
 // Host match settings, applied identically on every client from the start
 // message. The relay sanitises them server-side too, so the lockstep sim can
 // trust they never diverge.
-let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random", coop: 0 };
+let matchCfg = { roundsToWin: 2, mode: "rounds", lives: 3, mapSize: "medium", fog: 0, mapPreset: "random", coop: 0, boss: 0 };
 // Offline play (solo duel or escalation) gets the default world plus whatever
 // arena the player picked in the solo panel. Multiplayer opts arrive from the
 // relay's start message and are never carried into solo: the only thing that
@@ -3797,12 +5810,16 @@ function sanitizeMatchCfg(o){
     mapSize: ["small","medium","large"].includes(o.mapSize) ? o.mapSize : "medium",
     fog: o.fog ? 1 : 0,
     mapPreset: ["random","arena","gauntlet","crossfire","forest","castle"].includes(o.mapPreset) ? o.mapPreset : "random",
-    coop: o.coop ? 1 : 0
+    coop: o.coop ? 1 : 0,
+    // A boss rematch is co-op by definition (there is no solo slot in a hosted
+    // room) — sanitised so it can never arrive true without coop, whatever a
+    // stray client sends.
+    boss: (o.coop && o.boss) ? 1 : 0
   };
 }
 // The host panel UI state (what the host is choosing in the lobby).
 let hostRounds = 2, hostMode = "rounds", hostLives = 3,
-    hostMapSize = "medium", hostFog = 0, hostMapPreset = "random", hostCoop = 0;
+    hostMapSize = "medium", hostFog = 0, hostMapPreset = "random", hostCoop = 0;   // 0 duel, 1 co-op survival, 2 co-op boss rematch
 // The solo panel has its own arena picker, so a solo match never silently
 // inherits a hosted room's map.
 let soloMapPreset = "random";
@@ -3941,7 +5958,8 @@ function buildRoster(){
   you = (wizards[localSeat] && wizards[localSeat].human)
       ? wizards[localSeat]
       : (wizards.find(w => w.human) || wizards[0]);
-  if (mode === "escalation"){ waveNo = 0; waveLive = false; waveGap = 1.1; }
+  if (mode === "escalation"){ waveNo = bossTest ? BOSS_AT : 0; waveLive = false; waveGap = 1.1; }
+  bossAlerted = false; alertQ.state = 0; duckTo = 1; musicDuck = 1; stopSfx(alertSfx);
   for (const w of wizards) w.target = nearestEnemy(w);
   foe = nearestEnemy(you) || wizards[1];
   buildRails();
@@ -3980,6 +5998,36 @@ function spawnEnemy(tier){
   puff(x, y, e.tint, 26);
   return e;
 }
+function spawnBoss(){
+  // same rule as spawnEnemy: nothing here may read `you`
+  const party = livingOf(0);
+  let x = W/2, y = H/2, guard = 0;
+  while (guard++ < 300){
+    x = rnd(90, W-90); y = rnd(90, H-90);
+    if (party.some(a => dist({x,y}, a) < 340)) continue;
+    if (debris.some(d => d.solid && dist({x,y}, d) < d.r + BOSS_R + 24)) continue;
+    break;
+  }
+  const e = makeWizard(x, y, false);
+  e.r = BOSS_R;
+  e.D = BOSS_D;
+  e.tier = 2;
+  e.boss = true;
+  e.hpMax = e.hp = Math.round(BOSS_D.hp * (1 + 0.6 * (coopParty() - 1)));
+  e.name = BOSS_D.name;
+  e.tint = BOSS_TINT;
+  e.team = 1;
+  e.ally = false;
+  e.spawnSafe = 1.3;
+  e.target = nearestEnemy(e);
+  if (e.target) e.facing = ATAN2(e.target.y - y, e.target.x - x);   // it arrives already looking at you
+  bossInit(e);
+  wizards.push(e);
+  rings.push({ x, y, r:10, max:150, t:0, life:.9, color:BOSS_TINT, width:3.4 });
+  rings.push({ x, y, r:6, max:90, t:0, life:.6, color:"#ffffff", width:2 });
+  puff(x, y, BOSS_TINT, 44);
+  return e;
+}
 function escTick(dt){
   survT += dt;
   runScore += dt * 5;
@@ -3990,16 +6038,48 @@ function escTick(dt){
   if (livingOf(1).length > 0) return;      // the set is still on its feet
 
   if (waveLive){                            // it just went down
+    const wasBoss = waveNo === BOSS_AT + 1;
     waveLive = false;
     waveGap = 2.4;
-    runScore += 200 * waveNo;
-    msg = { text: "Wave " + waveNo + " cleared", sub: "+" + (200*waveNo) + " points", t: 1.6, color: "#5dffab" };
+    runScore += 200 * waveNo + (wasBoss ? 1500 : 0);
+    msg = wasBoss
+      ? { text: "The Alchemist falls", sub: "+" + (200*waveNo + 1500) + " points", t: 2.2, color: BOSS_TINT }
+      : { text: "Wave " + waveNo + " cleared", sub: "+" + (200*waveNo) + " points", t: 1.6, color: "#5dffab" };
   }
+  // the boss is next: the music goes down, and the alert sounds over it (once, whether the wave before it was
+  // cleared just now or the boss test began with that wave already behind you)
+  if (waveNo === BOSS_AT && !waveLive && !bossAlerted){ bossAlerted = true; bossAlert(); }
   waveGap -= dt;
   if (waveGap > 0) return;
 
   waveNo++;
-  const comp = waveFor(waveNo - 1, coopParty());
+  if (waveNo === BOSS_AT + 1){
+    // the two Archmages were the last of the ordinary ladder for now: this wave is
+    // one wizard, and it has four wands
+    // The Alchemist is a set piece, not just another wave: the party comes to it
+    // whole. Every wizard on the party's side, human or bot, is at full health
+    // and full mana when it arrives, and a downed ally is back on its feet. This
+    // walks the whole team rather than asking who `you` is: `you` is a different
+    // wizard on every client, and the simulation may not read it.
+    for (const a of wizards){
+      if (a.team !== 0) continue;
+      if (a.dead){
+        if (!a.ally) continue;               // a downed human ends the run; it is not this loop's business
+        respawnWizard(a);
+      }
+      a.hp = a.hpMax || 100;
+      a.mana = 100;
+    }
+    spawnBoss();
+    waveLive = true;
+    unlockBoss();        // reached it — win or lose from here, it's yours to rematch from now on
+    musicFor("boss");   // the boss is on the field: the ladder music fades out and the Alchemist's theme fades in
+    msg = { text: "The Alchemist", sub: "Four wands. Two spells at a time.", t: 2.4, color: BOSS_TINT };
+    shake = Math.min(shake + 8, 14);
+    return;
+  }
+  // the boss took one slot in the count; the ladder carries on where it left off
+  const comp = waveFor(waveNo - 1 - (waveNo > BOSS_AT + 1 ? 1 : 0), coopParty());
   // A new wave is also the party's second chance: anyone who went down in the
   // last one is back on their feet for this one, at part health. Being downed
   // costs you the rest of a wave, not the whole run.
@@ -4026,6 +6106,14 @@ function onDeath(w){
     kills++;
     if (w.lastBy && w.lastBy !== w) w.lastBy.kills++;
     runScore += 100 * ((w.tier || 0) + 1);
+    if (w.boss){
+      if (w.beamOn) stopBeam(w, true);
+      for (const n of ["spinner", "slotspin", "reflect", "reflect3", "sparkrive", "hexrive", "prismlance"]) fadeOutCue(n, .35);      // whatever the boss was making goes quiet with it
+      musicFor("battle");   // the Alchemist's theme hands back to the ladder music
+      impact(w.x, w.y, 9, BOSS_TINT);
+      rings.push({ x:w.x, y:w.y, r:10, max:220, t:0, life:.9, color:BOSS_TINT, width:4 });
+      puff(w.x, w.y, "#ffffff", 40);
+    }
     // The kill heals whoever landed it, not `you` — `you` is a different wizard
     // on every client, so healing it would desync a co-op run.
     const healer = (w.lastBy && w.lastBy.ally && !w.lastBy.dead) ? w.lastBy : null;
@@ -4079,6 +6167,19 @@ function respawnWizard(w){
 // all read the same name: that was never a leaderboard, it was one
 // player's own recent runs, on the one device that played them.
 const HS_KEY = "rpw.escalation.scores";
+// Reaching the boss once (spawnBoss(), in a real ladder climb) unlocks a
+// standing "fight it again" option, in the solo menu and in a hosted room's
+// game picker alike. Same try/catch discipline as the scores above: a browser
+// with storage blocked just never unlocks it, rather than throwing.
+const BOSS_UNLOCK_KEY = "rpw.boss.unlocked";
+function bossUnlocked(){
+  try { return localStorage.getItem(BOSS_UNLOCK_KEY) === "1"; }
+  catch (e) { return false; }
+}
+function unlockBoss(){
+  try { localStorage.setItem(BOSS_UNLOCK_KEY, "1"); }
+  catch (e) {}
+}
 function loadLocalScores(){
   try { const v = JSON.parse(localStorage.getItem(HS_KEY)); return Array.isArray(v) ? v : []; }
   catch (e) { return []; }
@@ -4158,10 +6259,10 @@ function escGameOver(){
   const party = seats.length > 1;
   // The score and the wave belong to the party; the kill count is your own.
   const mine = (you && you.kills) | 0;
-  if (!party) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
+  if (!party && !bossTest) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
   msg = { text: party ? "The party falls" : "Fallen",
           sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
-  const banked = bankRun(final, wave, party ? mine : kills);
+  const banked = bossTest ? Promise.resolve(null) : bankRun(final, wave, party ? mine : kills);   // a boss test is a rehearsal, not a run
   setTimeout(() => {
     // show() rewrites the curtain copy, so it goes first and the report second
     show(NET.active ? "mp" : "solo");
@@ -4300,7 +6401,7 @@ function toMenu(){
   leaveRoom();
   el("pausePanel").hidden = true;
   el("curtain").hidden = false;
-  selectMode(mode === "escalation" ? 3 : difficulty);
+  selectMode(mode === "escalation" ? (bossTest ? 4 : 3) : difficulty);
   show("home");
 }
 
@@ -4399,6 +6500,7 @@ const COPY = {
   auth: ["Your wizard", "Sign in and your wizard keeps its level, its experience and — before long — what it is wearing."]
 };
 let panel = "home";
+let selectedLevel = 1;   // mirrors the solo diffRow's .sel button (1 = Adept, the markup's default)
 function show(which){
   panel = which;
   musicFor("lobby");   // any menu, including the one a finished match drops you on
@@ -4427,7 +6529,13 @@ function show(which){
   }
 }
 function modeCopy(){
-  if (mode === "escalation"){
+  syncBossOption();
+  if (mode === "escalation" && bossTest){
+    el("goBtn").textContent = "Face the Alchemist";
+    el("curtainTitle").textContent = "Rematch: The Alchemist";
+    el("curtainText").textContent = "Straight to the boss, full health and mana, no ladder to climb first. Four wands, two spells at a time — read the gems on its hat, and watch its mana: when the bar runs dry its wands hold.";
+    hideBoard();
+  } else if (mode === "escalation"){
     el("goBtn").textContent = "Begin the run";
     el("curtainTitle").textContent = "Escalation";
     el("curtainText").textContent = "One Apprentice, then an Adept, then an Archmage — then pairs, then threes, each set harder than the last. Clear the set before the next arrives. You do not get a second round.";
@@ -4439,8 +6547,21 @@ function modeCopy(){
     hideBoard();
   }
 }
+// The fourth solo level only exists once this browser has reached the boss
+// for real (see BOSS_UNLOCK_KEY) — everyone starts with three, same as a
+// fresh install always has.
+function syncBossOption(){
+  const btn = el("bossOptBtn");
+  if (btn) btn.hidden = !bossUnlocked();
+  // A hidden option cannot be the selected one — if storage was cleared out
+  // from under a run that had it picked, fall back to Escalation rather than
+  // leave the panel on a level nothing points at.
+  if (!bossUnlocked() && selectedLevel === 4) selectMode(3);
+}
 function selectMode(v){
-  if (v === 3) mode = "escalation";
+  selectedLevel = v;
+  bossTest = v === 4;
+  if (v === 3 || v === 4) mode = "escalation";
   else { mode = "duel"; difficulty = v; }
   [...el("diffRow").children].forEach(c => {
     if (c.dataset && c.dataset.diff !== undefined) c.classList.toggle("sel", +c.dataset.diff === v);
@@ -4474,14 +6595,25 @@ const PRESET_NAMES = ["random","arena","gauntlet","crossfire","forest","castle"]
 const presetLabel = v => v === "random" ? "Random" : v[0].toUpperCase() + v.slice(1);
 const paintPreset = segRow(el("segPreset"), PRESET_NAMES, () => hostMapPreset, v => { hostMapPreset = v; }, presetLabel);
 const paintSoloPreset = segRow(el("segSoloPreset"), PRESET_NAMES, () => soloMapPreset, v => { soloMapPreset = v; }, presetLabel);
-const paintCoop = segRow(el("segCoop"), [0,1], () => hostCoop,
-                         v => { hostCoop = v; paintModeRows(); hostNote(); },
-                         v => v ? "Co-op survival" : "Duel");
+// The third option (jump straight to a rematch of the boss, with friends)
+// only exists once this browser has reached the boss for real — so the row
+// is rebuilt, not fixed at load, every time the host panel opens.
+let paintCoop = null;
+function refreshCoopOptions(){
+  const unlocked = bossUnlocked();
+  if (hostCoop === 2 && !unlocked) hostCoop = 0;   // storage cleared mid-session — fall back rather than get stuck on a hidden option
+  paintCoop = segRow(el("segCoop"), unlocked ? [0,1,2] : [0,1], () => hostCoop,
+                     v => { hostCoop = v; paintModeRows(); hostNote(); },
+                     v => v === 2 ? "Rematch: The Alchemist" : v ? "Co-op survival" : "Duel");
+}
+refreshCoopOptions();
 function paintModeRows(){
-  // Co-op has no rounds, no lives and no last-one-standing, so the rows that
-  // describe those disappear rather than sitting there doing nothing.
+  // Co-op (survival or the boss rematch) has no rounds, no lives and no
+  // last-one-standing, so the rows that describe those disappear rather than
+  // sitting there doing nothing.
   const coop = !!hostCoop;
-  el("hostTitle").textContent = coop ? "Hosting a survival run" : "Hosting a duel";
+  el("hostTitle").textContent = hostCoop === 2 ? "Hosting a rematch: The Alchemist"
+                                : coop ? "Hosting a survival run" : "Hosting a duel";
   const lives = hostMode === "lives";
   el("rowWinBy").hidden = coop;
   el("rowRounds").hidden = coop || lives;
@@ -4497,7 +6629,8 @@ function hostOpts(){
     mapSize: hostMapSize,
     fog: hostFog,
     mapPreset: hostMapPreset,
-    coop: hostCoop
+    coop: hostCoop ? 1 : 0,
+    boss: hostCoop === 2 ? 1 : 0
   };
 }
 function afterSeg(){
@@ -4717,6 +6850,7 @@ el("goBtn").addEventListener("click", () => {
 });
 el("hostBtn").addEventListener("click", () => {
   show("host");
+  refreshCoopOptions();
   paintModeRows();
   setInvite(null);
   renderRoster(el("hostRoster"));
@@ -4764,6 +6898,7 @@ el("startRoom").addEventListener("click", () => {
   if (inRoom()){ window.RPWNet.start(); return; }   // the server hands everyone the same seed
   matchCfg = sanitizeMatchCfg(hostOpts());
   mode = matchCfg.coop ? "escalation" : "match";
+  bossTest = !!matchCfg.boss;   // the host picked "Rematch: The Alchemist" — everyone jumps straight to it
   roomHumans = 1;
   newMatch();
   cvs.focus();
@@ -5122,12 +7257,14 @@ function pump(now){
   /* Held-Spark repeat lives ABOVE the draw-skip return: it is input, and input
      a busy frame quietly drops is input the player will swear they gave. */
   padRapid(real);
+  audioTick(real);
 
   if (bg) return;
   syncHUD();
   if (!waiting && acc >= STEP && skipped < MAX_SKIP){ skipped++; return; }
   skipped = 0;
   updateCapes(real);
+  updateBossView(real);
   draw();
   drawPad();
 }
@@ -5953,6 +8090,7 @@ window.RPW = {
     // need to know co-op exists.
     matchCfg = sanitizeMatchCfg(opts.opts || null);
     mode = matchCfg.coop ? "escalation" : (opts.mode || "match");
+    bossTest = !!matchCfg.boss;   // the sanitised opts came off the relay, so every seat agrees on this the same way it agrees on the seed
     difficulty = opts.difficulty != null ? opts.difficulty : difficulty;
     roomTotal = opts.total || roomTotal;
     roomHumans = opts.humans || 1;
@@ -6035,14 +8173,113 @@ window.RPW = {
   // Test hook: who is on whose side, and what each wizard is aiming at.
   sides: () => wizards.map(w => ({
     id: w.id, seat: w.seat, team: w.team, ally: !!w.ally, dead: !!w.dead,
-    hp: Math.round(w.hp * 100) / 100,
+    hp: Math.round(w.hp * 100) / 100, hpMax: w.hpMax, mana: Math.round(w.mana * 10) / 10,
+    beamOn: !!w.beamOn, beamWind: w.beamWind, beamLen: Math.round(w.beamLen || 0), x: w.x, y: w.y, facing: w.facing,
     target: w.target ? w.target.team : null,
     lock: w.lock ? w.lock.team : null
   })),
   waveNow: () => waveNo,
+  // whether this browser has reached the boss for real and so has the
+  // "Rematch: The Alchemist" option unlocked, in the solo menu and in a
+  // hosted room's game picker alike
+  bossReached: () => bossUnlocked(),
+  // test hooks for the Alchemist. bossTest() starts the menu's "Boss test" run
+  // without a click; bossState() is what a rig reads to know where the fight is;
+  // autoplay() hands `you` to a bot so a recording does not need hands. None of
+  // them is reachable from a real match.
+  bossTest(seed){
+    leaveRoom(); selectMode(4); resetOfflineCfg(); newMatch(seed);
+  },
+  bossState(){
+    const b = wizards.find(q => q.boss);
+    if (!b) return null;
+    const B = b.boss;
+    return { dead: !!b.dead, hp: Math.round(b.hp*100)/100, hpMax: b.hpMax, phase: B.phase, pair: B.pair,
+             fires: B.fires, next: B.next, x: b.x, y: b.y, facing: b.facing, beamOn: !!b.beamOn,
+             lock: B.lock.map(i => SPELLS[i].id), slots: B.slots.slice(), spinK: B.spinK,
+             combo: B.combo ? B.combo.id : null, fuse: B.fuse ? { stage: B.fuse.stage, t: B.fuse.t } : null, flashN: B.flashN,
+             prism: !!B.prism, mana: Math.round(b.mana*10)/10, dashes: B.dashes, dodges: B.dodges, wards: B.wards,
+             dry: Math.max(...B.arms.map(A => A.dry)), sensed: B.sense ? { hit: B.sense.hit, weight: B.sense.weight, beam: B.sense.beam } : null,
+             dashCool: b.dashCool, target: b.target ? { x: b.target.x, y: b.target.y } : null,
+             refl: B.refl ? { t: B.refl.t, ang: B.refl.ang, half: B.refl.half, out: B.refl.out.map(o => ({ id: o.id, x: o.x, y: o.y, ang: o.ang, len: o.len })) } : null,
+             reflN: B.reflN, reflCd: B.reflCd, beamUp: bossBeamUp(b), r: b.r,
+             arms: B.arms.map((A, i) => ({ id: BOSS_ARMS[i].id, spell: SPELLS[A.spell].id, st: A.st, out: A.k, cf: A.cf, rc: A.rc, rw: A.rw,
+                                           k: A.st === 0 ? clamp(A.t / A.dur, 0, 1) : (A.st === 3 ? 0 : 1),
+                                           live: bossLive(B, i), foc: A.foc })),
+             shots: shots.filter(q => q.owner === b).map(q => ({ kind: q.kind, x: q.x, y: q.y, vx: q.vx, vy: q.vy, life: q.life })),
+             los: b.target ? lineClear(b, b.target, true) : true,
+             held: !!b.held, ward: b.ward };
+  },
+  // test hook: the boss's soft parts — where each drawn hand is against where the
+  // simulation wants it, the hat's turn, and the cloth's links — so the springs and
+  // the cloth can be checked for overshoot, settling and stretch without a screen
+  bossView(){
+    const b = wizards.find(q => q.boss && !q.dead);
+    if (!b || !b.view) return null;
+    const v = b.view;
+    const chainInfo = ch => {
+      let worst = 0;
+      for (let i = 0; i < ch.n - 1; i++) worst = Math.max(worst, Math.abs(HYPOT(ch.x[i+1]-ch.x[i], ch.y[i+1]-ch.y[i]) / ch.seg - 1));
+      let sag = 0;
+      for (let i = 1; i < ch.n; i++){
+        const r = ch.rest[i], c = COS(v.cf), s2 = SIN(v.cf);
+        sag = Math.max(sag, HYPOT(ch.x[i] - (b.x + c*r[0] - s2*r[1]), ch.y[i] - (b.y + s2*r[0] + c*r[1])));
+      }
+      const finite = ch.x.every(Number.isFinite) && ch.y.every(Number.isFinite);
+      // how far any link of it points from straight behind the cloth's own heading, and where its hem is
+      let swing = 0;
+      for (let i = 0; i < ch.n - 1; i++) swing = Math.max(swing, Math.abs(angleTo(v.cf + Math.PI, ATAN2(ch.y[i+1]-ch.y[i], ch.x[i+1]-ch.x[i]))));
+      const N = ch.n - 1, dx = ch.x[N] - b.x, dy = ch.y[N] - b.y;
+      return { stretch: worst, away: sag, finite, swing, tip: angleTo(v.face + Math.PI, ATAN2(dy, dx)) };
+    };
+    return {
+      face: v.face, simFace: b.facing, hat: v.hat, ring: v.ring, star: v.star ? v.star.t : null, stream: v.stream, cf: v.cf,
+      arms: v.arms.map((a, i) => { const T = bzTarget(b, i, v.face); return { E: a.E.slice(), H: a.H.slice(), tE: T.E, tH: T.H, live: bossLive(b.boss, i), out: b.boss.arms[i].k }; }),
+      cloth: bzCloth(v).map(chainInfo), raw: { cloak: v.cloak, under: v.under }
+    };
+  },
+  // test hooks: the one-off cues asked for so far (whether or not there was anything to play them), and where the music is
+  sfxLog: () => sfxLog.slice(),
+  sfxClear(){ sfxLog.length = 0; },
+  audioState: () => ({ duck: musicDuck, duckTo, alert: alertQ.state, alerted: bossAlerted, track: musicTrack,
+                       fades: fades.map(f => ({ name: f.name, k: f.k, v: f.vol * f.k, t: f.t, out: f.out >= 0 })) }),
+  // test hook: jump an escalation run to just after wave n, before anything has spawned
+  skipToWave(n){ waveNo = n; waveLive = false; waveGap = 0; },
+  autoplay(level){
+    if (!you) return;
+    you.human = false; you.D = DIFF[level == null ? 2 : level];
+  },
   smite(id){
     const w = wizards.find(x => x.id === id) || wizards.find(x => x.seat === id);
     if (w && w.hp > 0) strike(w, 9999, w.x, w.y, "spark", false);
+  },
+  // test hook: open (or close) a wizard's beam the way pressing the key does, for a rig that wants to beam the boss
+  forceBeam(id, on){
+    const w = wizards.find(x => x.id === id);
+    if (!w || w.dead) return false;
+    w.beamForced = !!on;                                  // a bot that is being made to beam does not take the hint from the mirror
+    if (on){ if (!w.beamOn){ w.beamOn = true; w.beamWind = 0; w.charge = null; } }
+    else if (w.beamOn) stopBeam(w, true);
+    return true;
+  },
+  // test hook: raise the Alchemist's mirror on the spot, with no beam and no charge to it, and hold it up (until released with hold=false)
+  bossMirror(hold){
+    const b = wizards.find(q => q.boss && !q.dead);
+    if (!b) return false;
+    if (hold === false){ if (b.boss.refl) b.boss.refl.hold = false; return true; }
+    if (!b.boss.refl) bossReflectOpen(b, b.target);
+    b.boss.refl.hold = true;
+    return true;
+  },
+  // test hook: make the Alchemist dash along (ax, ay), as it does to get out of a lane
+  bossDash(ax, ay){
+    const b = wizards.find(q => q.boss && !q.dead);
+    return b ? tryDash(b, ax, ay) : false;
+  },
+  // test hook: set a wizard's health and mana (a rig cannot otherwise arrange "the party arrives hurt and dry")
+  setVitals(id, hp, mana){
+    const w = wizards.find(x => x.id === id);
+    if (w){ w.hp = hp; w.mana = mana; }
   },
   matchCfg: () => ({ ...matchCfg }),
   phase: () => phase,

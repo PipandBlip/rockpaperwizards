@@ -132,7 +132,15 @@ function boot({ seed = 1, diff = 1, room = 0, opts = null, seat = 0, humans = 1,
   for (let i = 0; i < 4; i++) els.diffRow.appendChild(fakeEl("d" + i));
 
   vm.createContext(sandbox);
-  sandbox.localStorage = { getItem: () => null, setItem(){}, removeItem(){} };
+  // A real (if tiny) in-memory store, not just a stub that reports nothing was
+  // ever written: local persistence (high scores, the boss unlock flag) is
+  // itself something a rig needs to check, not only something it must survive.
+  const storeBacking = Object.create(null);
+  sandbox.localStorage = {
+    getItem: k => (k in storeBacking ? storeBacking[k] : null),
+    setItem(k, v){ storeBacking[k] = String(v); },
+    removeItem(k){ delete storeBacking[k]; }
+  };
   vm.runInContext(acctCode, sandbox, { filename: "account.js" });
   vm.runInContext(code, sandbox, { filename: "game.js" });
 

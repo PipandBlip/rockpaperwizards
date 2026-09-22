@@ -45,7 +45,11 @@ function sanitizeOpts(o) {
     // what happened to forest and castle.
     mapPreset: ["random", "arena", "gauntlet", "crossfire", "forest", "castle"].includes(o.mapPreset) ? o.mapPreset : "random",
     // co-op survival: the whole room is one team against endless waves
-    coop: o.coop ? 1 : 0
+    coop: o.coop ? 1 : 0,
+    // a rematch of the boss, skipping the ladder — co-op only, same rule the
+    // client's own sanitizeMatchCfg enforces, so a stray or old client can
+    // never end up with one true without the other
+    boss: (o.coop && o.boss) ? 1 : 0
   };
 }
 

@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&amp;family=IBM+Plex+Mono:wght@400;600&amp;family=Spectral:ital,wght@0,400;1,400&amp;display=swap">
-  <link rel="stylesheet" href="src/style.css?v=65">
+  <link rel="stylesheet" href="src/style.css?v=66">
 </head>
 <body>
 
@@ -25,6 +25,7 @@
   </header>
   <audio id="bgm" loop preload="auto" src="assets/audio/arcane-clash.mp3"></audio>
   <audio id="lobbyBgm" loop preload="auto" src="assets/audio/lobby.mp3"></audio>
+  <audio id="bossBgm" loop preload="auto" src="assets/audio/alchemist-theme.mp3"></audio>
   <audio id="sfxBeamA" loop preload="auto" src="assets/audio/beam-loop.mp3"></audio>
   <audio id="sfxBeamB" loop preload="auto" src="assets/audio/beam-loop.mp3"></audio>
   <audio id="sfxChargeA" preload="auto" src="assets/audio/beam-charge.mp3"></audio>
@@ -46,6 +47,17 @@
   <audio id="sfxWard2" preload="auto" src="assets/audio/ward-2.mp3"></audio>
   <audio id="sfxWard3" preload="auto" src="assets/audio/ward-3.mp3"></audio>
   <audio id="sfxDash" preload="auto" src="assets/audio/dash.mp3"></audio>
+  <audio id="sfxLockin" preload="auto" src="assets/audio/lockin.mp3"></audio>
+  <audio id="sfxLockin3" preload="auto" src="assets/audio/lockin3.mp3"></audio>
+  <audio id="sfxBossAlert" preload="auto" src="assets/audio/bossalert.mp3"></audio>
+  <audio id="sfxReflect" preload="auto" src="assets/audio/reflect2.mp3"></audio>
+  <audio id="sfxReflect3" preload="auto" src="assets/audio/reflect3.mp3"></audio>
+  <audio id="sfxHexspark" preload="auto" src="assets/audio/hexspark.mp3"></audio>
+  <audio id="sfxSpinner" preload="auto" src="assets/audio/spinner.mp3"></audio>
+  <audio id="sfxSlot" preload="auto" src="assets/audio/slotspin.mp3"></audio>
+  <audio id="sfxSparkrive" preload="auto" src="assets/audio/sparkrive.mp3"></audio>
+  <audio id="sfxHexrive" preload="auto" src="assets/audio/hexrive.mp3"></audio>
+  <audio id="sfxPrismlance" preload="auto" src="assets/audio/prismlance.mp3"></audio>
 
   <div class="rails" id="rails"></div>
   <div class="roundlabel" id="roundLabel">Round 1</div>
@@ -103,6 +115,7 @@
           <button data-diff="1" class="lv1 sel">Adept<em>Medium</em></button>
           <button data-diff="2" class="lv2">Archmage<em>Hard</em></button>
           <button data-diff="3" class="lv3">Escalation<em>Endless</em></button>
+          <button data-diff="4" class="lv4" id="bossOptBtn" hidden>Rematch<em>The Alchemist</em></button>
         </fieldset>
         <div class="opts arenapick">
           <div class="rrow full"><span>Arena</span><div class="seg" id="segSoloPreset"></div></div>
@@ -274,8 +287,8 @@
     </div>
   </div>
 
-  <script src="src/account.js?v=65"></script>
-  <script src="src/game.js?v=65"></script>
-  <script src="src/net.js?v=65"></script>
+  <script src="src/account.js?v=66"></script>
+  <script src="src/game.js?v=66"></script>
+  <script src="src/net.js?v=66"></script>
 </body>
 </html>
