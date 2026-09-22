@@ -7361,7 +7361,14 @@ const HS_KEY = "rpw.escalation.scores";
 // standing "fight it again" option, in the solo menu and in a hosted room's
 // game picker alike. Same try/catch discipline as the scores above: a browser
 // with storage blocked just never unlocks it, rather than throwing.
-const BOSS_UNLOCK_KEY = "rpw.boss.unlocked";
+//
+// The ".2" is deliberate: the first build's own README suggested setting this
+// key by hand in devtools as a way to preview the option without climbing the
+// ladder, and that stuck around in at least one browser and made the option
+// look unlocked when it was not. Bumping the key orphans every flag anyone
+// set that way (or any other leftover) — nobody has this new key until they
+// actually reach the boss under this build.
+const BOSS_UNLOCK_KEY = "rpw.boss.unlocked.2";
 function bossUnlocked(){
   try { return localStorage.getItem(BOSS_UNLOCK_KEY) === "1"; }
   catch (e) { return false; }

@@ -89,6 +89,15 @@ test("reaching the boss for real unlocks a standing rematch — a rehearsal alon
   assert.strictEqual(rig.RPW.bossReached(), true, "and that is what unlocks the rematch");
 });
 
+test("a leftover flag under the old storage key does not fake an unlock", () => {
+  // v11's own README suggested setting the OLD key by hand in devtools to
+  // preview the option — exactly the false unlock a player reported. The fix
+  // was moving to a new key; this proves the old one is now just noise.
+  const rig = boot({ seed: 3, diff: 1, opts: { mapPreset: "random" } });
+  rig.sandbox.localStorage.setItem("rpw.boss.unlocked", "1");
+  assert.strictEqual(rig.RPW.bossReached(), false, "the stale pre-v12 key does not count");
+});
+
 test("a hosted room can send the party straight to a rematch of the boss, but never boss without co-op", () => {
   const rush = boot({ seed: 5, diff: 1, room: 3, humans: 3, opts: { coop: 1, boss: 1, mapPreset: "random" } });
   assert.strictEqual(rush.RPW.waveNow(), 8, "the room opens straight on the boss's wave, no ladder climbed");
