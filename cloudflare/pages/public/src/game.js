@@ -301,6 +301,11 @@ function segCircle(ax,ay,bx,by,cx,cy,r){
 
 /* ---------------------------------------------------------- state */
 let debris = [], shots = [], bits = [], rings = [], ghosts = [], floor = null;
+// A strict, deterministic firing order. Every shot gets the next number when it
+// is created, never reused, so "which of these two bolts was cast more
+// recently" is a plain integer compare — no clock, no floating point, safe for
+// lockstep. It rides alongside simFrame: same lifetime, same reset point.
+let shotSeq = 0;
 let shake = 0, msg = null, phase = "menu", phaseT = 0, clashPrev = false;
 let hitStop = 0, flash = 0, flashColor = "#ffffff";
 let clashes = [], clashNowFlag = false;
@@ -824,7 +829,7 @@ function cast(w, idx, lvl, ox, oy, aim){
         r: 6.5,
         color: s.color, kind: s.id, owner: w, life: 3.4, trail: [], spin: 0,
         seek: { turn: .6, wob: .85, vMin: sp, vMax: sp, phase: rand()*TAU },
-        glow: 16, lvl
+        glow: 16, lvl, seq: shotSeq++
       });
     }
     swish(w, s.color, "cast");
@@ -856,7 +861,7 @@ function cast(w, idx, lvl, ox, oy, aim){
     r: hexR || (s.radius + weight*1.6),
     glow: s.id === "hex" ? 8 + 30*lvl : 22,
     color: s.color, kind: s.id, owner: w, life: seek ? 5.2 : 4, trail: [], spin: 0,
-    seek, lvl
+    seek, lvl, seq: shotSeq++
   });
   swish(w, s.color, "cast");
   castSound(w, s.id);
@@ -936,7 +941,7 @@ function launchOrb(w, x, y){
     x, y, vx: COS(a)*400, vy: SIN(a)*400,
     weight: 9, w0: 9, dmg: 42 * dmgMul(w), r: 17,
     color: byId.beam.color, kind: "orb", owner: w, life: 2.4, trail: [], spin: 0,
-    seek: null, glow: 44, lvl: 1, orb: true
+    seek: null, glow: 44, lvl: 1, orb: true, seq: shotSeq++
   });
   impact(x, y, 3, byId.beam.color);
 }
@@ -1016,10 +1021,15 @@ function waveComp(i){
    plays identically to before. Every extra ally adds rivals drawn from the
    tiers already in the set, so a bigger party meets a bigger set rather than a
    nastier one, and the total is capped so a six-stack cannot melt a slow
-   machine. */
-function waveFor(i, party){
+   machine.
+   `afterBoss` holds that scaling off entirely: the whole first ladder, boss
+   included, is a co-op party's introduction to the game, not a wall — it
+   should play exactly like a solo run until the party has actually beaten the
+   Alchemist once. Only sets reached after that first boss kill grow with the
+   party. */
+function waveFor(i, party, afterBoss){
   const base = waveComp(i);
-  if (party <= 1) return base;
+  if (party <= 1 || !afterBoss) return base;
   const out = base.slice();
   const extra = Math.min(14 - base.length, Math.round((party - 1) * base.length * 0.8));
   for (let k = 0; k < extra; k++) out.push(base[k % base.length]);
@@ -1559,7 +1569,7 @@ function bossMissile(w, i, o){
   shots.push({ x: tip.x, y: tip.y, vx: COS(ang)*sp, vy: SIN(ang)*sp, weight: 1, w0: 1,
                dmg: o.dmg * dmgMul(w), r: o.r, color: o.color, kind: o.kind, owner: w, life: o.life, trail: [], spin: 0,
                seek: { turn: o.turn, wob: o.wob, vMin: sp, vMax: o.v1 ? o.v1 * (sp / o.v0) : sp, phase: rand()*TAU },
-               glow: o.glow || 16, lvl: 0 });
+               glow: o.glow || 16, lvl: 0, seq: shotSeq++ });
   swish(w, o.color, "cast");
 }
 function bossLive(B, i){ return BOSS_ARMS[i].pair === B.pair; }
@@ -1643,7 +1653,7 @@ function bossCombo(w){
     shots.push({ x: tip.x, y: tip.y, vx: COS(a)*95, vy: SIN(a)*95, weight: 7, w0: 7,
                  dmg: 32 * dmgMul(w), r: 16, glow: 32, color: C.color, kind: "wheel", owner: w, life: 6.2, trail: [], spin: 0,
                  seek: { turn: 1.5, wob: .3, vMin: 95, vMax: 620, phase: rand()*TAU },
-                 ring: { t: .22, every: .36, n: 9, k: 0, v: 230 }, lvl: .7 });
+                 ring: { t: .22, every: .36, n: 9, k: 0, v: 230 }, lvl: .7, seq: shotSeq++ });
     swish(w, C.color, "cast");
   } else if (C.id === "prism"){
     const bi = B.arms.findIndex((A, i) => bossLive(B, i) && A.spell === 4);
@@ -2621,7 +2631,7 @@ function update(dt){
       for (let j = 0; j < R.n; j++){
         const a = off + j * TAU / R.n;
         shots.push({ x: s.x, y: s.y, vx: COS(a)*R.v, vy: SIN(a)*R.v, weight: 1, w0: 1, dmg: 5 * dmgMul(s.owner), r: 5.5,
-                     color: s.color, kind: "spark", owner: s.owner, life: 1.7, trail: [], spin: 0, seek: null, glow: 14, lvl: 0 });
+                     color: s.color, kind: "spark", owner: s.owner, life: 1.7, trail: [], spin: 0, seek: null, glow: 14, lvl: 0, seq: shotSeq++ });
       }
       R.k++;
       rings.push({ x: s.x, y: s.y, r: s.r, max: s.r + 34, t: 0, life: .28, color: s.color, width: 1.8 });
@@ -2681,7 +2691,12 @@ function update(dt){
           o.r = Math.max(5, o.r - s.weight*2.2);
           shots.splice(i,1); gone = true;
         } else {
-          surge(s.owner, o.weight); surge(o.owner, s.weight);
+          // Equal weight: nobody out-muscled anybody, so the tiebreak is who cast
+          // theirs more recently. shotSeq is a strict firing order (never reused,
+          // never tied), so exactly one of these two wins the exchange and takes
+          // the whole mana bonus — the other gets nothing, same as losing outright.
+          const laterOwner = (s.seq||0) > (o.seq||0) ? s.owner : o.owner;
+          surge(laterOwner, s.weight);
           const hi = Math.max(i,j), lo = Math.min(i,j);
           shots.splice(hi,1); shots.splice(lo,1);
           if (lo < i) i--;
@@ -6079,7 +6094,7 @@ function escTick(dt){
     return;
   }
   // the boss took one slot in the count; the ladder carries on where it left off
-  const comp = waveFor(waveNo - 1 - (waveNo > BOSS_AT + 1 ? 1 : 0), coopParty());
+  const comp = waveFor(waveNo - 1 - (waveNo > BOSS_AT + 1 ? 1 : 0), coopParty(), waveNo > BOSS_AT);
   // A new wave is also the party's second chance: anyone who went down in the
   // last one is back on their feet for this one, at part health. Being downed
   // costs you the rest of a wave, not the whole run.
@@ -6317,6 +6332,7 @@ function newMatch(seed){
   clearTaps();    // nothing pressed before the wands are up carries into the match
   roundNo = 1;
   simFrame = 0;   // frame counter restarts once per match, not per round
+  shotSeq = 0;    // and the firing order restarts with it
   runScore = 0; kills = 0; survT = 0; waveNo = 0; waveLive = false; waveGap = 1.1;
   nextWizId = 0;
   makeSeats();
@@ -8116,6 +8132,11 @@ window.RPW = {
     mx: w.moveX || 0, my: w.moveY || 0,
     mana: Math.round(w.mana * 10) / 10, charge: w.charge, beam: !!w.beamOn
   })),
+  // test hook: every shot in the air, regardless of owner.
+  allShots: () => shots.map(s => ({
+    x: s.x, y: s.y, vx: s.vx, vy: s.vy, weight: s.weight, r: s.r,
+    kind: s.kind, ownerId: s.owner ? s.owner.id : -1, seq: s.seq
+  })),
   // test hook: the cape's cloth for a seat. The spine, the two derived hems,
   // and the turn taken at each joint — that last one is what a test needs to
   // assert the cloth cannot fold through itself.
@@ -8163,7 +8184,7 @@ window.RPW = {
      ally — which is exactly why the no-friendly-fire rule needs a way to be
      tested rather than assumed. Uses only view-safe values and is never called
      during a real match. */
-  fireAt(fromId, toId, dmg = 40){
+  fireAt(fromId, toId, dmg = 40, weight = 3){
     const a = wizards.find(x => x.id === fromId);
     const b = wizards.find(x => x.id === toId);
     if (!a || !b) return false;
@@ -8171,9 +8192,9 @@ window.RPW = {
     shots.push({
       x: a.x + COS(ang)*22, y: a.y + SIN(ang)*22,
       vx: COS(ang)*600, vy: SIN(ang)*600,
-      weight: 3, w0: 3, dmg, r: 9, glow: 22,
+      weight, w0: weight, dmg, r: 9, glow: 22,
       color: "#fff", kind: "spark", owner: a, life: 4, trail: [], spin: 0,
-      seek: null, lvl: 0
+      seek: null, lvl: 0, seq: shotSeq++
     });
     return true;
   },
@@ -8260,6 +8281,10 @@ window.RPW = {
     const w = wizards.find(x => x.id === id) || wizards.find(x => x.seat === id);
     if (w && w.hp > 0) strike(w, 9999, w.x, w.y, "spark", false);
   },
+  // test hook: sweep every prop off the floor.
+  clearScenery: () => { debris.length = 0; },
+  // test hook: sweep every shot out of the air too.
+  clearShots: () => { shots.length = 0; },
   // test hook: open (or close) a wizard's beam the way pressing the key does, for a rig that wants to beam the boss
   forceBeam(id, on){
     const w = wizards.find(x => x.id === id);
