@@ -5432,7 +5432,7 @@ function buildRails(){
     const mpB = mk("i", null, mk("div", "meter mp", d));
     return { w, d, nm, hpTxt, hpB, mpB, pips };
   });
-  scheduleFit();   // six plates wrap to two rows; the arena has to give that room back
+  scheduleFit();   // the rail count changed; it's a fixed-height scroller now, but the row's own width still needs a re-check
 }
 // A match is on screen from the countdown through to the last blow; anywhere
 // else — the menus, the results — the plates are just clutter, so they fade.
@@ -6239,11 +6239,18 @@ function esc(str){
 // Eight are kept locally, six are shown everywhere: the end screen has to
 // fit the arena without scrolling, and the bottom rows are the least
 // interesting ones on it.
+// A run's score climbs faster with more wizards clearing waves together, so
+// the number that earned it needs that context: how many were actually
+// playing. Older rows saved before this existed have no r.p at all — those
+// just show the score alone, same as they always did.
+function partyTag(p){
+  return (p == null) ? "" : '<i class="party">' + (p > 1 ? p + "p" : "solo") + '</i>';
+}
 function boardRowsHTML(rows, isNew){
   return '<ol>' + rows.slice(0, 6).map((r, i) =>
     '<li class="' + (isNew(r) ? "fresh" : "") + '"><span>' + (i+1) + '</span>' +
     '<span>' + esc(r.n || "Wizard") + ' · wave ' + r.w + ' · ' + r.k + (r.k === 1 ? " kill" : " kills") + '</span>' +
-    '<b>' + r.s.toLocaleString() + '</b></li>'
+    '<span class="score">' + partyTag(r.p) + '<b>' + r.s.toLocaleString() + '</b></span></li>'
   ).join("") + '</ol>';
 }
 let boardRequest = 0;   // lets a later renderBoard() call win over a slower earlier one
@@ -6279,12 +6286,13 @@ function escGameOver(){
   const wave = Math.max(1, waveNo);
   const final = Math.round(runScore);
   const party = seats.length > 1;
+  const players = seats.length;   // how many wizards were actually in this run, for the board
   // The score and the wave belong to the party; the kill count is your own.
   const mine = (you && you.kills) | 0;
-  if (!party && !bossTest) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
+  if (!party && !bossTest) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName, p: players });
   msg = { text: party ? "The party falls" : "Fallen",
           sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
-  const banked = bossTest ? Promise.resolve(null) : bankRun(final, wave, party ? mine : kills);   // a boss test is a rehearsal, not a run
+  const banked = bossTest ? Promise.resolve(null) : bankRun(final, wave, party ? mine : kills, players);   // a boss test is a rehearsal, not a run
   setTimeout(() => {
     // show() rewrites the curtain copy, so it goes first and the report second
     show(NET.active ? "mp" : "solo");
@@ -6297,7 +6305,7 @@ function escGameOver(){
       (yours === 1 ? " wizard" : " wizards") + " put down" + (party ? " by you" : "") +
       " · " + Math.round(survT) + " seconds standing.";
     el("curtainText").textContent = report;
-    if (!party){ el("goBtn").textContent = "Run it again"; renderBoard({ s: final, k: kills, w: wave, d: Date.now(), n: playerName }); }
+    if (!party){ el("goBtn").textContent = "Run it again"; renderBoard({ s: final, k: kills, w: wave, d: Date.now(), n: playerName, p: players }); }
     else hideBoard();
     el("curtain").hidden = false;
     banked.then(out => showEarned(out, report));
@@ -7126,10 +7134,10 @@ function bankMatch(won, roundsWon){
   if (!acct || !acct.signedIn) return Promise.resolve(null);
   return acct.report({ mode: "duel", won: !!won, roundsWon: roundsWon | 0, opponents: rivalsFought() });
 }
-function bankRun(score, waves, kills){
+function bankRun(score, waves, kills, players){
   const acct = ACCT();
   if (!acct || !acct.signedIn) return Promise.resolve(null);
-  return acct.report({ mode: "escalation", score: score | 0, waves: waves | 0, kills: kills | 0 });
+  return acct.report({ mode: "escalation", score: score | 0, waves: waves | 0, kills: kills | 0, players: Math.max(1, players | 0) });
 }
 // Say what the match was worth. Guests get the one line that tells them why
 // they got nothing; signed-in wizards get the number and where it left them.

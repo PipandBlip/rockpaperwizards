@@ -15,8 +15,12 @@
 // cloudflare/worker/src/index.js.
 //
 // Storage key:
-//   top    array of { key, name, s, w, k, d }, sorted by score descending,
-//          `key` is the lowercased name (dedupe key), capped at MAX_ROWS
+//   top    array of { key, name, s, w, k, p, d }, sorted by score descending,
+//          `key` is the lowercased name (dedupe key), capped at MAX_ROWS.
+//          p is how many wizards were in that run (co-op inflates the score,
+//          so it rides along as context) — rows written before this field
+//          existed simply don't have it, and every reader treats that as
+//          "unknown", not zero.
 
 const MAX_ROWS = 50;   // rows kept in storage — generous headroom over TOP_N
 const TOP_N = 20;      // rows a read ever returns; the client only shows 6
@@ -42,12 +46,13 @@ export async function submit(store, body) {
   const s = clampInt(body && body.s, 0, 9999999);
   const w = clampInt(body && body.w, 0, 200);
   const k = clampInt(body && body.k, 0, 999);
+  const p = clampInt(body && body.p, 1, 99);   // party size; missing/junk clamps to solo (1)
   if (s <= 0) return null;
   const key = name.toLowerCase();
   let list = (await store.get("top")) || [];
   const i = list.findIndex(r => r.key === key);
   if (i >= 0 && s <= list[i].s) return list[i];   // not a new best; the board is unchanged
-  const row = { key, name, s, w, k, d: Date.now() };
+  const row = { key, name, s, w, k, p, d: Date.now() };
   list = i >= 0 ? list.slice(0, i).concat(list.slice(i + 1)) : list;
   list.push(row);
   list.sort((a, b) => b.s - a.s);
@@ -60,7 +65,7 @@ export async function submit(store, body) {
 // to change later, so only the display fields cross the wire.
 export async function top(store) {
   const list = (await store.get("top")) || [];
-  return list.slice(0, TOP_N).map(r => ({ n: r.name, s: r.s, w: r.w, k: r.k }));
+  return list.slice(0, TOP_N).map(r => ({ n: r.name, s: r.s, w: r.w, k: r.k, p: r.p }));
 }
 
 // Drop one wizard's row — moderation (an offensive name) or cleanup (a test

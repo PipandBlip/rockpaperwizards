@@ -628,7 +628,7 @@ export class RPWAccount extends DurableObject {
         this.ctx.waitUntil(stub.fetch("https://leaderboard/submit", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: p.name, s: r.score, w: r.waves, k: r.kills })
+          body: JSON.stringify({ name: p.name, s: r.score, w: r.waves, k: r.kills, p: r.players })
         }).catch(() => {}));
       }
     }

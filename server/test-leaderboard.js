@@ -33,13 +33,27 @@ const run = async () => {
 
   console.log("\none run");
   store = freshStore();
-  await submit(store, { name: "Green", s: 4200, w: 6, k: 14 });
+  await submit(store, { name: "Green", s: 4200, w: 6, k: 14, p: 6 });
   let rows = await top(store);
   eq("one row", rows.length, 1);
   eq("the name made it through", rows[0].n, "Green");
   eq("so did the score", rows[0].s, 4200);
   eq("the wave", rows[0].w, 6);
   eq("and the kills", rows[0].k, 14);
+  eq("and how many wizards were actually in the run", rows[0].p, 6);
+
+  console.log("\nparty size: how big the run actually was");
+  store = freshStore();
+  await submit(store, { name: "Solo", s: 500, w: 3, k: 2 });   // no p at all — an old client, or a solo run
+  await submit(store, { name: "Crew", s: 900, w: 5, k: 9, p: 4 });
+  await submit(store, { name: "Reckless", s: 300, w: 2, k: 1, p: 9999 });   // absurd, gets clamped
+  rows = await top(store);
+  eq("a run reported with no party size at all defaults to solo",
+     rows.find(r => r.n === "Solo").p, 1);
+  eq("a real party size comes through as reported",
+     rows.find(r => r.n === "Crew").p, 4);
+  ok("an absurd party size is clamped to something sane   (" + rows.find(r => r.n === "Reckless").p + ")",
+     rows.find(r => r.n === "Reckless").p <= 99);
 
   console.log("\nthis is what the bug looked like: the same player, six times");
   store = freshStore();

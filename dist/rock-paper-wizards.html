@@ -52,10 +52,11 @@
 
   /* The health plates belong to a match, not to a menu. They keep their space
      either way so the arena does not resize the moment a duel begins. */
-  .rails{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;
+  .rails{display:flex;gap:8px;align-items:stretch;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+    scrollbar-width:thin;-webkit-overflow-scrolling:touch;
     opacity:0;pointer-events:none;transition:opacity .55s ease}
   .rails.live{opacity:1;pointer-events:auto}
-  .rails .plate{flex:1 1 150px}
+  .rails .plate{flex:0 0 150px}
   .plate{
     background:linear-gradient(180deg,rgba(23,19,38,.9),rgba(13,10,24,.9));
     border:1px solid var(--edge);
@@ -417,6 +418,12 @@
   .board li.fresh{color:#fff}
   .board li.fresh b{color:var(--blood)}
   .board li b{font-weight:600;color:#c4bade}
+  /* How many wizards earned that score, right beside it — a co-op run's
+     total is not the same achievement as a solo one, and the two share this
+     one board. */
+  .board li .score{display:inline-flex;align-items:baseline;gap:6px;justify-content:flex-end}
+  .board li .party{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+  .board li.fresh .party{color:#c4bade}
   .board .none{font-size:12px;color:var(--muted)}
   button.go{border-color:var(--spark);color:var(--spark);padding:12px 26px}
   button.go:hover{background:rgba(63,231,255,.12)}
@@ -491,7 +498,7 @@
 
   @media (max-width:720px){
     .book{grid-template-columns:repeat(4,1fr)}
-    .rails .plate{flex:1 1 46%}
+    .rails .plate{flex:0 0 130px}
   }
   @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important}}
 
@@ -6626,7 +6633,7 @@ function buildRails(){
     const mpB = mk("i", null, mk("div", "meter mp", d));
     return { w, d, nm, hpTxt, hpB, mpB, pips };
   });
-  scheduleFit();   // six plates wrap to two rows; the arena has to give that room back
+  scheduleFit();   // the rail count changed; it's a fixed-height scroller now, but the row's own width still needs a re-check
 }
 // A match is on screen from the countdown through to the last blow; anywhere
 // else — the menus, the results — the plates are just clutter, so they fade.
@@ -7433,11 +7440,18 @@ function esc(str){
 // Eight are kept locally, six are shown everywhere: the end screen has to
 // fit the arena without scrolling, and the bottom rows are the least
 // interesting ones on it.
+// A run's score climbs faster with more wizards clearing waves together, so
+// the number that earned it needs that context: how many were actually
+// playing. Older rows saved before this existed have no r.p at all — those
+// just show the score alone, same as they always did.
+function partyTag(p){
+  return (p == null) ? "" : '<i class="party">' + (p > 1 ? p + "p" : "solo") + '</i>';
+}
 function boardRowsHTML(rows, isNew){
   return '<ol>' + rows.slice(0, 6).map((r, i) =>
     '<li class="' + (isNew(r) ? "fresh" : "") + '"><span>' + (i+1) + '</span>' +
     '<span>' + esc(r.n || "Wizard") + ' · wave ' + r.w + ' · ' + r.k + (r.k === 1 ? " kill" : " kills") + '</span>' +
-    '<b>' + r.s.toLocaleString() + '</b></li>'
+    '<span class="score">' + partyTag(r.p) + '<b>' + r.s.toLocaleString() + '</b></span></li>'
   ).join("") + '</ol>';
 }
 let boardRequest = 0;   // lets a later renderBoard() call win over a slower earlier one
@@ -7473,12 +7487,13 @@ function escGameOver(){
   const wave = Math.max(1, waveNo);
   const final = Math.round(runScore);
   const party = seats.length > 1;
+  const players = seats.length;   // how many wizards were actually in this run, for the board
   // The score and the wave belong to the party; the kill count is your own.
   const mine = (you && you.kills) | 0;
-  if (!party && !bossTest) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName });
+  if (!party && !bossTest) saveLocalScore({ s: final, k: kills, w: wave, d: Date.now(), n: playerName, p: players });
   msg = { text: party ? "The party falls" : "Fallen",
           sub: "Score " + final.toLocaleString(), t: 1.5, color: "#ff4d5e" };
-  const banked = bossTest ? Promise.resolve(null) : bankRun(final, wave, party ? mine : kills);   // a boss test is a rehearsal, not a run
+  const banked = bossTest ? Promise.resolve(null) : bankRun(final, wave, party ? mine : kills, players);   // a boss test is a rehearsal, not a run
   setTimeout(() => {
     // show() rewrites the curtain copy, so it goes first and the report second
     show(NET.active ? "mp" : "solo");
@@ -7491,7 +7506,7 @@ function escGameOver(){
       (yours === 1 ? " wizard" : " wizards") + " put down" + (party ? " by you" : "") +
       " · " + Math.round(survT) + " seconds standing.";
     el("curtainText").textContent = report;
-    if (!party){ el("goBtn").textContent = "Run it again"; renderBoard({ s: final, k: kills, w: wave, d: Date.now(), n: playerName }); }
+    if (!party){ el("goBtn").textContent = "Run it again"; renderBoard({ s: final, k: kills, w: wave, d: Date.now(), n: playerName, p: players }); }
     else hideBoard();
     el("curtain").hidden = false;
     banked.then(out => showEarned(out, report));
@@ -8320,10 +8335,10 @@ function bankMatch(won, roundsWon){
   if (!acct || !acct.signedIn) return Promise.resolve(null);
   return acct.report({ mode: "duel", won: !!won, roundsWon: roundsWon | 0, opponents: rivalsFought() });
 }
-function bankRun(score, waves, kills){
+function bankRun(score, waves, kills, players){
   const acct = ACCT();
   if (!acct || !acct.signedIn) return Promise.resolve(null);
-  return acct.report({ mode: "escalation", score: score | 0, waves: waves | 0, kills: kills | 0 });
+  return acct.report({ mode: "escalation", score: score | 0, waves: waves | 0, kills: kills | 0, players: Math.max(1, players | 0) });
 }
 // Say what the match was worth. Guests get the one line that tells them why
 // they got nothing; signed-in wizards get the number and where it left them.
