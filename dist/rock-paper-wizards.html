@@ -152,6 +152,10 @@
   fieldset.levels button{border-color:color-mix(in srgb, var(--tint) 45%, #1c1730);color:var(--tint);
     display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1.1}
   fieldset.levels button em{font-style:normal;font-size:9px;letter-spacing:.2em;opacity:.62}
+  /* `display:flex` above beats the UA stylesheet's [hidden]{display:none}, so the
+     fourth level's hidden attribute needs its own rule or it shows before it is
+     earned — the same fix .panel[hidden] and .rotate[hidden] already use. */
+  fieldset.levels button[hidden]{display:none}
   fieldset.levels button:hover{border-color:var(--tint);background:color-mix(in srgb, var(--tint) 12%, transparent)}
   fieldset.levels button.sel{border-color:var(--tint);color:#fff;
     background:color-mix(in srgb, var(--tint) 26%, #120f1f);box-shadow:0 0 20px -6px var(--tint)}
